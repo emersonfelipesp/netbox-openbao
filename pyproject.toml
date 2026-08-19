@@ -9,6 +9,10 @@ requires-python = ">=3.12"
 dependencies = [
     "hvac>=2.3.0",
     "cryptography>=42.0.0",
+    # cryptography delegates the OpenSSH bcrypt KDF to this package. Without it,
+    # loading a passphrase-protected OpenSSH private key raises
+    # UnsupportedAlgorithm("Need bcrypt module"). NetBox does not ship it.
+    "bcrypt>=4.0.0",
 ]
 authors = [
     {name = "Emerson Felipe", email = "emerson.felipe@nmultifibra.com.br"},
@@ -60,7 +64,7 @@ select = ["E", "F", "W", "I", "B", "S"]
 ignore = ["S105", "S106"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "S105", "S106"]
+"netbox_openbao/tests/*" = ["S101", "S105", "S106", "S603", "S607"]
 "netbox_openbao/migrations/*" = ["E501"]
 
 [tool.pytest.ini_options]

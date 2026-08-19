@@ -71,7 +71,9 @@ def _read_env(name):
             # The path itself is operator-supplied configuration, not a
             # secret, so naming it is safe and makes the misconfiguration
             # diagnosable.
-            raise BackendConfigurationError(f'Unable to read secret material from {name}_FILE ({path}).')
+            raise BackendConfigurationError(
+                f'Unable to read secret material from {name}_FILE ({path}).'
+            ) from None
     return None
 
 
@@ -104,7 +106,7 @@ class OpenBaoBackend(SecretBackend):
         try:
             import hvac
         except ImportError:
-            raise BackendConfigurationError('The hvac package is required but is not installed.')
+            raise BackendConfigurationError('The hvac package is required but is not installed.') from None
 
         verify = self.engine.ca_cert_path or self.engine.tls_verify
         client = hvac.Client(
@@ -166,7 +168,7 @@ class OpenBaoBackend(SecretBackend):
                 except OSError:
                     raise BackendConfigurationError(
                         f'Unable to read the service account token at {jwt_path}.'
-                    )
+                    ) from None
                 response = client.auth.kubernetes.login(role=role, jwt=jwt)
 
             elif method == AuthMethodChoices.METHOD_CERT:
@@ -181,7 +183,7 @@ class OpenBaoBackend(SecretBackend):
         except BackendConfigurationError:
             raise
         except Exception as exc:
-            raise self._translate(exc, context='authentication')
+            raise self._translate(exc, context='authentication') from None
 
         auth = (response or {}).get('auth') or {}
         token = auth.get('client_token')
@@ -286,7 +288,7 @@ class OpenBaoBackend(SecretBackend):
             response = client.secrets.kv.v1.read_secret(path=path, mount_point=mount)
             return response['data']
         except Exception as exc:
-            raise self._translate(exc, context='read')
+            raise self._translate(exc, context='read') from None
 
     def write(self, path, data, cas=None):
         client = self._get_client()
@@ -303,7 +305,7 @@ class OpenBaoBackend(SecretBackend):
             client.secrets.kv.v1.create_or_update_secret(path=path, secret=data, mount_point=mount)
             return 1
         except Exception as exc:
-            raise self._translate(exc, context='write')
+            raise self._translate(exc, context='write') from None
 
     def delete(self, path, versions=None):
         client = self._get_client()
@@ -319,7 +321,7 @@ class OpenBaoBackend(SecretBackend):
                 return
             client.secrets.kv.v1.delete_secret(path=path, mount_point=mount)
         except Exception as exc:
-            raise self._translate(exc, context='delete')
+            raise self._translate(exc, context='delete') from None
 
     def list_versions(self, path):
         self._require_kv2('Listing versions')
@@ -329,7 +331,7 @@ class OpenBaoBackend(SecretBackend):
                 path=path, mount_point=self.engine.kv_mount
             )
         except Exception as exc:
-            raise self._translate(exc, context='metadata read')
+            raise self._translate(exc, context='metadata read') from None
 
         data = response.get('data') or {}
         versions = []
@@ -352,7 +354,7 @@ class OpenBaoBackend(SecretBackend):
                 path=path, mount_point=self.engine.kv_mount
             )
         except Exception as exc:
-            raise self._translate(exc, context='metadata read')
+            raise self._translate(exc, context='metadata read') from None
         return response.get('data') or {}
 
     def set_metadata(self, path, metadata):
@@ -365,7 +367,7 @@ class OpenBaoBackend(SecretBackend):
                 mount_point=self.engine.kv_mount,
             )
         except Exception as exc:
-            raise self._translate(exc, context='metadata write')
+            raise self._translate(exc, context='metadata write') from None
 
     def health(self):
         """

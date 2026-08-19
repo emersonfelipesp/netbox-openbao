@@ -88,17 +88,13 @@ class NetBoxOpenBaoConfig(PluginConfig):
         # rather than by exported name.
         super().ready()
 
-        from . import search  # noqa: F401 — @register_search decorators
-        from . import signals  # noqa: F401 — destroys material on delete, refreshes KV metadata
-
-        # Background jobs self-register through @system_job at import time;
-        # importing the module is what schedules them.
-        from . import jobs  # noqa: F401
-
-        # Essential: @register_model_view decorators live in views.py, and
-        # urls.py resolves them through get_model_urls() at URLconf load. If
-        # this import is dropped, every plugin URL 404s.
-        from . import views  # noqa: F401
+        # jobs:    self-registers via @system_job at import time
+        # search:   self-registers via @register_search
+        # signals:  destroys material on delete, refreshes KV metadata
+        # views:    ESSENTIAL — @register_model_view decorators live there, and
+        #           urls.py resolves them through get_model_urls() at URLconf
+        #           load. Drop this import and every plugin URL 404s.
+        from . import jobs, search, signals, views  # noqa: F401
 
 
 config = NetBoxOpenBaoConfig

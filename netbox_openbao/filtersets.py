@@ -103,7 +103,14 @@ class CredentialFilterSet(NetBoxModelFilterSet):
         label=_('Has an expiry date'),
     )
 
-    assigned_object_type = ContentTypeFilter()
+    # Traverses the assignment through-table: "which credentials does device
+    # 88 hold?" An explicit field_name is required because NetBox derives
+    # additional lookups from it, and the bare filter name does not resolve on
+    # Credential itself.
+    assigned_object_type = ContentTypeFilter(
+        field_name='assignments__assigned_object_type',
+        label=_('Assigned object type'),
+    )
     assigned_object_id = MultiValueNumberFilter(
         field_name='assignments__assigned_object_id',
         label=_('Assigned object (ID)'),

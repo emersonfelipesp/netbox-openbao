@@ -1,7 +1,8 @@
 """Rate limiting for secret-revealing endpoints."""
 
-from netbox_openbao.config import get_config
 from rest_framework.throttling import UserRateThrottle
+
+from netbox_openbao.config import get_config
 
 __all__ = ('RevealRateThrottle',)
 

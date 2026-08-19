@@ -15,6 +15,7 @@ from django import forms
 from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext_lazy as _
 from netbox.forms import NetBoxModelFilterSetForm, NetBoxModelForm, OrganizationalModelForm, PrimaryModelForm
+from users.models import Group
 from utilities.forms import GenericObjectFormMixin
 from utilities.forms.fields import CommentField, DynamicModelChoiceField, DynamicModelMultipleChoiceField, SlugField
 from utilities.forms.fields.generic import GenericObjectChoiceField
@@ -96,7 +97,7 @@ class CredentialPolicyForm(OrganizationalModelForm):
     slug = SlugField()
     engine = DynamicModelChoiceField(queryset=SecretEngine.objects.all())
     groups = DynamicModelMultipleChoiceField(
-        queryset=None,
+        queryset=Group.objects.all(),
         required=False,
         label=_('Groups'),
     )
@@ -114,14 +115,6 @@ class CredentialPolicyForm(OrganizationalModelForm):
             'name', 'slug', 'engine', 'openbao_policy', 'approle_env_prefix', 'groups', 'max_reveal_ttl',
             'require_reason', 'description', 'tags',
         )
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Resolved lazily: the users app is not guaranteed to be loaded when
-        # this module is first imported.
-        from users.models import Group
-
-        self.fields['groups'].queryset = Group.objects.all()
 
 
 class CredentialPolicyFilterForm(NetBoxModelFilterSetForm):

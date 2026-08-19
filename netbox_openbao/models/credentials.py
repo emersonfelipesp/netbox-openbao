@@ -207,7 +207,29 @@ class Credential(PrimaryModel):
         from django.utils import timezone
         return self.valid_until <= timezone.now()
 
+    def _apply_defaults(self):
+        """
+        Default the engine from the policy so callers need only choose a tier.
+
+        Applied in `clean()` as well as `save()` because NetBox's
+        `ValidatedModelSerializer` runs `full_clean()` on an unsaved instance
+        during REST validation — defaulting only in `save()` would make the
+        API reject every create that omits `engine`, which is exactly the case
+        the default exists to serve.
+        """
+        if self.policy_id and not self.engine_id:
+            self.engine_id = self.policy.engine_id
+
+    def full_clean(self, *args, **kwargs):
+        # Defaults must be applied before validation, not during it: Django's
+        # full_clean() runs clean_fields() first, which would already have
+        # recorded "engine: This field cannot be null" by the time clean() got
+        # a chance to fill it in.
+        self._apply_defaults()
+        super().full_clean(*args, **kwargs)
+
     def clean(self):
+        self._apply_defaults()
         super().clean()
 
         # The policy is the authorization tier and carries the AppRole. If the
@@ -225,9 +247,9 @@ class Credential(PrimaryModel):
             raise ValidationError({'valid_until': _('Validity window ends before it begins.')})
 
     def save(self, *args, **kwargs):
-        # Default the engine from the policy so callers need only choose a tier.
-        if self.policy_id and not self.engine_id:
-            self.engine_id = self.policy.engine_id
+        # Repeated here for callers that bypass full_clean() (direct ORM use,
+        # management commands, data migrations).
+        self._apply_defaults()
 
         # `path` is derived, not user-supplied, and is stamped once. Recomputing
         # it on every save would silently orphan material if `path_prefix` were

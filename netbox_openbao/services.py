@@ -59,7 +59,13 @@ def _request_context(request):
     from utilities.request import get_client_ip
 
     try:
-        source_ip = get_client_ip(request)
+        client_ip = get_client_ip(request)
+        # get_client_ip() returns a netaddr.IPAddress, which
+        # GenericIPAddressField cannot adapt ("argument of type 'IPAddress' is
+        # not iterable"). Left unconverted this raises inside the audit write,
+        # which is swallowed by design — so every HTTP-originated access would
+        # go unrecorded, silently, with no error visible to the caller.
+        source_ip = str(client_ip) if client_ip else None
     except Exception:
         source_ip = None
 
@@ -69,7 +75,7 @@ def _request_context(request):
     }
 
 
-def log_access(credential, user, action, success=True, reason='', message='', request=None):
+def log_access(credential, user, action, success=True, reason='', message='', request=None, link=True):
     """
     Append a `CredentialAccessLog` row.
 
@@ -82,23 +88,32 @@ def log_access(credential, user, action, success=True, reason='', message='', re
 
     Never records the value — only that an access occurred, by whom, and
     whether it succeeded.
+
+    `link=False` records the credential by snapshot only, without the foreign
+    key. That is required after a rolled-back write: the in-memory object still
+    carries the primary key the aborted INSERT was assigned, but no such row
+    exists, so linking would raise a deferred foreign-key violation at commit —
+    and lose the audit record for the very failure it was meant to capture.
     """
     from netbox_openbao.models import CredentialAccessLog
 
     context = _request_context(request)
     try:
-        return CredentialAccessLog.objects.create(
-            credential=credential if getattr(credential, 'pk', None) else None,
-            credential_name_snapshot=(getattr(credential, 'name', '') or '')[:200],
-            credential_uuid_snapshot=getattr(credential, 'uuid', None),
-            user=user if (user is not None and user.is_authenticated) else None,
-            username_snapshot=(getattr(user, 'username', '') or '')[:150],
-            action=action,
-            success=success,
-            reason=reason or '',
-            message=(message or '')[:500],
-            **context,
-        )
+        # A savepoint, so a failed audit insert cannot poison an enclosing
+        # transaction that the caller is still relying on.
+        with transaction.atomic():
+            return CredentialAccessLog.objects.create(
+                credential=credential if (link and getattr(credential, 'pk', None)) else None,
+                credential_name_snapshot=(getattr(credential, 'name', '') or '')[:200],
+                credential_uuid_snapshot=getattr(credential, 'uuid', None),
+                user=user if (user is not None and user.is_authenticated) else None,
+                username_snapshot=(getattr(user, 'username', '') or '')[:150],
+                action=action,
+                success=success,
+                reason=reason or '',
+                message=(message or '')[:500],
+                **context,
+            )
     except Exception:
         # An audit write must never mask the operation's own outcome, but it
         # must also never vanish quietly.
@@ -165,7 +180,8 @@ def prepare_material(credential_type, payload):
 # Write path
 # ----------------------------------------------------------------------
 
-def store_credential(persist, credential_type, payload, *, cas=0, user=None, request=None, action=None):
+def store_credential(persist, credential_type, payload, *, cas=0, user=None, request=None, action=None,
+                     subject=None):
     """
     Persist a credential row and its material as one unit.
 
@@ -173,6 +189,8 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
         persist: Callable taking the extracted metadata dict and returning the
             saved `Credential`. The REST API passes `serializer.save`; forms
             and internal callers pass a closure over `instance.save()`.
+        subject: The Credential this operation concerns, used only to identify
+            the audit entry when `persist` itself fails and never returns one.
         cas: Check-and-set precondition. `0` requires the path not to exist,
             which is what stops a create silently overwriting an existing
             secret at a colliding path. Pass the current `kv_version` when
@@ -183,7 +201,7 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
     action = action or AccessActionChoices.ACTION_WRITE
     cleaned, metadata = prepare_material(credential_type, payload)
 
-    credential = None
+    credential = subject
     written = None  # (backend, path) once the material has landed
 
     try:
@@ -218,15 +236,30 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
                     'CredentialVerifyJob will report it.',
                     path,
                 )
+        # The transaction has unwound. A create leaves an in-memory object
+        # holding the primary key of an INSERT that no longer exists, so the
+        # audit entry must not link to it; an update's original row does still
+        # exist, so that one should link. Ask the database which case this is.
         log_access(
             credential, user, action, success=False,
             message=str(exc) if isinstance(exc, OpenBaoError) else 'Credential write failed.',
             request=request,
+            link=_row_exists(credential),
         )
         raise
 
     log_access(credential, user, action, success=True, request=request)
     return credential, version
+
+
+def _row_exists(credential):
+    """True if `credential` corresponds to a row that is actually committed."""
+    if credential is None or credential.pk is None:
+        return False
+    try:
+        return type(credential).objects.filter(pk=credential.pk).exists()
+    except Exception:
+        return False
 
 
 def write_material(credential, payload, *, cas=0, user=None, request=None, action=None):
@@ -249,6 +282,7 @@ def write_material(credential, payload, *, cas=0, user=None, request=None, actio
         user=user,
         request=request,
         action=action,
+        subject=credential,
     )
 
 

@@ -113,7 +113,7 @@ def get_schema(credential_type):
     except KeyError:
         raise ValidationError({
             'credential_type': _('Unknown credential type: {value}.').format(value=credential_type),
-        })
+        }) from None
 
 
 def validate_payload(credential_type, data):

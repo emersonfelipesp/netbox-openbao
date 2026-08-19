@@ -50,7 +50,7 @@ def ssh_fingerprint(openssh_public_key):
     try:
         blob = base64.b64decode(parts[1])
     except Exception:
-        raise ValidationError({'public_key': _('Value is not a valid OpenSSH public key.')})
+        raise ValidationError({'public_key': _('Value is not a valid OpenSSH public key.')}) from None
     digest = hashlib.sha256(blob).digest()
     return 'SHA256:' + base64.b64encode(digest).decode().rstrip('=')
 
@@ -82,7 +82,12 @@ def extract_ssh_metadata(private_key_pem, passphrase=None):
         try:
             key = loader(material, password=password)
             break
-        except Exception:
+        except Exception:  # noqa: S112 — see below
+            # Deliberately silent: exactly one of these two loaders matches any
+            # given key, so the other always raises. Logging it would emit an
+            # error for every valid key, and the exception text can quote the
+            # material being parsed. A genuine failure is reported below, once,
+            # after both loaders have been tried.
             continue
 
     if key is None:
@@ -98,7 +103,7 @@ def extract_ssh_metadata(private_key_pem, passphrase=None):
             format=serialization.PublicFormat.OpenSSH,
         ).decode()
     except Exception:
-        raise ValidationError({'private_key': _('Key type is not supported for SSH use.')})
+        raise ValidationError({'private_key': _('Key type is not supported for SSH use.')}) from None
 
     return {
         'public_key': openssh,
@@ -123,7 +128,7 @@ def extract_certificate_metadata(certificate_pem):
         try:
             cert = x509.load_der_x509_certificate(material)
         except Exception:
-            raise ValidationError({'certificate': _('Unable to parse the certificate as PEM or DER.')})
+            raise ValidationError({'certificate': _('Unable to parse the certificate as PEM or DER.')}) from None
 
     try:
         sans = [str(name.value) for name in cert.extensions.get_extension_for_class(

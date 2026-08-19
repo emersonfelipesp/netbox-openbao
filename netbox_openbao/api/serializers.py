@@ -125,7 +125,8 @@ class CredentialSerializer(PrimaryModelSerializer):
                 validate_payload(credential_type, secret_data)
             except DjangoValidationError as exc:
                 # Surface schema errors as field errors rather than a 500.
-                raise serializers.ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else str(exc))
+                detail = exc.message_dict if hasattr(exc, 'message_dict') else str(exc)
+                raise serializers.ValidationError(detail) from None
 
         data = super().validate(data)
 

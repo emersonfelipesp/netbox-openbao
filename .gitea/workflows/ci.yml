@@ -1,0 +1,98 @@
+---
+name: CI
+
+# Pre-merge gate.
+#
+# Scope note: this job runs static checks and packaging validation only. The
+# functional suite needs a full NetBox 4.7 install plus PostgreSQL 15+ (with
+# ltree), Redis 6+, and an OpenBao dev server, which the shared Gitea runners
+# do not provide as services. That suite is run against the real stack via
+# `docker-compose.dev.yml`; see docs/development.md.
+#
+# Runner: the conventional label for untrusted plugin CI in this estate is
+# `ci-untrusted-python312`, but that runner is currently offline, and a job
+# targeting an offline label queues indefinitely rather than failing. Switch
+# back to it once it is online again.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: netbox-openbao-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Static checks and packaging
+    runs-on: linux_amd64
+    timeout-minutes: 20
+    env:
+      HOME: ${{ github.workspace }}
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip build ruff
+
+      - name: Ruff lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          .venv/bin/ruff check .
+
+      - name: Compile all sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m compileall -q netbox_openbao
+
+      - name: Build the distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m build
+
+      - name: Assert no secret-bearing field crept onto the model
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A cheap, dependency-free restatement of tests/test_security.py's
+          # central claim, so the invariant is checked even on a runner that
+          # cannot stand up NetBox.
+          .venv/bin/python - <<'PY'
+          import ast
+          import sys
+
+          tree = ast.parse(open('netbox_openbao/models/credentials.py').read())
+          forbidden = ('password', 'private', 'passphrase')
+          offenders = []
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Assign):
+                  for target in node.targets:
+                      name = getattr(target, 'id', '')
+                      if any(token in name.lower() for token in forbidden):
+                          offenders.append(name)
+          if offenders:
+              sys.exit(f'Credential gained secret-bearing field(s): {offenders}')
+          print('Credential model carries no secret-bearing field.')
+          PY
