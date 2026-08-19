@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netbox-openbao"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "hvac>=2.3.0",
+    "cryptography>=42.0.0",
+]
+authors = [
+    {name = "Emerson Felipe", email = "emerson.felipe@nmultifibra.com.br"},
+]
+description = "Keep NetBox device, VM, and service secret material in OpenBao while NetBox owns the credential inventory"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = "Apache-2.0"
+keywords = ["netbox", "netbox-plugin", "openbao", "vault", "secrets", "credentials"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Django",
+    "Framework :: Django :: 6.1",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration",
+]
+
+[project.urls]
+Source = "https://git.nmulti.cloud/emersonfelipesp/netbox-openbao"
+Issues = "https://git.nmulti.cloud/emersonfelipesp/netbox-openbao/issues"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["netbox_openbao*"]
+
+[tool.setuptools.package-data]
+netbox_openbao = ["templates/**", "static/**"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S"]
+# S105/S106: the "hardcoded password" heuristic fires on every choice value and
+# kwarg literally named token/password in a secrets plugin. Real secret handling
+# is covered by tests/test_security.py, not by this heuristic.
+ignore = ["S105", "S106"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]
+"netbox_openbao/migrations/*" = ["E501"]
+
+[tool.pytest.ini_options]
+markers = [
+    "django_db: requires pytest-django database access",
+    "integration: requires a live OpenBao dev server",
+]

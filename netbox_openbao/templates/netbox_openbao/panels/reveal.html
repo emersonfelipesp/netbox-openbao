@@ -1,0 +1,27 @@
+{% extends "ui/panels/_base.html" %}
+{% load i18n %}
+
+{% block panel_content %}
+  <div class="p-3">
+    <p class="text-muted small mb-3">
+      {% trans "Reading this credential is recorded in the access log against your account." %}
+    </p>
+    {# POST-only: a GET-reachable reveal could be prefetched, bookmarked, or replayed from history. #}
+    <form method="post" action="{% url 'plugins:netbox_openbao:credential_reveal' pk=object.pk %}">
+      {% csrf_token %}
+      <div class="mb-3">
+        <label class="form-label" for="reveal-reason">
+          {% trans "Reason" %}
+          {% if require_reason %}<span class="text-danger">*</span>{% endif %}
+        </label>
+        <input type="text" class="form-control" id="reveal-reason" name="reason"
+               autocomplete="off" maxlength="500"
+               {% if require_reason %}required{% endif %}
+               placeholder="{% trans 'Change ticket or justification' %}">
+      </div>
+      <button type="submit" class="btn btn-warning w-100">
+        <span class="mdi mdi-eye" aria-hidden="true"></span> {% trans "Reveal secret" %}
+      </button>
+    </form>
+  </div>
+{% endblock panel_content %}
