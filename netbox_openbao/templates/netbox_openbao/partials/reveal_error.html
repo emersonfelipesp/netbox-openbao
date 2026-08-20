@@ -1,0 +1,13 @@
+{% load i18n %}
+
+{% comment %}
+  A failed reveal, rendered into the same slot as a successful one. Carries
+  no material by construction — `message` is either a scrubbed backend error
+  or a policy validation message.
+{% endcomment %}
+
+<div class="p-3">
+  <div class="alert alert-danger mb-0" role="alert">
+    <span class="mdi mdi-alert-circle" aria-hidden="true"></span> {{ message }}
+  </div>
+</div>

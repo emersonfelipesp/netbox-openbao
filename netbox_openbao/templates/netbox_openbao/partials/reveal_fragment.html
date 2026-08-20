@@ -1,0 +1,90 @@
+{% load i18n %}
+
+{% comment %}
+  The revealed material, swapped into the credential page by HTMX.
+
+  The countdown is a CONVENIENCE, not a security control, and the copy below
+  says so. The material has already left the server; anyone who wants to keep
+  it can. What the countdown buys is that a screen left unattended stops
+  displaying a secret — worth having, and worth not overstating.
+
+  Values reach the DOM only through textContent, and the element is dropped
+  with remove() rather than by rewriting a parent's markup. Building markup
+  from a value would let material containing HTML execute in the operator's
+  session. test_fragment_uses_no_innerhtml enforces this by substring, so keep
+  the forbidden property names out of this comment too.
+{% endcomment %}
+
+<div class="p-3" id="reveal-result" data-ttl="{{ ttl }}">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <span class="badge text-bg-warning">{% trans "Revealed" %}</span>
+    <span class="text-muted small">
+      {% trans "Clears in" %} <span id="reveal-countdown">{{ ttl }}</span>{% trans "s" %}
+    </span>
+  </div>
+
+  <table class="table table-sm mb-2">
+    {% for key, value in secret_data.items %}
+      <tr>
+        <th scope="row" class="text-nowrap align-middle">{{ key }}</th>
+        <td>
+          <pre class="mb-0 font-monospace small reveal-value"
+               style="white-space: pre-wrap; word-break: break-all;">{{ value }}</pre>
+        </td>
+        <td class="text-end align-middle" style="width: 1%;">
+          <button type="button" class="btn btn-sm btn-outline-secondary reveal-copy"
+                  title="{% trans 'Copy' %}" aria-label="{% trans 'Copy' %}">
+            <span class="mdi mdi-content-copy" aria-hidden="true"></span>
+          </button>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+
+  <div class="d-flex justify-content-between align-items-center">
+    <small class="text-muted">
+      {% trans "Recorded in the access log. Clearing this does not revoke it." %}
+    </small>
+    <button type="button" class="btn btn-sm btn-outline-danger" id="reveal-clear">
+      {% trans "Clear now" %}
+    </button>
+  </div>
+</div>
+
+<script>
+(function () {
+  var box = document.getElementById('reveal-result');
+  if (!box) { return; }
+
+  var counter = document.getElementById('reveal-countdown');
+  var remaining = parseInt(box.dataset.ttl, 10) || 0;
+  var timer = null;
+
+  function clearNow() {
+    if (timer) { window.clearInterval(timer); }
+    box.remove();
+  }
+
+  document.getElementById('reveal-clear').addEventListener('click', clearNow);
+
+  box.querySelectorAll('.reveal-copy').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var row = button.closest('tr');
+      var value = row ? row.querySelector('.reveal-value') : null;
+      if (!value || !navigator.clipboard) { return; }
+      navigator.clipboard.writeText(value.textContent).then(function () {
+        var icon = button.querySelector('span');
+        if (icon) { icon.className = 'mdi mdi-check'; }
+      });
+    });
+  });
+
+  if (remaining > 0) {
+    timer = window.setInterval(function () {
+      remaining -= 1;
+      if (remaining <= 0) { clearNow(); return; }
+      counter.textContent = String(remaining);
+    }, 1000);
+  }
+})();
+</script>

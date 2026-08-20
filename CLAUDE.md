@@ -146,7 +146,7 @@ python manage.py test netbox_openbao
 `docker-compose.dev.yml` brings up PostgreSQL, Redis, and OpenBao 2.6 dev mode.
 Full procedure in [`docs/development.md`](docs/development.md).
 
-Current state: **180 tests**, all passing against real NetBox 4.7.0-beta1 and a
+Current state: **188 tests**, all passing against real NetBox 4.7.0-beta1 and a
 live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
 
 ## When changing things
