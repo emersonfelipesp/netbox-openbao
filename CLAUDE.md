@@ -168,13 +168,52 @@ export NETBOX_OPENBAO_BROKER_CA=/path/client-ca.pem
 
 ### Two things that will cost you an hour otherwise
 
-- **A "hanging" test run is almost always stale Postgres connections**, not a
-  deadlock in the code. Killing a `--keepdb` run leaves backends holding the
-  test database, and the next run blocks on them forever. Clear them first:
+- **A "hanging" test run has two causes, and the second one is invisible.**
+
+  The obvious one is stale Postgres connections: killing a `--keepdb` run leaves
+  backends holding the test database, and the next run blocks on them.
 
   ```sql
   SELECT pg_terminate_backend(pid) FROM pg_stat_activity
    WHERE datname LIKE 'test_%' AND pid <> pg_backend_pid();
+  ```
+
+  The other is the test database itself being unusable, which presents as a hang
+  rather than as an error. A killed run can leave `test_openbao_test`
+  half-migrated — the next run then dies on something like
+  `column "status" of relation "dcim_module" already exists`, or, if Django
+  decides to ask whether to delete it, blocks forever on a **prompt you cannot
+  see**: with stdout block-buffered (any non-tty — a pipe, a CI log, an agent's
+  captured output) the question never reaches you.
+
+  In both cases `pg_stat_activity` shows `idle in transaction` waiting on
+  `ClientRead`, which points at the database and tells you nothing. Look at what
+  the process is blocked on instead:
+
+  ```bash
+  ls -l /proc/$PID/fd/0            # a tty or socket here -> it is waiting on input
+  ```
+
+  Two habits avoid the whole class. **Pass `--noinput` and redirect stdin** in
+  any non-interactive run, so a prompt fails loudly instead of hanging — and
+  when a run has been killed, **drop the test database** rather than trusting
+  `--keepdb` to sort it out:
+
+  ```sql
+  DROP DATABASE IF EXISTS test_openbao_test;
+  ```
+
+  ```bash
+  python manage.py test netbox_openbao --noinput --keepdb < /dev/null
+  ```
+
+  One more, on the diagnosis itself: `pgrep -f "manage.py test ..."` matches
+  **the shell you typed it in**, so `until ! pgrep -f ...; do sleep 5; done`
+  never exits and a "still running" reading can be entirely your own loop. Match
+  on the interpreter instead:
+
+  ```bash
+  for p in $(pgrep -x python); do readlink /proc/$p/exe | grep -q nb47 && echo "$p"; done
   ```
 
 - **Never `pkill -f "manage.py test"`.** The pattern matches the shell that ran
