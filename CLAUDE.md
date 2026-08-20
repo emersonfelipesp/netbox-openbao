@@ -146,7 +146,7 @@ python manage.py test netbox_openbao
 `docker-compose.dev.yml` brings up PostgreSQL, Redis, and OpenBao 2.6 dev mode.
 Full procedure in [`docs/development.md`](docs/development.md).
 
-Current state: **144 tests**, all passing against real NetBox 4.7.0-beta1 and a
+Current state: **160 tests**, all passing against real NetBox 4.7.0-beta1 and a
 live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
 
 ## When changing things
@@ -154,8 +154,10 @@ live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
 - **A new credential type** → `CredentialTypeChoices` + `CREDENTIAL_SCHEMAS` +
   (if needed) an extractor returning only `EXTRACTABLE_FIELDS` keys +
   `SECRET_INPUT_FIELDS`/`SENSITIVE_INPUT_FIELDS` in `forms.py`.
-- **A new backend** → subclass `SecretBackend`; never raise a vendor exception,
-  never log material.
+- **A new backend** → subclass `SecretBackend`, register it in
+  `backends/BACKENDS` and `BackendChoices`, and add an integration subclass of
+  `_KVIntegrationTests`. Never raise a vendor exception, never log material.
+  A backend tested only against a different server proves nothing about it.
 - **Anything touching the reveal path** → re-read
   [`docs/security.md`](docs/security.md) first and make sure
   `tests/test_security.py` still fails when you break the invariant.

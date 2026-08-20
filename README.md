@@ -87,6 +87,7 @@ test in `netbox_openbao/tests/test_security.py`:
 | PostgreSQL | 15+ with the `ltree` extension (a NetBox 4.7 requirement) |
 | Redis | 6+ |
 | OpenBao | 2.6.x, KV v2 mount |
+| HashiCorp Vault | supported as an alternative backend — see below |
 
 NetBox 4.7 is required deliberately rather than incidentally: it replaced
 `ipam.Service`'s `protocol`/`ports` with `port_mappings` and moved the service's
@@ -158,6 +159,14 @@ curl -H "Authorization: Bearer $TOKEN" \
   'https://netbox.example.net/api/plugins/openbao/credentials/142/reveal/?reason=CHG-1234'
 ```
 
+## OpenBao or Vault
+
+The plugin is named for OpenBao and that is its reference backend, but a
+`SecretEngine` can be pointed at **HashiCorp Vault** instead by changing one
+field. The two share the KV v2 and AppRole surfaces, and the plugin's whole
+wire-protocol contract is run as one shared suite against both servers, so this
+is verified rather than claimed.
+
 ## Data model
 
 | Model | Role |
@@ -186,7 +195,6 @@ Deliberately not yet here:
 
 - HTMX reveal with countdown-to-clear, and the quick-add SSH wizard
 - Operator-defined credential types (`CredentialTypeSchema`)
-- A HashiCorp Vault backend subclass — the ABC is in place for it
 - An Ansible lookup plugin
 - A `netbox-secrets` importer
 - The optional broker mode, where a separate service holds the AppRole so a

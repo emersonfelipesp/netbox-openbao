@@ -53,7 +53,7 @@ class SecretEngineSerializer(PrimaryModelSerializer):
     class Meta:
         model = SecretEngine
         fields = (
-            'id', 'url', 'display_url', 'display', 'name', 'slug', 'api_url', 'namespace', 'kv_mount',
+            'id', 'url', 'display_url', 'display', 'name', 'slug', 'backend', 'api_url', 'namespace', 'kv_mount',
             'kv_version', 'auth_method', 'tls_verify', 'ca_cert_path', 'is_default', 'status',
             'status_message', 'last_checked', 'env_prefix', 'credential_count', 'description', 'owner',
             'comments', 'tags', 'custom_fields', 'created', 'last_updated',

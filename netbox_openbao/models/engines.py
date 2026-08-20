@@ -3,7 +3,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from netbox.models import PrimaryModel
 
-from netbox_openbao.choices import AuthMethodChoices, EngineStatusChoices
+from netbox_openbao.choices import AuthMethodChoices, BackendChoices, EngineStatusChoices
 
 __all__ = ('SecretEngine',)
 
@@ -28,6 +28,13 @@ class SecretEngine(PrimaryModel):
         max_length=100,
         unique=True,
         help_text=_("Also derives the environment variable prefix for this engine's credentials"),
+    )
+    backend = models.CharField(
+        verbose_name=_('backend'),
+        max_length=50,
+        choices=BackendChoices,
+        default=BackendChoices.BACKEND_OPENBAO,
+        help_text=_('Which secret store this engine speaks to. OpenBao and Vault share the KV v2 API.'),
     )
     api_url = models.URLField(
         verbose_name=_('API URL'),
@@ -98,7 +105,8 @@ class SecretEngine(PrimaryModel):
     )
 
     clone_fields = (
-        'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method', 'tls_verify', 'ca_cert_path',
+        'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method', 'tls_verify',
+        'ca_cert_path',
     )
 
     class Meta:

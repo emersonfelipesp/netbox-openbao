@@ -108,6 +108,43 @@ appears in the process environment (where it is readable via
 NETBOX_BAO_PRIMARY_SECRET_ID_FILE=/run/secrets/bao-secret-id
 ```
 
+## Using HashiCorp Vault instead
+
+Set a `SecretEngine`'s **backend** to `HashiCorp Vault`. Everything else is
+identical — same KV v2 mount, same AppRole setup, same environment variables.
+
+That is not an aspiration: the plugin's entire wire-protocol contract runs as a
+single shared test suite against both servers, and every case passes on both —
+check-and-set on create and on a stale version, per-version reads, version
+listing, version-scoped deletes, `custom_metadata` round-trips, and error
+scrubbing.
+
+The differences that do exist are cosmetic and handled:
+
+- Vault's `sys/health` returns a strict superset of OpenBao's payload, adding
+  `performance_standby`, `enterprise`, `clock_skew_ms`, `echo_duration_ms`, and
+  `replication_primary_canary_age_ms`. Every field the plugin reads is present
+  on both.
+- A Vault performance standby is reported with a message saying so, since it
+  serves reads and an operator otherwise has to guess why a "standby" node is
+  answering.
+- **Version strings are not comparable between the two projects.** Never infer
+  capability from them.
+
+To run the suite against Vault yourself:
+
+```bash
+docker run -d --name vault-dev -p 8300:8200 \
+  -e VAULT_DEV_ROOT_TOKEN_ID=devroot --cap-add=IPC_LOCK \
+  hashicorp/vault:latest server -dev
+
+export NETBOX_VAULT_TEST_ADDR=http://127.0.0.1:8300
+export NETBOX_VAULT_TEST_TOKEN=devroot
+python manage.py test netbox_openbao
+```
+
+Both integration classes skip cleanly when their address is unset.
+
 ## First engine
 
 Create a `SecretEngine` in the UI (**OpenBao → Secret engines**) or via the API,

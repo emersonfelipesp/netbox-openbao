@@ -2,6 +2,18 @@ from django.utils.translation import gettext_lazy as _
 from utilities.choices import Choice, ChoiceSet
 
 
+class BackendChoices(ChoiceSet):
+    """Which secret store an engine speaks to."""
+
+    BACKEND_OPENBAO = 'openbao'
+    BACKEND_VAULT = 'vault'
+
+    CHOICES = [
+        Choice(BACKEND_OPENBAO, _('OpenBao')),
+        Choice(BACKEND_VAULT, _('HashiCorp Vault')),
+    ]
+
+
 class AuthMethodChoices(ChoiceSet):
     """How the plugin authenticates to an OpenBao instance."""
 
