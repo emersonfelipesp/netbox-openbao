@@ -9,10 +9,15 @@ name: CI
 # do not provide as services. That suite is run against the real stack via
 # `docker-compose.dev.yml`; see docs/development.md.
 #
-# Runner: the conventional label for untrusted plugin CI in this estate is
-# `ci-untrusted-python312`, but that runner is currently offline, and a job
-# targeting an offline label queues indefinitely rather than failing. Switch
-# back to it once it is online again.
+# Runner: `linux_amd64` is the only label available to this repository. The
+# conventional label for untrusted plugin CI in this estate,
+# `ci-untrusted-python312`, belongs to a runner that is both offline *and*
+# scoped to the N-MultiCloud organisation — so it would not serve an
+# emersonfelipesp-owned repo even when online. `linux_amd64` is carried by the
+# shared `gitea-96-prod-deploy` runner, which also handles production deploys,
+# so a run here can queue behind them. Note that a job targeting a label no
+# online runner carries queues indefinitely rather than failing, which is why
+# the label matters more than it looks.
 
 on:
   push:
