@@ -212,6 +212,55 @@ class CredentialRevealViewTest(OpenBaoViewTestCase):
         self.assertNotIn(b'hunter2', getattr(response, 'content', b''))
 
 
+class StagedRotationViewTest(OpenBaoViewTestCase):
+
+    def setUp(self):
+        super().setUp()
+        from netbox_openbao.services import stage_material
+        stage_material(self.credential, {'password': 'candidate'})
+        self.credential.refresh_from_db()
+
+    def url(self, name):
+        return reverse(f'plugins:netbox_openbao:credential_{name}', kwargs={'pk': self.credential.pk})
+
+    def test_promote_and_discard_reject_get(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.rotate_credential')
+        for name in ('promote', 'discard'):
+            self.assertEqual(self.client.get(self.url(name)).status_code, 405, name)
+
+    def test_promote_requires_rotate_permission(self):
+        self.add_permissions('netbox_openbao.view_credential')
+        self.client.post(self.url('promote'), data={})
+
+        self.credential.refresh_from_db()
+        self.assertTrue(self.credential.has_staged_version, 'Promotion happened without permission.')
+
+    def test_promote_switches_the_live_version(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.rotate_credential')
+        self.client.post(self.url('promote'), data={'verified': '1', 'note': 'checked'})
+
+        self.credential.refresh_from_db()
+        self.assertFalse(self.credential.has_staged_version)
+        self.assertEqual(self.credential.live_kv_version, 2)
+
+    def test_discard_keeps_the_live_version(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.rotate_credential')
+        self.client.post(self.url('discard'), data={})
+
+        self.credential.refresh_from_db()
+        self.assertFalse(self.credential.has_staged_version)
+        self.assertEqual(self.credential.live_kv_version, 1)
+        self.assertEqual(FakeBackend.store[self.credential.path][0], {'password': 'hunter2'})
+
+    def test_detail_page_renders_the_rotation_panel_without_material(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.rotate_credential')
+        response = self.client.get(self.credential.get_absolute_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'candidate', response.content)
+        self.assertNotIn(b'hunter2', response.content)
+
+
 class CredentialListViewTest(OpenBaoViewTestCase):
 
     def test_list_renders_without_material(self):

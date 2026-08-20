@@ -12,7 +12,10 @@ and `netbox-cli` work unmodified.
 | `GET/POST /policies/` | Credential policy tiers |
 | `GET/POST /credentials/` | Credential inventory |
 | `GET`/`POST` `/credentials/{id}/reveal/` | **Resolve material** — needs `view_credential` + `reveal_credential` |
-| `POST /credentials/{id}/rotate/` | Write a new version — needs `view_credential` + `rotate_credential` and a write-enabled token |
+| `POST /credentials/{id}/rotate/` | Write a new version and make it live immediately |
+| `POST /credentials/{id}/stage/` | Write a new version **without** putting it into service |
+| `POST /credentials/{id}/promote/` | Put the staged version into service |
+| `POST /credentials/{id}/discard/` | Destroy the staged version, leaving the live one untouched |
 | `GET /credentials/{id}/versions/` | Version metadata, never values |
 | `GET/POST /assignments/` | Credential ↔ object bindings |
 | `GET /access-logs/` | Audit trail (read-only) |
@@ -106,10 +109,57 @@ actions, so the operative permission is the dedicated one:
 | Action | Required |
 |---|---|
 | `reveal` | `view_credential` + `reveal_credential` |
-| `rotate` | `view_credential` + `rotate_credential`, write-enabled token |
+| `rotate`, `stage`, `promote`, `discard` | `view_credential` + `rotate_credential`, write-enabled token |
 | `versions` | `view_credential` |
 
 Object-permission constraints apply to all three through `restrict()`.
+
+## Staged rotation
+
+`rotate` replaces material and makes it live in one step. That is fine for a
+credential nothing depends on yet, and wrong for one deployed to hundreds of
+hosts: there is no verification step and no way back except reading an old
+version by number.
+
+`stage` writes the replacement and leaves consumers on the current version:
+
+```bash
+curl -X POST .../credentials/142/stage/ -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"secret_data": {"private_key": "..."}}'
+```
+
+```json
+{"id": 142, "status": "staged", "kv_version": 7, "live_kv_version": 6, "has_staged_version": true}
+```
+
+Every `reveal` still returns version 6 while this is true. Deploy the new key,
+confirm it works, then:
+
+```bash
+curl -X POST .../credentials/142/promote/ -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"verified": true, "note": "confirmed on core-sw-01"}'
+```
+
+If it does not work, `discard` removes **only** the staged version — the live
+one is never touched — and the credential returns to `active`.
+
+`verified` and `note` are recorded in the access log. Actually testing the
+credential against a device is out of scope for this plugin; this is where the
+record that someone did lives.
+
+### Three version numbers, three meanings
+
+| Field | Meaning |
+|---|---|
+| `kv_version` | Highest version ever written. Check-and-set compares against this. |
+| `live_kv_version` | What consumers are served. Empty means "latest". |
+| `staged_kv_version` | A candidate awaiting a decision. Empty when none. |
+
+`kv_version` and `live_kv_version` legitimately diverge after a discard —
+OpenBao's version counter never goes backwards — which is why "is something
+staged?" has its own field rather than being inferred from a comparison.
 
 ## Errors
 

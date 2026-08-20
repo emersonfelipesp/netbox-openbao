@@ -73,6 +73,33 @@ class CredentialReadTest(OpenBaoAPITestCase):
         self.assertNotIn('hunter2', response.content.decode())
 
 
+class RevealErrorHandlingTest(OpenBaoAPITestCase):
+
+    def test_missing_required_reason_is_a_400_not_a_500(self):
+        """
+        The policy check raises Django's ValidationError from the service
+        layer, which DRF does not translate. Unhandled it surfaced as a 500.
+        """
+        self.policy.require_reason = True
+        self.policy.save()
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+
+        url = reverse('plugins-api:netbox_openbao-api:credential-reveal', kwargs={'pk': self.credential.pk})
+        response = self.client.get(url, **self.header)
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertNotIn(b'hunter2', response.content)
+
+    def test_supplying_the_reason_succeeds(self):
+        self.policy.require_reason = True
+        self.policy.save()
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+
+        url = reverse('plugins-api:netbox_openbao-api:credential-reveal', kwargs={'pk': self.credential.pk})
+        response = self.client.get(url + '?reason=CHG-77', **self.header)
+        self.assertEqual(response.status_code, 200, response.content)
+
+
 class RevealPermissionTest(OpenBaoAPITestCase):
 
     def test_view_permission_alone_cannot_reveal(self):
@@ -285,6 +312,123 @@ class CredentialRotateTest(OpenBaoAPITestCase):
             self.rotate_url(), {'secret_data': {'password': 'rotated'}}, format='json', **self.header
         )
         self.assertNotIn(b'rotated', response.content)
+
+
+class StagedRotationAPITest(OpenBaoAPITestCase):
+    """
+    The stage/promote/discard endpoints.
+
+    Written before trusting them, because the previous review found that every
+    custom POST action on this viewset was broken by NetBox's default
+    permission map and nobody noticed — there were no tests.
+    """
+
+    def url(self, name):
+        return reverse(f'plugins-api:netbox_openbao-api:credential-{name}', kwargs={'pk': self.credential.pk})
+
+    def grant(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.rotate_credential')
+
+    def test_stage_requires_rotate_permission(self):
+        self.add_permissions('netbox_openbao.view_credential')
+        response = self.client.post(
+            self.url('stage'), {'secret_data': {'password': 'cand'}}, format='json', **self.header
+        )
+        self.assertIn(response.status_code, (403, 404))
+
+    def test_stage_does_not_require_add_permission(self):
+        """The POST-maps-to-add trap, asserted directly."""
+        self.grant()
+        self.assertFalse(self.user.has_perm('netbox_openbao.add_credential'))
+        response = self.client.post(
+            self.url('stage'), {'secret_data': {'password': 'cand'}}, format='json', **self.header
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_full_stage_promote_cycle(self):
+        self.grant()
+
+        staged = self.client.post(
+            self.url('stage'), {'secret_data': {'password': 'candidate'}}, format='json', **self.header
+        )
+        self.assertEqual(staged.status_code, 200, staged.content)
+        self.assertTrue(staged.data['has_staged_version'])
+        self.assertEqual(staged.data['live_kv_version'], 1)
+
+        # Consumers still get the old material while it is staged.
+        reveal = self.client.get(
+            reverse('plugins-api:netbox_openbao-api:credential-reveal', kwargs={'pk': self.credential.pk}),
+            **self.header,
+        )
+        # 404 rather than 403 by design — the response must not confirm that a
+        # credential the caller cannot reveal exists.
+        self.assertEqual(reveal.status_code, 404)
+
+        promoted = self.client.post(self.url('promote'), {'verified': True}, format='json', **self.header)
+        self.assertEqual(promoted.status_code, 200, promoted.content)
+        self.assertFalse(promoted.data['has_staged_version'])
+        self.assertEqual(promoted.data['live_kv_version'], 2)
+
+    def test_discard_returns_to_the_live_version(self):
+        self.grant()
+        self.client.post(
+            self.url('stage'), {'secret_data': {'password': 'candidate'}}, format='json', **self.header
+        )
+        discarded = self.client.post(self.url('discard'), {}, format='json', **self.header)
+
+        self.assertEqual(discarded.status_code, 200, discarded.content)
+        self.assertFalse(discarded.data['has_staged_version'])
+        self.assertEqual(discarded.data['live_kv_version'], 1)
+        self.assertEqual(FakeBackend.store[self.credential.path][0], {'password': 'hunter2'})
+
+    def test_promote_without_a_staged_version_is_a_400(self):
+        self.grant()
+        response = self.client.post(self.url('promote'), {}, format='json', **self.header)
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_discard_without_a_staged_version_is_a_400(self):
+        self.grant()
+        response = self.client.post(self.url('discard'), {}, format='json', **self.header)
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_stage_without_material_is_a_400(self):
+        self.grant()
+        response = self.client.post(self.url('stage'), {}, format='json', **self.header)
+        self.assertEqual(response.status_code, 400)
+
+    def test_no_endpoint_echoes_material(self):
+        self.grant()
+        staged = self.client.post(
+            self.url('stage'), {'secret_data': {'password': 'candidate'}}, format='json', **self.header
+        )
+        promoted = self.client.post(self.url('promote'), {}, format='json', **self.header)
+        for response in (staged, promoted):
+            self.assertNotIn(b'candidate', response.content)
+            self.assertNotIn(b'hunter2', response.content)
+
+    def test_staged_material_is_not_served_to_readers(self):
+        """The guarantee, end to end over HTTP."""
+        self.add_permissions(
+            'netbox_openbao.view_credential',
+            'netbox_openbao.rotate_credential',
+            'netbox_openbao.reveal_credential',
+        )
+        self.client.post(
+            self.url('stage'), {'secret_data': {'password': 'candidate'}}, format='json', **self.header
+        )
+        reveal = self.client.get(
+            reverse('plugins-api:netbox_openbao-api:credential-reveal', kwargs={'pk': self.credential.pk}),
+            **self.header,
+        )
+        self.assertEqual(reveal.status_code, 200, reveal.content)
+        self.assertEqual(reveal.data['secret_data'], {'password': 'hunter2'})
+
+        self.client.post(self.url('promote'), {}, format='json', **self.header)
+        reveal = self.client.get(
+            reverse('plugins-api:netbox_openbao-api:credential-reveal', kwargs={'pk': self.credential.pk}),
+            **self.header,
+        )
+        self.assertEqual(reveal.data['secret_data'], {'password': 'candidate'})
 
 
 class AccessLogAPITest(OpenBaoAPITestCase):

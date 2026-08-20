@@ -76,9 +76,24 @@ class FakeBackend(SecretBackend):
         self.metadata.pop(path, None)
 
     def list_versions(self, path):
+        """
+        Report tombstoned versions as deleted.
+
+        An earlier version of this fake reported every slot as alive, which
+        made a promotion of a version that had been destroyed out of band look
+        fine in tests. A fake that cannot represent absence cannot test code
+        whose job is to notice absence.
+        """
         versions = self.store.get(path) or []
-        return [{'version': i + 1, 'created_time': None, 'deletion_time': None, 'destroyed': False}
-                for i in range(len(versions))][::-1]
+        return [
+            {
+                'version': i + 1,
+                'created_time': None,
+                'deletion_time': None if entry is not None else '2026-01-01T00:00:00Z',
+                'destroyed': entry is None,
+            }
+            for i, entry in enumerate(versions)
+        ][::-1]
 
     def read_metadata(self, path):
         if path not in self.store:
