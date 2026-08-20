@@ -66,7 +66,9 @@ class WritePathTest(OpenBaoTestCase):
 
         self.assertEqual(Credential.objects.count(), 0)
         self.assertNotIn(credential.path, FakeBackend.store)
-        self.assertIn(credential.path, FakeBackend.delete_calls)
+        # cas=0 on a create means nothing else lived at this path, so the
+        # compensator destroys it wholesale (versions=None).
+        self.assertEqual(FakeBackend.delete_calls, [(credential.path, None)])
 
     def test_duplicate_path_is_refused_by_the_database(self):
         """
@@ -115,6 +117,47 @@ class WritePathTest(OpenBaoTestCase):
         self.assertEqual(credential.kv_version, 2)
         self.assertIsNotNone(credential.last_rotated)
         self.assertEqual(len(FakeBackend.store[credential.path]), 2)
+
+    def test_failed_rotation_must_not_destroy_the_existing_secret(self):
+        """
+        Compensation after a failed *rotation* must remove only the version it
+        just wrote. Destroying the whole path would take the working secret
+        with it — turning a recoverable failure into data loss, which is far
+        worse than the orphan the compensator exists to prevent.
+        """
+        credential = self.make_credential()
+        write_material(credential, {'password': 'good-v1'}, user=self.user)
+        credential.refresh_from_db()
+
+        # The rotation's material lands, then the metadata update fails.
+        FakeBackend.fail_on_metadata = True
+        with self.assertRaises(OpenBaoConflict):
+            rotate_material(credential, {'password': 'bad-v2'}, user=self.user)
+
+        self.assertIn(
+            credential.path, FakeBackend.store,
+            'The credential path was destroyed by a failed rotation.',
+        )
+        self.assertEqual(
+            FakeBackend.store[credential.path][0], {'password': 'good-v1'},
+            'The previously-good version did not survive a failed rotation.',
+        )
+        # ...and the still-readable current value is that good version.
+        backend = FakeBackend(self.engine)
+        self.assertEqual(backend.read(credential.path), {'password': 'good-v1'})
+        # Only the failed version was removed, not the whole path.
+        self.assertEqual(FakeBackend.delete_calls, [(credential.path, (2,))])
+
+    def test_failed_create_still_removes_the_whole_path(self):
+        """The create case is different: nothing else lives there, so a full
+        destroy is the correct compensation."""
+        FakeBackend.fail_on_metadata = True
+        credential = self.make_credential()
+
+        with self.assertRaises(OpenBaoConflict):
+            write_material(credential, {'password': 'never-committed'}, user=self.user)
+
+        self.assertNotIn(credential.path, FakeBackend.store)
 
     def test_invalid_payload_is_rejected_before_any_write(self):
         credential = self.make_credential(credential_type=CredentialTypeChoices.TYPE_SSH_KEYPAIR)

@@ -202,7 +202,7 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
     cleaned, metadata = prepare_material(credential_type, payload)
 
     credential = subject
-    written = None  # (backend, path) once the material has landed
+    written = None  # (backend, path, version) once the material has landed
 
     try:
         with transaction.atomic():
@@ -210,7 +210,7 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
 
             backend = get_backend(credential.engine, credential.policy)
             version = backend.write(credential.path, cleaned, cas=cas)
-            written = (backend, credential.path)
+            written = (backend, credential.path, version)
 
             backend.set_metadata(credential.path, build_custom_metadata(credential))
 
@@ -226,15 +226,33 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
         # The database has already rolled back by the time we get here. If the
         # backend write landed, its path is now orphaned; remove it.
         if written is not None:
-            backend, path = written
+            backend, path, written_version = written
+            # Scope of the rollback matters enormously. `cas=0` means the write
+            # was only permitted if the path did not already exist, so
+            # destroying it wholesale is safe and correct. Any other `cas` is a
+            # rotation over material that was already there — removing the
+            # whole path would take the working secret with it, turning a
+            # recoverable failure into data loss far worse than the orphan the
+            # compensator exists to prevent. Remove only what this write added.
+            destroy_everything = cas == 0
             try:
-                backend.delete(path)
-                logger.warning('Rolled back orphaned OpenBao path %s after a failed credential write', path)
+                if destroy_everything:
+                    backend.delete(path)
+                    logger.warning(
+                        'Rolled back orphaned OpenBao path %s after a failed credential write', path
+                    )
+                else:
+                    backend.delete(path, versions=[written_version])
+                    logger.warning(
+                        'Rolled back OpenBao version %s at %s after a failed rotation; '
+                        'earlier versions were left intact',
+                        written_version, path,
+                    )
             except OpenBaoError:
                 logger.error(
-                    'ORPHANED SECRET: wrote %s but could not roll it back after a failed transaction. '
-                    'CredentialVerifyJob will report it.',
-                    path,
+                    'ORPHANED SECRET: wrote version %s at %s but could not roll it back after a failed '
+                    'transaction. CredentialVerifyJob will report it.',
+                    written_version, path,
                 )
         # The transaction has unwound. A create leaves an in-memory object
         # holding the primary key of an INSERT that no longer exists, so the

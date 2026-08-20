@@ -6,6 +6,7 @@ authorization is tested from the outside — through real HTTP with real
 ObjectPermissions — rather than by asserting on internals.
 """
 
+from django.test import override_settings
 from django.urls import reverse
 from users.models import ObjectPermission
 from utilities.testing import APITestCase
@@ -90,6 +91,27 @@ class RevealPermissionTest(OpenBaoAPITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['secret_data'], {'password': 'hunter2'})
+
+    def test_reveal_accepts_post(self):
+        """
+        POST keeps the reason out of the URL and out of every intermediary's
+        access log. NetBox maps POST to `add_<model>` by default, which would
+        make this require add_credential — so this asserts the override holds.
+        """
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+        response = self.client.post(
+            self.reveal_url(), {'reason': 'CHG-9'}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.data['secret_data'], {'password': 'hunter2'})
+
+    def test_reveal_does_not_require_add_permission(self):
+        """A reader must never need create rights to read."""
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+        self.assertFalse(self.user.has_perm('netbox_openbao.add_credential'))
+
+        self.assertEqual(self.client.get(self.reveal_url(), **self.header).status_code, 200)
 
     def test_reveal_response_is_not_storable(self):
         self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
@@ -194,6 +216,75 @@ class CredentialWriteTest(OpenBaoAPITestCase):
             **self.header,
         )
         self.assertEqual(response.status_code, 400)
+
+
+class RevealThrottleTest(OpenBaoAPITestCase):
+    """
+    The reveal rate limit bounds how fast a leaked token can drain the store,
+    which only matters if it is actually wired up.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from django.core.cache import cache
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_rate_limit': '2/hour'}})
+    def test_reveal_is_rate_limited(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+        url = self.reveal_url()
+
+        self.assertEqual(self.client.get(url, **self.header).status_code, 200)
+        self.assertEqual(self.client.get(url, **self.header).status_code, 200)
+
+        throttled = self.client.get(url, **self.header)
+        self.assertEqual(throttled.status_code, 429)
+        self.assertNotIn(b'hunter2', throttled.content)
+
+    def reveal_url(self):
+        return reverse('plugins-api:netbox_openbao-api:credential-reveal', kwargs={'pk': self.credential.pk})
+
+
+class CredentialRotateTest(OpenBaoAPITestCase):
+    """The rotate endpoint had no coverage; these are its first tests."""
+
+    def rotate_url(self):
+        return reverse('plugins-api:netbox_openbao-api:credential-rotate', kwargs={'pk': self.credential.pk})
+
+    def test_rotate_requires_its_own_permission(self):
+        self.add_permissions('netbox_openbao.view_credential')
+        response = self.client.post(
+            self.rotate_url(), {'secret_data': {'password': 'next'}}, format='json', **self.header
+        )
+        self.assertIn(response.status_code, (403, 404))
+
+    def test_rotate_writes_a_new_version(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.rotate_credential')
+        response = self.client.post(
+            self.rotate_url(), {'secret_data': {'password': 'rotated'}}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        # kv_version must be the integer version, not a tuple or an object.
+        self.assertEqual(response.data['kv_version'], 2)
+        self.assertIsInstance(response.data['kv_version'], int)
+
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.kv_version, 2)
+        self.assertEqual(FakeBackend.store[self.credential.path][-1], {'password': 'rotated'})
+
+    def test_rotate_without_material_is_rejected(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.rotate_credential')
+        response = self.client.post(self.rotate_url(), {}, format='json', **self.header)
+        self.assertEqual(response.status_code, 400)
+
+    def test_rotate_response_carries_no_material(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.rotate_credential')
+        response = self.client.post(
+            self.rotate_url(), {'secret_data': {'password': 'rotated'}}, format='json', **self.header
+        )
+        self.assertNotIn(b'rotated', response.content)
 
 
 class AccessLogAPITest(OpenBaoAPITestCase):

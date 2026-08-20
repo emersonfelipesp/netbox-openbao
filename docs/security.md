@@ -57,11 +57,15 @@ Constraints work too. A permission with `{"policy__slug": "lab"}` yields a
 The **UI** reveal is POST-only, so a secret is never fetched by a bookmark, a
 browser prefetch, a link scanner, or a history replay.
 
-## 5. GraphQL exposes metadata only
+## 5. No GraphQL surface at all
 
-There is no reveal field in GraphQL and there should not be. GraphQL queries
-are logged verbatim by most gateways, and the response shape is harder to audit
-than a single named REST action.
+The plugin registers no `graphql_schema`, so its models are not exposed through
+NetBox's GraphQL API in any form — not even metadata.
+
+This is deliberate rather than unfinished. GraphQL queries are logged verbatim
+by most gateways, and a graph API's response shape is harder to audit than a
+single named REST action. If metadata-only GraphQL types are added later, a
+reveal field must never be among them.
 
 ## 6. No auth material in the database
 

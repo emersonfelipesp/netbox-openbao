@@ -17,9 +17,9 @@ than inherited:
   constraints attached to the granting permission.
 * **Rate limiting**, so a leaked token cannot drain the store silently.
 
-GraphQL deliberately exposes metadata only and has no reveal field: GraphQL
-queries are logged verbatim by most gateways, and the response shape is harder
-to audit than a single named REST action.
+The plugin registers no GraphQL schema at all, so none of this is reachable
+that way: GraphQL queries are logged verbatim by most gateways, and a graph
+API's response shape is harder to audit than a single named REST action.
 """
 
 from django.db.models import Count
@@ -47,6 +47,7 @@ from netbox_openbao.models import (
 )
 from netbox_openbao.services import reveal_material, rotate_material, store_credential
 
+from .permissions import SecretActionPermissions
 from .serializers import (
     CredentialAccessLogSerializer,
     CredentialAssignmentSerializer,
@@ -190,6 +191,7 @@ class CredentialViewSet(NetBoxModelViewSet):
         methods=['get', 'post'],
         renderer_classes=[JSONRenderer],
         throttle_classes=[RevealRateThrottle],
+        permission_classes=[SecretActionPermissions],
     )
     def reveal(self, request, pk=None):
         """Return the secret payload. Requires `netbox_openbao.reveal_credential`."""
@@ -223,7 +225,12 @@ class CredentialViewSet(NetBoxModelViewSet):
             'secret_data': data,
         }))
 
-    @action(detail=True, methods=['post'], renderer_classes=[JSONRenderer])
+    @action(
+        detail=True,
+        methods=['post'],
+        renderer_classes=[JSONRenderer],
+        permission_classes=[SecretActionPermissions],
+    )
     def rotate(self, request, pk=None):
         """Write a new version of the material, keeping the same path and row."""
         credential = self._authorize(request, pk, 'rotate')
@@ -233,7 +240,12 @@ class CredentialViewSet(NetBoxModelViewSet):
             raise DRFValidationError({'secret_data': 'Secret data is required to rotate a credential.'})
 
         try:
-            version = rotate_material(credential, payload, user=request.user, request=request)
+            # rotate_material returns (credential, version); returning the
+            # tuple straight into the response body rendered kv_version as a
+            # pair containing the model instance.
+            _credential, version = rotate_material(
+                credential, payload, user=request.user, request=request
+            )
         except OpenBaoError as exc:
             return _no_store(Response(
                 {'detail': str(exc)},

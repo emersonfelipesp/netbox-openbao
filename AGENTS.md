@@ -108,6 +108,22 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   it in a transaction — and raise `AbortRequest` for backend failures.
 - **`super().clean()` can return `None`** in NetBox's form chain; fall back to
   `self.cleaned_data`.
+- **`TokenPermissions.perms_map` maps POST to `add_<model>`.** A custom POST
+  `@action` therefore demands *create* rights unless you override it — which
+  made `rotate` require `add_credential` and left `rotate_credential`
+  decorative, and broke POST-`reveal` entirely. `api/permissions.py`
+  remaps POST to `view_<model>` for both actions; the action's own permission
+  is enforced through `restrict()`. The inherited write-token check still
+  applies, so a read-only token cannot rotate.
+- **Compensating a failed *rotation* must be version-scoped.** `backend.delete(path)`
+  with no `versions` destroys the path and every version on it. On a create
+  (`cas=0`) that is correct; on a rotation it would take the working secret
+  with it — data loss strictly worse than the orphan the compensator exists to
+  prevent. `store_credential` branches on `cas`.
+- **Sharing a `requests.Session` across backends is safe only because hvac
+  builds `X-Vault-Token` per request** and never assigns to `session.headers`.
+  If that changes, two policy tiers on the same engine URL could send each
+  other's tokens. Do not move auth onto the session.
 
 ## Testing
 
@@ -125,7 +141,7 @@ python manage.py test netbox_openbao
 `docker-compose.dev.yml` brings up PostgreSQL, Redis, and OpenBao 2.6 dev mode.
 Full procedure in [`docs/development.md`](docs/development.md).
 
-Current state: **106 tests**, all passing against real NetBox 4.7.0-beta1 and a
+Current state: **115 tests**, all passing against real NetBox 4.7.0-beta1 and a
 live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
 
 ## When changing things

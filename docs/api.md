@@ -11,8 +11,8 @@ and `netbox-cli` work unmodified.
 | `GET /engines/{id}/health/` | Probe and record engine status |
 | `GET/POST /policies/` | Credential policy tiers |
 | `GET/POST /credentials/` | Credential inventory |
-| `GET /credentials/{id}/reveal/` | **Resolve material** — needs `reveal_credential` |
-| `POST /credentials/{id}/rotate/` | Write a new version — needs `rotate_credential` |
+| `GET`/`POST` `/credentials/{id}/reveal/` | **Resolve material** — needs `view_credential` + `reveal_credential` |
+| `POST /credentials/{id}/rotate/` | Write a new version — needs `view_credential` + `rotate_credential` and a write-enabled token |
 | `GET /credentials/{id}/versions/` | Version metadata, never values |
 | `GET/POST /assignments/` | Credential ↔ object bindings |
 | `GET /access-logs/` | Audit trail (read-only) |
@@ -94,6 +94,22 @@ indexed query and **zero OpenBao reads**:
 ?purpose=login
 ?q=core-sw-01                     # name, username, fingerprint, subject, serial
 ```
+
+## Permissions on the custom actions
+
+`reveal` and `rotate` accept POST, and NetBox's default API permission map
+treats POST as *create* (`add_<model>`). Left alone that would mean anyone who
+can rotate can already create, and a role holding only `rotate_credential`
+could not rotate at all. The plugin remaps POST to `view_<model>` for these two
+actions, so the operative permission is the dedicated one:
+
+| Action | Required |
+|---|---|
+| `reveal` | `view_credential` + `reveal_credential` |
+| `rotate` | `view_credential` + `rotate_credential`, write-enabled token |
+| `versions` | `view_credential` |
+
+Object-permission constraints apply to all three through `restrict()`.
 
 ## Errors
 

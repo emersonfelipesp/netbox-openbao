@@ -31,11 +31,17 @@ class FakeBackend(SecretBackend):
         if not versions:
             raise OpenBaoNotFound()
         if version is None:
-            return dict(versions[-1])
+            live = [v for v in versions if v is not None]
+            if not live:
+                raise OpenBaoNotFound()
+            return dict(live[-1])
         try:
-            return dict(versions[version - 1])
+            entry = versions[version - 1]
         except IndexError:
             raise OpenBaoNotFound() from None
+        if entry is None:
+            raise OpenBaoNotFound()
+        return dict(entry)
 
     def write(self, path, data, cas=None):
         if self.fail_on_write:
@@ -47,7 +53,25 @@ class FakeBackend(SecretBackend):
         return len(versions)
 
     def delete(self, path, versions=None):
-        self.delete_calls.append(path)
+        """
+        Mirror KV v2 semantics: deleting named versions removes only those and
+        leaves the path (and its other versions) in place, while omitting
+        `versions` destroys the path entirely. Collapsing the two — as an
+        earlier version of this fake did — hides exactly the bug that
+        distinguishes a scoped rollback from data loss.
+        """
+        self.delete_calls.append((path, tuple(versions) if versions else None))
+        if versions:
+            entries = self.store.get(path)
+            if not entries:
+                return
+            for v in versions:
+                if 1 <= v <= len(entries):
+                    entries[v - 1] = None  # tombstone; version numbers stay stable
+            if all(e is None for e in entries):
+                self.store.pop(path, None)
+                self.metadata.pop(path, None)
+            return
         self.store.pop(path, None)
         self.metadata.pop(path, None)
 

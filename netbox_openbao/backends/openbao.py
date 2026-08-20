@@ -45,6 +45,13 @@ logger = logging.getLogger('netbox.plugins.netbox_openbao.backends')
 # One pooled HTTP session per engine endpoint. Building a fresh TLS connection
 # for every reveal would dominate the latency budget of an operation that is
 # otherwise a single round-trip.
+#
+# Sharing a session between clients is safe *because* hvac builds the
+# X-Vault-Token header per request from the adapter instance and never assigns
+# to `session.headers` — verified against hvac's adapters.py. If that ever
+# changed, two policy tiers pointed at the same engine URL would share a
+# session and one tier's token could be sent with the other tier's request, so
+# do not "optimise" this into a session that carries auth headers.
 _sessions = {}
 _sessions_lock = threading.Lock()
 
