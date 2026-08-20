@@ -141,7 +141,24 @@ class Credential(PrimaryModel):
         null=True,
         blank=True,
         editable=False,
-        help_text=_('Mirror of the current KV v2 version at this path'),
+        help_text=_('Highest version ever written at this path. This is what check-and-set compares against.'),
+    )
+    live_kv_version = models.PositiveIntegerField(
+        verbose_name=_('live KV version'),
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=_(
+            'The version consumers are served. Empty means "whatever is latest", which is how every '
+            'credential behaved before staged rotation existed.'
+        ),
+    )
+    staged_kv_version = models.PositiveIntegerField(
+        verbose_name=_('staged KV version'),
+        null=True,
+        blank=True,
+        editable=False,
+        help_text=_('A written but not yet promoted candidate awaiting a decision. Empty when none.'),
     )
     last_verified = models.DateTimeField(
         verbose_name=_('last verified'),
@@ -199,6 +216,18 @@ class Credential(PrimaryModel):
         """
         prefix = (get_config('path_prefix') or 'netbox').strip('/')
         return f'{prefix}/credentials/{self.uuid}'
+
+    @property
+    def has_staged_version(self):
+        """
+        True while a candidate is written and awaiting promotion or discard.
+
+        Tracked by its own field rather than inferred from
+        `kv_version > live_kv_version`, because those two legitimately diverge
+        after a discard: OpenBao's version counter never goes backwards, so
+        `kv_version` stays high while nothing is staged.
+        """
+        return self.staged_kv_version is not None
 
     @property
     def is_expired(self):

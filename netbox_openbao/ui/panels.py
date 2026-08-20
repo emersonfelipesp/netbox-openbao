@@ -23,6 +23,7 @@ __all__ = (
     'CredentialPolicyPanel',
     'CredentialPublicMaterialPanel',
     'CredentialRevealPanel',
+    'CredentialRotationPanel',
     'CredentialStoragePanel',
     'EnginePolicyPanel',
     'PolicyCredentialPanel',
@@ -219,3 +220,23 @@ class CredentialRevealPanel(panels.Panel):
             'object': context['object'],
             'require_reason': context['object'].policy.require_reason,
         }
+
+
+class CredentialRotationPanel(panels.Panel):
+    """
+    Promote or discard a staged rotation.
+
+    Renders only while something is actually staged — an always-present panel
+    offering to promote nothing would be noise on every credential page in the
+    estate.
+    """
+
+    template_name = 'netbox_openbao/panels/rotation.html'
+    title = _('Staged rotation')
+
+    def should_render(self, context):
+        obj = context.get('object')
+        return bool(obj is not None and obj.has_staged_version and context.get('can_rotate'))
+
+    def get_context(self, context):
+        return {**super().get_context(context), 'object': context['object']}

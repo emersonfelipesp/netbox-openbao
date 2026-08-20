@@ -120,6 +120,14 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   (`cas=0`) that is correct; on a rotation it would take the working secret
   with it — data loss strictly worse than the orphan the compensator exists to
   prevent. `store_credential` branches on `cas`.
+- **Django's `ValidationError` is not translated by DRF** and escapes as a
+  **500**. The service layer raises Django's (it also serves forms and
+  management commands), so every API action calling it must convert —
+  `api/views._as_drf_validation_error`. This bit the reveal endpoint's
+  `require_reason` path before anyone noticed.
+- **`kv_version` and `live_kv_version` legitimately diverge** after a discard,
+  because OpenBao's version counter never goes backwards. Never infer "is
+  something staged?" from comparing them; `staged_kv_version` is the answer.
 - **Sharing a `requests.Session` across backends is safe only because hvac
   builds `X-Vault-Token` per request** and never assigns to `session.headers`.
   If that changes, two policy tiers on the same engine URL could send each
@@ -141,7 +149,7 @@ python manage.py test netbox_openbao
 `docker-compose.dev.yml` brings up PostgreSQL, Redis, and OpenBao 2.6 dev mode.
 Full procedure in [`docs/development.md`](docs/development.md).
 
-Current state: **115 tests**, all passing against real NetBox 4.7.0-beta1 and a
+Current state: **144 tests**, all passing against real NetBox 4.7.0-beta1 and a
 live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
 
 ## When changing things

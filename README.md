@@ -179,13 +179,12 @@ is an orphaned secret nobody can find. Discovery instead comes from KV v2
 Implemented: the five models, the backend abstraction with the OpenBao
 implementation, credential type schemas and extractors, the full REST API with
 the security invariants above, list/detail/edit UI, Device/VM/Service panels,
-and the background jobs.
+the background jobs, and staged rotation (write, verify, promote — never break
+running access).
 
 Deliberately not yet here:
 
 - HTMX reveal with countdown-to-clear, and the quick-add SSH wizard
-- Staged→active rotation promotion (write, verify, promote — never break
-  running access)
 - Operator-defined credential types (`CredentialTypeSchema`)
 - A HashiCorp Vault backend subclass — the ABC is in place for it
 - An Ansible lookup plugin

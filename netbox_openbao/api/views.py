@@ -22,6 +22,7 @@ that way: GraphQL queries are logged verbatim by most gateways, and a graph
 API's response shape is harder to audit than a single named REST action.
 """
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -45,7 +46,14 @@ from netbox_openbao.models import (
     CredentialPolicy,
     SecretEngine,
 )
-from netbox_openbao.services import reveal_material, rotate_material, store_credential
+from netbox_openbao.services import (
+    discard_staged,
+    promote_staged,
+    reveal_material,
+    rotate_material,
+    stage_material,
+    store_credential,
+)
 
 from .permissions import SecretActionPermissions
 from .serializers import (
@@ -53,6 +61,7 @@ from .serializers import (
     CredentialAssignmentSerializer,
     CredentialPolicySerializer,
     CredentialSerializer,
+    PromoteRequestSerializer,
     RevealRequestSerializer,
     SecretEngineSerializer,
 )
@@ -65,6 +74,20 @@ __all__ = (
     'CredentialViewSet',
     'SecretEngineViewSet',
 )
+
+
+def _as_drf_validation_error(exc):
+    """
+    Translate a Django ValidationError into DRF's.
+
+    The service layer raises Django's, because it is also called from forms and
+    management commands where DRF is not in play. DRF does not translate it, so
+    left alone it escapes as a **500** — which is what a user got for something
+    as ordinary as promoting a credential with nothing staged, or revealing one
+    whose policy requires a reason without supplying it.
+    """
+    detail = exc.message_dict if hasattr(exc, 'message_dict') else {'detail': exc.messages}
+    return DRFValidationError(detail)
 
 
 def _no_store(response):
@@ -208,6 +231,8 @@ class CredentialViewSet(NetBoxModelViewSet):
                 reason=params.validated_data.get('reason', ''),
                 version=params.validated_data.get('version'),
             )
+        except DjangoValidationError as exc:
+            raise _as_drf_validation_error(exc) from None
         except OpenBaoError as exc:
             return _no_store(Response(
                 {'detail': str(exc)},
@@ -253,6 +278,108 @@ class CredentialViewSet(NetBoxModelViewSet):
             ))
 
         return _no_store(Response({'id': credential.pk, 'kv_version': version}))
+
+    # ------------------------------------------------------------------
+    # Staged rotation
+    # ------------------------------------------------------------------
+    #
+    # All three transitions are gated on `rotate_credential` rather than each
+    # getting its own permission. They are three steps of one operation, and
+    # anyone trusted to replace a credential's material is necessarily trusted
+    # to finish or abandon the replacement. Splitting them would produce
+    # permission combinations with no coherent meaning — the right to promote
+    # material you were not allowed to stage, for one.
+
+    @action(
+        detail=True,
+        methods=['post'],
+        renderer_classes=[JSONRenderer],
+        permission_classes=[SecretActionPermissions],
+    )
+    def stage(self, request, pk=None):
+        """Write replacement material without putting it into service."""
+        credential = self._authorize(request, pk, 'rotate')
+
+        payload = request.data.get('secret_data')
+        if not payload:
+            raise DRFValidationError({'secret_data': 'Secret data is required to stage a rotation.'})
+
+        try:
+            credential, version = stage_material(
+                credential, payload, user=request.user, request=request
+            )
+        except DjangoValidationError as exc:
+            raise _as_drf_validation_error(exc) from None
+        except OpenBaoError as exc:
+            return _no_store(Response(
+                {'detail': str(exc)}, status=exc.status_code or status.HTTP_502_BAD_GATEWAY,
+            ))
+
+        return _no_store(Response({
+            'id': credential.pk,
+            'status': credential.status,
+            'kv_version': version,
+            'live_kv_version': credential.live_kv_version,
+            'has_staged_version': credential.has_staged_version,
+        }))
+
+    @action(
+        detail=True,
+        methods=['post'],
+        renderer_classes=[JSONRenderer],
+        permission_classes=[SecretActionPermissions],
+    )
+    def promote(self, request, pk=None):
+        """Put the staged version into service."""
+        credential = self._authorize(request, pk, 'rotate')
+
+        params = PromoteRequestSerializer(data=request.data)
+        params.is_valid(raise_exception=True)
+
+        try:
+            credential = promote_staged(
+                credential,
+                user=request.user,
+                request=request,
+                verified=params.validated_data.get('verified', False),
+                note=params.validated_data.get('note', ''),
+            )
+        except DjangoValidationError as exc:
+            raise _as_drf_validation_error(exc) from None
+        return _no_store(Response({
+            'id': credential.pk,
+            'status': credential.status,
+            'kv_version': credential.kv_version,
+            'live_kv_version': credential.live_kv_version,
+            'has_staged_version': credential.has_staged_version,
+        }))
+
+    @action(
+        detail=True,
+        methods=['post'],
+        renderer_classes=[JSONRenderer],
+        permission_classes=[SecretActionPermissions],
+    )
+    def discard(self, request, pk=None):
+        """Destroy the staged version, leaving the live one untouched."""
+        credential = self._authorize(request, pk, 'rotate')
+
+        try:
+            credential = discard_staged(credential, user=request.user, request=request)
+        except DjangoValidationError as exc:
+            raise _as_drf_validation_error(exc) from None
+        except OpenBaoError as exc:
+            return _no_store(Response(
+                {'detail': str(exc)}, status=exc.status_code or status.HTTP_502_BAD_GATEWAY,
+            ))
+
+        return _no_store(Response({
+            'id': credential.pk,
+            'status': credential.status,
+            'kv_version': credential.kv_version,
+            'live_kv_version': credential.live_kv_version,
+            'has_staged_version': credential.has_staged_version,
+        }))
 
     @action(detail=True, methods=['get'])
     def versions(self, request, pk=None):

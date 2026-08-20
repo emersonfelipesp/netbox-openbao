@@ -121,12 +121,18 @@ class AccessActionChoices(ChoiceSet):
     ACTION_REVEAL = 'reveal'
     ACTION_WRITE = 'write'
     ACTION_ROTATE = 'rotate'
+    ACTION_STAGE = 'stage'
+    ACTION_PROMOTE = 'promote'
+    ACTION_DISCARD = 'discard'
     ACTION_DELETE = 'delete'
 
     CHOICES = [
         Choice(ACTION_REVEAL, _('Reveal'), color='orange'),
         Choice(ACTION_WRITE, _('Write'), color='blue'),
         Choice(ACTION_ROTATE, _('Rotate'), color='cyan'),
+        Choice(ACTION_STAGE, _('Stage'), color='blue'),
+        Choice(ACTION_PROMOTE, _('Promote'), color='green'),
+        Choice(ACTION_DISCARD, _('Discard'), color='gray'),
         Choice(ACTION_DELETE, _('Delete'), color='red'),
     ]
 

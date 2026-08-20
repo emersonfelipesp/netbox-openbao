@@ -29,13 +29,16 @@ from django.utils.translation import gettext_lazy as _
 
 from netbox_openbao.backends import get_backend
 from netbox_openbao.backends.exceptions import OpenBaoError
-from netbox_openbao.choices import AccessActionChoices
+from netbox_openbao.choices import AccessActionChoices, CredentialStatusChoices
 from netbox_openbao.config import get_config
 from netbox_openbao.secrets.registry import extract_metadata, validate_payload
 
 __all__ = (
     'build_custom_metadata',
     'delete_material',
+    'discard_staged',
+    'promote_staged',
+    'stage_material',
     'log_access',
     'prepare_material',
     'reveal_material',
@@ -181,7 +184,7 @@ def prepare_material(credential_type, payload):
 # ----------------------------------------------------------------------
 
 def store_credential(persist, credential_type, payload, *, cas=0, user=None, request=None, action=None,
-                     subject=None):
+                     subject=None, promote=True):
     """
     Persist a credential row and its material as one unit.
 
@@ -191,6 +194,10 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
             and internal callers pass a closure over `instance.save()`.
         subject: The Credential this operation concerns, used only to identify
             the audit entry when `persist` itself fails and never returns one.
+        promote: Whether the new version becomes the one consumers are served.
+            False writes it alongside the live version instead — which is the
+            whole point of staging, and the reason resolution has to consult
+            `live_kv_version` rather than always taking latest.
         cas: Check-and-set precondition. `0` requires the path not to exist,
             which is what stops a create silently overwriting an existing
             secret at a colliding path. Pass the current `kv_version` when
@@ -217,9 +224,22 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
             credential.kv_version = version
             credential.last_verified = timezone.now()
             update_fields = ['kv_version', 'last_verified']
+
+            if promote:
+                # The ordinary path: what was just written is what consumers get.
+                credential.live_kv_version = version
+                credential.staged_kv_version = None
+                update_fields += ['live_kv_version', 'staged_kv_version']
+            else:
+                credential.staged_kv_version = version
+                update_fields.append('staged_kv_version')
             if action == AccessActionChoices.ACTION_ROTATE:
                 credential.last_rotated = timezone.now()
                 update_fields.append('last_rotated')
+            if action == AccessActionChoices.ACTION_STAGE:
+                credential.status = CredentialStatusChoices.STATUS_STAGED
+                update_fields.append('status')
+
             credential.save(update_fields=update_fields)
 
     except Exception as exc:
@@ -280,7 +300,7 @@ def _row_exists(credential):
         return False
 
 
-def write_material(credential, payload, *, cas=0, user=None, request=None, action=None):
+def write_material(credential, payload, *, cas=0, user=None, request=None, action=None, promote=True):
     """
     Convenience wrapper for callers holding an unsaved or already-built
     `Credential` instance (forms, quick-add, management commands).
@@ -301,6 +321,7 @@ def write_material(credential, payload, *, cas=0, user=None, request=None, actio
         request=request,
         action=action,
         subject=credential,
+        promote=promote,
     )
 
 
@@ -342,9 +363,14 @@ def reveal_material(credential, user, request=None, reason='', version=None):
         )
         raise ValidationError({'reason': _("This credential's policy requires a reason for every reveal.")})
 
+    # Resolution order: an explicitly requested version, then the promoted
+    # one, then latest. The middle step is what keeps a staged rotation from
+    # being served before anyone has confirmed it works.
+    effective_version = version if version is not None else credential.live_kv_version
+
     backend = get_backend(credential.engine, policy)
     try:
-        data = backend.read(credential.path, version=version)
+        data = backend.read(credential.path, version=effective_version)
     except OpenBaoError as exc:
         log_access(
             credential, user, AccessActionChoices.ACTION_REVEAL, success=False,
@@ -356,6 +382,132 @@ def reveal_material(credential, user, request=None, reason='', version=None):
 
     ttl = min(int(get_config('reveal_ttl') or 300), policy.max_reveal_ttl)
     return data, ttl
+
+
+def stage_material(credential, payload, user=None, request=None):
+    """
+    Write replacement material *without* putting it into service.
+
+    The previous version stays live, so every consumer keeps working while the
+    new one is verified. That is the entire reason this exists: rotating a key
+    that is deployed to hundreds of hosts by flipping it in one write leaves no
+    verification step and no way back except reading an old version by number.
+    """
+    if credential.has_staged_version:
+        raise ValidationError({
+            'status': _('This credential already has a staged version. Promote or discard it first.'),
+        })
+
+    # A credential written before staged rotation existed has no live pointer,
+    # which means "serve latest". Staging under that rule would put the new,
+    # unverified version straight into service — the exact outcome staging
+    # exists to prevent. Pin the pointer to what is live *now* first.
+    if credential.live_kv_version is None and credential.kv_version is not None:
+        credential.live_kv_version = credential.kv_version
+        credential.save(update_fields=['live_kv_version'])
+
+    return write_material(
+        credential,
+        payload,
+        cas=credential.kv_version,
+        user=user,
+        request=request,
+        action=AccessActionChoices.ACTION_STAGE,
+        promote=False,
+    )
+
+
+def promote_staged(credential, user=None, request=None, verified=False, note=''):
+    """
+    Put the staged version into service.
+
+    Nothing is written to the backend here — the material is already there.
+    Promotion is purely the NetBox-side decision about which version consumers
+    are handed, which is why it cannot fail halfway and needs no compensator.
+    """
+    if not credential.has_staged_version:
+        raise ValidationError({'status': _('This credential has no staged version to promote.')})
+
+    # Promotion is the moment consumers are committed to a version, so confirm
+    # it is actually still there. Flipping the pointer to a version that was
+    # destroyed out of band would break every consumer at once — the precise
+    # failure this whole workflow exists to avoid — and would do it silently,
+    # because nothing reads the material during promotion.
+    backend = get_backend(credential.engine, credential.policy)
+    try:
+        versions = {v['version']: v for v in backend.list_versions(credential.path)}
+    except OpenBaoError as exc:
+        log_access(
+            credential, user, AccessActionChoices.ACTION_PROMOTE, success=False,
+            message=str(exc), request=request,
+        )
+        raise
+
+    staged = versions.get(credential.staged_kv_version)
+    if staged is None or staged.get('destroyed') or staged.get('deletion_time'):
+        log_access(
+            credential, user, AccessActionChoices.ACTION_PROMOTE, success=False,
+            message='Staged version is no longer present.', request=request,
+        )
+        raise ValidationError({
+            'status': _('Version {version} is no longer present in OpenBao and cannot be promoted.').format(
+                version=credential.staged_kv_version,
+            ),
+        })
+
+    credential.live_kv_version = credential.staged_kv_version
+    credential.staged_kv_version = None
+    credential.status = CredentialStatusChoices.STATUS_ACTIVE
+    credential.last_rotated = timezone.now()
+    credential.save(update_fields=['live_kv_version', 'staged_kv_version', 'status', 'last_rotated'])
+
+    # `verified` records that a human or a job confirmed the new material works
+    # before it went live. Actually testing it against a device belongs to
+    # netbox-rpc; this is the place that remembers someone did.
+    reason = note or ''
+    if verified:
+        reason = f'verified: {reason}'.strip().rstrip(':')
+    log_access(
+        credential, user, AccessActionChoices.ACTION_PROMOTE, success=True,
+        reason=reason, request=request,
+    )
+    return credential
+
+
+def discard_staged(credential, user=None, request=None):
+    """
+    Destroy the staged version and leave the live one untouched.
+
+    Deletes *only* the staged version. `kv_version` is deliberately left where
+    it is: OpenBao's current-version counter does not go backwards when a
+    version is deleted, so check-and-set on the next write must still compare
+    against the highest number ever issued. That divergence is exactly why
+    "is something staged?" needs its own field rather than being inferred from
+    a comparison of the two.
+    """
+    if not credential.has_staged_version:
+        raise ValidationError({'status': _('This credential has no staged version to discard.')})
+
+    staged_version = credential.staged_kv_version
+    backend = get_backend(credential.engine, credential.policy)
+    try:
+        backend.delete(credential.path, versions=[staged_version])
+    except OpenBaoError as exc:
+        log_access(
+            credential, user, AccessActionChoices.ACTION_DISCARD, success=False,
+            message=str(exc), request=request,
+        )
+        raise
+
+    credential.staged_kv_version = None
+    credential.status = CredentialStatusChoices.STATUS_ACTIVE
+    credential.save(update_fields=['staged_kv_version', 'status'])
+
+    log_access(
+        credential, user, AccessActionChoices.ACTION_DISCARD, success=True,
+        reason=f'discarded version {staged_version}', request=request,
+    )
+    return credential
 
 
 def delete_material(credential, user=None, request=None):

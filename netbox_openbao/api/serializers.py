@@ -34,6 +34,7 @@ from netbox_openbao.utils import assignable_content_types
 
 __all__ = (
     'CredentialAccessLogSerializer',
+    'PromoteRequestSerializer',
     'CredentialAssignmentSerializer',
     'CredentialPolicySerializer',
     'CredentialSerializer',
@@ -83,6 +84,7 @@ class CredentialSerializer(PrimaryModelSerializer):
     policy = CredentialPolicySerializer(nested=True)
     engine = SecretEngineSerializer(nested=True, required=False)
     assignment_count = serializers.IntegerField(read_only=True)
+    has_staged_version = serializers.BooleanField(read_only=True)
 
     # The material. Write-only by declaration, so DRF will not serialize it
     # under any circumstance. It is consumed by the viewset and handed to the
@@ -99,11 +101,15 @@ class CredentialSerializer(PrimaryModelSerializer):
             'id', 'url', 'display_url', 'display', 'name', 'uuid', 'credential_type', 'policy', 'engine',
             'path', 'username', 'public_key', 'fingerprint', 'key_type', 'cert_serial', 'cert_subject',
             'cert_issuer', 'valid_from', 'valid_until', 'status', 'rotation_interval', 'last_rotated',
-            'kv_version', 'last_verified', 'assignment_count', 'secret_data', 'description', 'owner',
-            'comments', 'tags', 'custom_fields', 'created', 'last_updated',
+            'kv_version', 'live_kv_version', 'staged_kv_version', 'has_staged_version', 'last_verified',
+            'assignment_count',
+            'secret_data', 'description', 'owner', 'comments', 'tags', 'custom_fields', 'created',
+            'last_updated',
         )
         brief_fields = ('id', 'url', 'display', 'name', 'credential_type', 'status', 'description')
-        read_only_fields = ('uuid', 'path', 'kv_version', 'last_verified')
+        read_only_fields = (
+            'uuid', 'path', 'kv_version', 'live_kv_version', 'staged_kv_version', 'last_verified',
+        )
 
     def validate(self, data):
         # NetBox's ValidatedModelSerializer builds `Model(**attrs)` to run
@@ -133,6 +139,13 @@ class CredentialSerializer(PrimaryModelSerializer):
         if secret_data is not None:
             data['secret_data'] = secret_data
         return data
+
+
+class PromoteRequestSerializer(serializers.Serializer):
+    """Body accepted by the promote action."""
+
+    verified = serializers.BooleanField(required=False, default=False)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
 
 class CredentialAssignmentSerializer(NetBoxModelSerializer):

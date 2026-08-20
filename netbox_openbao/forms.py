@@ -13,6 +13,7 @@ which passes it to the backend and drops it.
 
 from django import forms
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
 from netbox.context import current_request
 from netbox.forms import NetBoxModelFilterSetForm, NetBoxModelForm, OrganizationalModelForm, PrimaryModelForm
@@ -36,7 +37,7 @@ from .config import get_config
 from .models import Credential, CredentialAssignment, CredentialPolicy, SecretEngine
 from .secrets.generators import generate_ssh_keypair
 from .secrets.registry import get_schema
-from .services import store_credential
+from .services import stage_material, store_credential
 from .utils import assignable_content_types, get_default_engine
 
 __all__ = (
@@ -156,6 +157,14 @@ class CredentialForm(PrimaryModelForm):
     )
     comments = CommentField()
 
+    stage_rotation = forms.BooleanField(
+        required=False,
+        label=_('Stage this change instead of applying it now'),
+        help_text=_(
+            'Writes the new material alongside the current version and leaves consumers on the '
+            'existing one until you promote it.'
+        ),
+    )
     generate_key = forms.BooleanField(
         required=False,
         label=_('Generate a new keypair'),
@@ -170,6 +179,7 @@ class CredentialForm(PrimaryModelForm):
     fieldsets = (
         FieldSet('name', 'credential_type', 'policy', 'engine', 'username', 'description', name=_('Credential')),
         FieldSet('generate_key', 'generate_key_type', name=_('Generation')),
+        FieldSet('stage_rotation', name=_('Rotation')),
         FieldSet(*SECRET_INPUT_FIELDS, name=_('Secret material')),
         FieldSet('status', 'rotation_interval', name=_('Lifecycle')),
         FieldSet('tags', name=_('Tags')),
@@ -204,6 +214,11 @@ class CredentialForm(PrimaryModelForm):
             )
 
         self.fields['generate_key_type'].initial = get_config('default_ssh_key_type')
+
+        # Staging only means anything for a credential that already has live
+        # material to protect.
+        if self.instance.pk is None:
+            del self.fields['stage_rotation']
         if not get_config('allow_generation', True):
             del self.fields['generate_key']
             del self.fields['generate_key_type']
@@ -274,6 +289,19 @@ class CredentialForm(PrimaryModelForm):
 
         request = current_request.get()
         user = getattr(request, 'user', None) if request else None
+
+        if self.cleaned_data.get('stage_rotation') and self.instance.pk:
+            # Save the non-secret edits first, then stage the material. The two
+            # are separate on purpose: staging must not silently also promote
+            # whatever else the operator changed on the form.
+            instance = super().save(*args, **kwargs)
+            try:
+                stage_material(instance, payload, user=user, request=request)
+            except OpenBaoError as exc:
+                raise AbortRequest(str(exc)) from None
+            except DjangoValidationError as exc:
+                raise AbortRequest('; '.join(exc.messages)) from None
+            return instance
 
         def persist(metadata):
             for field, value in metadata.items():

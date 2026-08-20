@@ -9,6 +9,7 @@ credential out of the URL bar and the referrer header.
 """
 
 from django.contrib import messages
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.translation import gettext_lazy as _
@@ -22,7 +23,7 @@ from utilities.views import ObjectPermissionRequiredMixin, register_model_view
 from . import filtersets, forms, tables
 from .backends.exceptions import OpenBaoError
 from .models import Credential, CredentialAccessLog, CredentialAssignment, CredentialPolicy, SecretEngine
-from .services import reveal_material
+from .services import discard_staged, promote_staged, reveal_material
 from .ui import panels as openbao_panels
 
 __all__ = (
@@ -40,6 +41,8 @@ __all__ = (
     'CredentialPolicyEditView',
     'CredentialPolicyListView',
     'CredentialPolicyView',
+    'CredentialDiscardView',
+    'CredentialPromoteView',
     'CredentialRevealView',
     'CredentialView',
     'SecretEngineDeleteView',
@@ -159,6 +162,7 @@ class CredentialView(generic.ObjectView):
         ],
         right_panels=[
             openbao_panels.CredentialRevealPanel(),
+            openbao_panels.CredentialRotationPanel(),
             openbao_panels.CredentialStoragePanel(),
             openbao_panels.CredentialLifecyclePanel(),
             CommentsPanel(),
@@ -174,6 +178,7 @@ class CredentialView(generic.ObjectView):
         # actually holds the permission on this object.
         return {
             'can_reveal': request.user.has_perm('netbox_openbao.reveal_credential', obj=instance),
+            'can_rotate': request.user.has_perm('netbox_openbao.rotate_credential', obj=instance),
         }
 
 
@@ -246,6 +251,58 @@ class CredentialRevealView(ObjectPermissionRequiredMixin, View):
         response['Pragma'] = 'no-cache'
         response['Expires'] = '0'
         return response
+
+
+class _StagedTransitionView(ObjectPermissionRequiredMixin, View):
+    """
+    Shared base for promote and discard.
+
+    POST-only, like reveal: both change what every consumer of this credential
+    receives, which is not something a link prefetch should be able to do.
+    """
+
+    queryset = Credential.objects.select_related('policy', 'engine')
+    success_message = ''
+
+    def get_required_permission(self):
+        return 'netbox_openbao.rotate_credential'
+
+    def apply(self, credential, request):
+        raise NotImplementedError
+
+    def post(self, request, pk):
+        credential = get_object_or_404(self.queryset.restrict(request.user, 'rotate'), pk=pk)
+        try:
+            self.apply(credential, request)
+        except OpenBaoError as exc:
+            messages.error(request, _('Could not reach OpenBao: {error}').format(error=exc))
+        except DjangoValidationError as exc:
+            messages.error(request, '; '.join(exc.messages))
+        else:
+            messages.success(request, self.success_message.format(name=credential))
+        return redirect(credential.get_absolute_url())
+
+
+@register_model_view(Credential, 'promote')
+class CredentialPromoteView(_StagedTransitionView):
+    success_message = _('Promoted the staged version of {name}.')
+
+    def apply(self, credential, request):
+        promote_staged(
+            credential,
+            user=request.user,
+            request=request,
+            verified=bool(request.POST.get('verified')),
+            note=request.POST.get('note', ''),
+        )
+
+
+@register_model_view(Credential, 'discard')
+class CredentialDiscardView(_StagedTransitionView):
+    success_message = _('Discarded the staged version of {name}.')
+
+    def apply(self, credential, request):
+        discard_staged(credential, user=request.user, request=request)
 
 
 #

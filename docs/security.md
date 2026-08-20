@@ -138,7 +138,24 @@ under the plugin's prefix that NetBox no longer has a row for.
 Deleting a `Credential` destroys its material via a `pre_delete` signal, so
 removing a row never leaves a readable secret behind on the mount.
 
-## 11. Check-and-set on every write
+## 11. A rotation cannot break a consumer, and cannot lose the old secret
+
+`stage` writes replacement material without putting it into service, so a
+rotation has a verification step and a way back. Two properties matter:
+
+- While a version is staged, `reveal` continues to return the **live** version.
+  Resolution consults `live_kv_version` before falling back to latest.
+- `discard` deletes **only** the staged version. Compensation elsewhere in the
+  write path is scoped the same way, for the same reason: destroying a whole
+  path to clean up a failed rotation would take the working secret with it.
+
+A credential written before staged rotation existed has no live pointer, which
+means "serve latest". Staging pins the pointer to what is live *now* before
+writing the candidate — otherwise the first stage on such a credential would
+put the unverified version straight into service, which is the exact outcome
+staging exists to prevent.
+
+## 12. Check-and-set on every write
 
 Creates use `cas=0`, which requires the path not to exist — so a create cannot
 silently overwrite material written outside NetBox. Rotations use the recorded
@@ -146,7 +163,7 @@ silently overwrite material written outside NetBox. Rotations use the recorded
 Both are verified against a live OpenBao in the integration tests, because a
 mock proves nothing about whether `hvac` and OpenBao agree on what `cas` means.
 
-## 12. Form inputs are not echoed
+## 13. Form inputs are not echoed
 
 Secret form fields use widgets with `render_value=False`. On a validation error
 the browser gets an empty box, not the key the user just pasted — which would

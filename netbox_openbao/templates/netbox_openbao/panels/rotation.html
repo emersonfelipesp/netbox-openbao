@@ -1,0 +1,45 @@
+{% extends "ui/panels/_base.html" %}
+{% load i18n %}
+
+{% comment %}
+  Shown only while a candidate version is awaiting a decision. Both controls
+  are POST forms rather than links: each changes what every consumer of this
+  credential receives.
+{% endcomment %}
+
+{% block panel_content %}
+  <div class="p-3">
+    <p class="mb-3">
+      {% blocktrans with staged=object.staged_kv_version live=object.live_kv_version %}
+        Version {{ staged }} is written and waiting. Consumers are still being served
+        version {{ live }}.
+      {% endblocktrans %}
+    </p>
+
+    <form method="post" action="{% url 'plugins:netbox_openbao:credential_promote' pk=object.pk %}" class="mb-3">
+      {% csrf_token %}
+      <div class="mb-2">
+        <label class="form-label" for="promote-note">{% trans "Verification note" %}</label>
+        <input type="text" class="form-control" id="promote-note" name="note" maxlength="500"
+               placeholder="{% trans 'e.g. confirmed on core-sw-01' %}">
+      </div>
+      <div class="form-check mb-2">
+        <input class="form-check-input" type="checkbox" id="promote-verified" name="verified" value="1">
+        <label class="form-check-label" for="promote-verified">
+          {% trans "I confirmed the new material works" %}
+        </label>
+      </div>
+      <button type="submit" class="btn btn-success w-100">
+        <span class="mdi mdi-check-bold" aria-hidden="true"></span> {% trans "Promote" %}
+      </button>
+    </form>
+
+    <form method="post" action="{% url 'plugins:netbox_openbao:credential_discard' pk=object.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-outline-danger w-100">
+        <span class="mdi mdi-close" aria-hidden="true"></span> {% trans "Discard staged version" %}
+      </button>
+      <div class="form-text">{% trans "Removes only the staged version. The live one is untouched." %}</div>
+    </form>
+  </div>
+{% endblock panel_content %}
