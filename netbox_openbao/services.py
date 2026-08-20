@@ -151,6 +151,8 @@ def build_custom_metadata(credential):
         'netbox_policy': credential.policy.slug if credential.policy_id else '',
         'netbox_assignments': assignments,
     }
+    if credential.import_source:
+        metadata['netbox_import_source'] = credential.import_source
 
     from django.conf import settings
 

@@ -115,6 +115,18 @@ class Credential(PrimaryModel):
         db_index=True,
     )
 
+    import_source = models.CharField(
+        verbose_name=_('import source'),
+        max_length=200,
+        blank=True,
+        db_index=True,
+        editable=False,
+        help_text=_(
+            'Provenance for a credential copied in from another system, e.g. "netbox_secrets:142". '
+            'What makes a migration resumable and a repeated run a no-op.'
+        ),
+    )
+
     # Lifecycle
     status = models.CharField(
         verbose_name=_('status'),

@@ -98,6 +98,9 @@ class CredentialStoragePanel(panels.ObjectAttributesPanel):
     path = attrs.TextAttr('path', style='font-monospace', copy_button=True)
     uuid = attrs.TextAttr('uuid', label=_('UUID'), style='font-monospace', copy_button=True)
     kv_version = attrs.NumericAttr('kv_version', label=_('KV version'))
+    live_kv_version = attrs.NumericAttr('live_kv_version', label=_('Live version'))
+    staged_kv_version = attrs.NumericAttr('staged_kv_version', label=_('Staged version'))
+    import_source = attrs.TextAttr('import_source', label=_('Imported from'), style='font-monospace')
     last_verified = attrs.DateTimeAttr('last_verified', label=_('Last verified'))
 
 
