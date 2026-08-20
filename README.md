@@ -88,6 +88,7 @@ test in `netbox_openbao/tests/test_security.py`:
 | Redis | 6+ |
 | OpenBao | 2.6.x, KV v2 mount |
 | HashiCorp Vault | supported as an alternative backend — see below |
+| Broker mode | optional; needs [`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker) |
 
 NetBox 4.7 is required deliberately rather than incidentally: it replaced
 `ipam.Service`'s `protocol`/`ports` with `port_mappings` and moved the service's
@@ -167,6 +168,30 @@ field. The two share the KV v2 and AppRole surfaces, and the plugin's whole
 wire-protocol contract is run as one shared suite against both servers, so this
 is verified rather than claimed.
 
+## Broker mode, and what it is honestly worth
+
+A third backend, `broker`, points an engine at
+[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker)
+instead of at OpenBao. NetBox then holds a **client certificate** that lets it
+*ask*, and the broker holds the AppRole that can actually *read*.
+
+It is worth being precise about what that buys, because it is easy to oversell
+and an operator might relax controls elsewhere on the strength of it:
+
+> **It does not make "NetBox compromise ≠ secret compromise" true.** An attacker
+> with code execution in NetBox can still ask the broker for material, and the
+> broker will answer for anything NetBox is authorized to request.
+
+What it does buy: stealing NetBox's database or configuration no longer yields
+credentials that read the vault directly, the broker's audit log sits outside
+NetBox's blast radius, and the AppRole's SecretID never exists on the NetBox
+host at all. That is a real improvement against offline compromise, backup
+theft, and configuration leakage — and it is not the stronger claim.
+
+Optional throughout. The default deployment is unchanged, and nothing above the
+`SecretBackend` abstraction knows which mode is in use. See
+[`docs/installation.md`](docs/installation.md#broker-mode).
+
 ## Data model
 
 | Model | Role |
@@ -191,11 +216,16 @@ the security invariants above, list/detail/edit UI, Device/VM/Service panels,
 the background jobs, and staged rotation (write, verify, promote — never break
 running access).
 
+Also shipped since: the
+[Ansible lookup plugin](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-ansible)
+and [broker mode](#broker-mode-and-what-it-is-honestly-worth), whose earlier
+description here — "so a NetBox compromise is not a secret compromise" —
+claimed more than the design delivers and has been corrected above.
+
 Deliberately not yet here:
 
-- An Ansible lookup plugin
-- The optional broker mode, where a separate service holds the AppRole so a
-  NetBox compromise is not a secret compromise
+- Dynamic secrets (database and cloud credential engines), which are a
+  different lifecycle rather than a bigger version of this one
 
 ## Giving a device SSH access
 

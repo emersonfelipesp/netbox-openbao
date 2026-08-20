@@ -108,6 +108,72 @@ appears in the process environment (where it is readable via
 NETBOX_BAO_PRIMARY_SECRET_ID_FILE=/run/secrets/bao-secret-id
 ```
 
+## Broker mode
+
+Optional. Set a `SecretEngine`'s **backend** to `Broker (netbox-openbao-broker)`
+and point its **API URL** at a running
+[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker).
+NetBox then presents a client certificate to the broker, and the broker holds
+the AppRole. Nothing above the backend abstraction changes.
+
+Read [the broker's threat model](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker#what-this-buys-stated-honestly)
+before deploying it. In short: an attacker with code execution in NetBox can
+still *ask* the broker for material and be answered. What changes is that
+stealing the database or the configuration no longer yields vault credentials,
+and that the audit record is outside NetBox's reach.
+
+The client certificate is named by **paths on the NetBox host**, keyed on the
+engine's environment prefix — the same prefix the AppRole would use:
+
+```bash
+NETBOX_BAO_PRIMARY_CLIENT_CERT=/etc/netbox/openbao/netbox-prod.pem
+NETBOX_BAO_PRIMARY_CLIENT_KEY=/etc/netbox/openbao/netbox-prod.key
+```
+
+These are paths, not material, so there is no `_FILE` form — there is no value
+here to keep out of `/proc/<pid>/environ`. The key file must be readable by the
+NetBox user and by the RQ worker, and by nobody else.
+
+The engine's **CA certificate path** and **TLS verify** fields verify the
+*broker's* server certificate. Set the CA path if the broker's certificate is
+issued by an internal PKI, which it usually is.
+
+**Verification cannot be turned off in broker mode.** Direct mode tolerates
+`tls_verify = False` and the cost is a short-lived token presented to whoever
+answers; here the client certificate is the credential and it is long-lived, so
+an unverified peer is a credential handed to a man in the middle. A self-signed
+broker certificate is served by pointing the CA certificate path at it, so this
+refuses nothing legitimate.
+
+A `CredentialPolicy` tier can present its **own** certificate by setting
+`<TIER_PREFIX>_CLIENT_CERT` / `_CLIENT_KEY`. The broker identifies callers by
+the certificate's subject common name, so a different certificate is a
+different broker instance with a different set of permitted path prefixes —
+the tiering that AppRoles give you in direct mode is preserved, not flattened.
+
+Three engine fields are **ignored** in broker mode, deliberately:
+
+| Field | Why |
+|---|---|
+| KV mount | The broker reads its own. Letting NetBox choose would let a compromised NetBox address mounts the operator never granted. |
+| Namespace | Likewise. |
+| Authentication method | The client certificate *is* the authentication. |
+
+The broker serves **KV v2 only**; an engine set to version 1 is refused before
+any request is sent.
+
+One operational note that has already caught a test suite: if the broker
+instance is configured `may_delete = false`, the plugin can read, write, and
+rotate but **cannot delete** a credential's secret material — those calls come
+back as an authorization failure naming the instance's permissions.
+
+That also disables the rollback compensator. When a credential write succeeds in
+OpenBao and then the NetBox transaction fails, the plugin normally removes what
+it wrote; a broker that refuses the delete turns that into a logged
+`ORPHANED SECRET` for `CredentialVerifyJob` to report. Both postures are
+defensible — just choose deliberately rather than discovering it during a
+cleanup.
+
 ## Using HashiCorp Vault instead
 
 Set a `SecretEngine`'s **backend** to `HashiCorp Vault`. Everything else is

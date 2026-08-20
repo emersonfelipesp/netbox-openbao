@@ -95,7 +95,7 @@ netbox_openbao/
 ├── choices.py           ChoiceSets
 ├── config.py            typed PLUGINS_CONFIG access
 ├── models/              engines, policies, credentials, assignments, audit
-├── backends/            SecretBackend ABC, OpenBao implementation, exceptions
+├── backends/            SecretBackend ABC, OpenBao/Vault/broker implementations, exceptions
 ├── secrets/             type registry, cryptography extractors, generators
 ├── services.py          the only code that touches material
 ├── api/                 serializers, viewsets, urls, throttling

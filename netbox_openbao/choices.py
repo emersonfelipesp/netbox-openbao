@@ -7,10 +7,14 @@ class BackendChoices(ChoiceSet):
 
     BACKEND_OPENBAO = 'openbao'
     BACKEND_VAULT = 'vault'
+    BACKEND_BROKER = 'broker'
 
     CHOICES = [
         Choice(BACKEND_OPENBAO, _('OpenBao')),
         Choice(BACKEND_VAULT, _('HashiCorp Vault')),
+        # Not a different secret store — the same OpenBao, reached through a
+        # service that holds the AppRole so this NetBox does not.
+        Choice(BACKEND_BROKER, _('Broker (netbox-openbao-broker)')),
     ]
 
 

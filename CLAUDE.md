@@ -175,6 +175,27 @@ live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
   `backends/BACKENDS` and `BackendChoices`, and add an integration subclass of
   `_KVIntegrationTests`. Never raise a vendor exception, never log material.
   A backend tested only against a different server proves nothing about it.
+- **`BrokerBackend` is a transport swap, not a different store.** It speaks to
+  [`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker),
+  which holds the AppRole so NetBox does not, and it must stay
+  indistinguishable from direct mode above `SecretBackend` — same exception
+  types for the same conditions. Three traps:
+  - **Never send `kv_mount` or `namespace`.** They are the broker's own
+    configuration. Sending them would let a compromised NetBox address mounts
+    the operator never granted, which inverts the point of the mode.
+  - **The client certificate is keyed on `env_prefix`**, exactly as the AppRole
+    is. The broker identifies callers by certificate CN, so flattening this to
+    one certificate would silently give every `CredentialPolicy` tier the same
+    access.
+  - **Never relay the broker's error text.** It is written not to leak policy,
+    but this side cannot verify that, and forwarding a remote string gives up
+    the guarantee `backends/exceptions.py` exists to provide.
+- **Do not write that broker mode makes "a NetBox compromise not a secret
+  compromise".** It does not, the README said so once, and it was wrong: an
+  attacker with code execution in NetBox can still ask the broker and be
+  answered. What it buys is that the database and configuration no longer carry
+  vault credentials and that the audit log is out of reach. Claim that, not
+  more.
 - **Anything touching the reveal path** → re-read
   [`docs/security.md`](docs/security.md) first and make sure
   `tests/test_security.py` still fails when you break the invariant.

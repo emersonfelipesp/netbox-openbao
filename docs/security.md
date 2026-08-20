@@ -219,3 +219,38 @@ otherwise land in the back/forward cache and in any saved HTML or screenshot.
 - **Add a Sentry `before_send` scrubber** for `netbox_openbao.*` if you run
   Sentry. The plugin does not put material in exceptions, but defence in depth
   is the point.
+
+
+## Broker mode
+
+An engine set to the `broker` backend reaches OpenBao through
+[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker),
+which holds the AppRole so this NetBox does not.
+
+**It does not make "NetBox compromise ≠ secret compromise" true.** An attacker
+with code execution in NetBox can still ask the broker for material, and the
+broker will answer for anything NetBox is authorized to request. Deploying it
+is not a reason to relax anything documented above.
+
+What it does change:
+
+- Stealing NetBox's **database or configuration** no longer yields credentials
+  that read the vault directly. The AppRole's SecretID never exists on the
+  NetBox host.
+- The broker's **audit log is outside NetBox's blast radius** — a compromise
+  can read, but it cannot erase the record of having read.
+- Authorization gains a second, independent layer: the broker re-checks every
+  path against the prefixes it was configured to serve *this instance*, before
+  it uses the AppRole. A NetBox-side permission bug is not sufficient on its
+  own for a path outside them.
+
+Authorization there is **per instance, not per user**. Enforcing per-user would
+mean shipping this plugin's object permissions, constraints, and group
+membership to the broker — a second implementation of the authorization model
+this plugin exists to keep singular. NetBox remains the authority on who may
+ask.
+
+The same scrubbing rule applies in both directions: `BrokerBackend` discards the
+broker's error text rather than relaying it. The broker is written not to leak
+policy, but the plugin cannot verify that from here, and a backend that forwards
+a remote string has given up the guarantee this page describes.

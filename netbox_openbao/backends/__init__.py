@@ -1,6 +1,7 @@
 """Secret backend registry and factory."""
 
 from .base import SecretBackend
+from .broker import BrokerBackend
 from .exceptions import (
     BackendConfigurationError,
     OpenBaoAuthError,
@@ -14,6 +15,7 @@ from .vault import VaultBackend
 
 __all__ = (
     'BackendConfigurationError',
+    'BrokerBackend',
     'OpenBaoAuthError',
     'OpenBaoBackend',
     'OpenBaoConflict',
@@ -29,6 +31,7 @@ __all__ = (
 BACKENDS = {
     'openbao': OpenBaoBackend,
     'vault': VaultBackend,
+    'broker': BrokerBackend,
 }
 
 DEFAULT_BACKEND = 'openbao'
