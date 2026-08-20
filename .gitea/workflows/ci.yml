@@ -3,21 +3,15 @@ name: CI
 
 # Pre-merge gate.
 #
-# Scope note: this job runs static checks and packaging validation only. The
-# functional suite needs a full NetBox 4.7 install plus PostgreSQL 15+ (with
-# ltree), Redis 6+, and an OpenBao dev server, which the shared Gitea runners
-# do not provide as services. That suite is run against the real stack via
-# `docker-compose.dev.yml`; see docs/development.md.
+# Scope: static checks and packaging only. The functional suite needs a full
+# NetBox 4.7 install plus PostgreSQL 15+ (with ltree), Redis 6+, and an OpenBao
+# dev server, and the untrusted runner provides no services. That suite runs
+# against the real stack via docker-compose.dev.yml — see docs/development.md.
 #
-# Runner: `linux_amd64` is the only label available to this repository. The
-# conventional label for untrusted plugin CI in this estate,
-# `ci-untrusted-python312`, belongs to a runner that is both offline *and*
-# scoped to the N-MultiCloud organisation — so it would not serve an
-# emersonfelipesp-owned repo even when online. `linux_amd64` is carried by the
-# shared `gitea-96-prod-deploy` runner, which also handles production deploys,
-# so a run here can queue behind them. Note that a job targeting a label no
-# online runner carries queues indefinitely rather than failing, which is why
-# the label matters more than it looks.
+# Runner: `ci-untrusted-python312` is the estate's label for untrusted plugin
+# CI, served for this repository by the user-scoped `ci-untrusted-emersonfelipesp`
+# runner. It has no service containers and no network-fetched actions, which is
+# why this job uses `uv` from the image rather than `actions/setup-python`.
 
 on:
   push:
@@ -36,28 +30,25 @@ permissions:
 jobs:
   quality:
     name: Static checks and packaging
-    runs-on: linux_amd64
+    runs-on: ci-untrusted-python312
     timeout-minutes: 20
     env:
       HOME: ${{ github.workspace }}
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+      UV_PYTHON_DOWNLOADS: never
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install tooling
+      - name: Create the environment
         shell: bash
         run: |
           set -euo pipefail
-          python -m venv .venv
-          .venv/bin/pip install --quiet --upgrade pip build ruff
+          command -v uv
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python ruff build
 
       - name: Ruff lint
         shell: bash
@@ -81,9 +72,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # A cheap, dependency-free restatement of tests/test_security.py's
-          # central claim, so the invariant is checked even on a runner that
-          # cannot stand up NetBox.
+          # A dependency-free restatement of the central claim in
+          # netbox_openbao/tests/test_security.py, so the invariant is still
+          # checked on a runner that cannot stand up NetBox.
           .venv/bin/python - <<'PY'
           import ast
           import sys
