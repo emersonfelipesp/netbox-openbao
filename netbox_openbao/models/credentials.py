@@ -41,7 +41,12 @@ class Credential(PrimaryModel):
     credential_type = models.CharField(
         verbose_name=_('type'),
         max_length=50,
-        choices=CredentialTypeChoices,
+        # Deliberately no `choices`. Django validates a choices field in
+        # clean_fields(), which would reject any operator-defined
+        # CredentialTypeSchema slug outright. Membership is checked in clean()
+        # against the union of built-in and stored types instead, and
+        # get_credential_type_display() below replaces what choices would have
+        # provided.
     )
     policy = models.ForeignKey(
         to='netbox_openbao.CredentialPolicy',
@@ -214,7 +219,26 @@ class Credential(PrimaryModel):
         return CredentialStatusChoices.colors.get(self.status)
 
     def get_credential_type_color(self):
-        return CredentialTypeChoices.colors.get(self.credential_type)
+        # Stored types have no colour of their own; grey is honest about that
+        # rather than borrowing a built-in's.
+        return CredentialTypeChoices.colors.get(self.credential_type, 'gray')
+
+    def get_credential_type_display(self):
+        """
+        Human label for the type.
+
+        Supplied explicitly because the field has no `choices` — see the field
+        definition. Tables and detail panels call this, so dropping it would
+        break both.
+        """
+        labels = dict(CredentialTypeChoices)
+        if self.credential_type in labels:
+            return labels[self.credential_type]
+
+        from netbox_openbao.models import CredentialTypeSchema
+
+        stored = CredentialTypeSchema.objects.filter(slug=self.credential_type).first()
+        return stored.name if stored is not None else self.credential_type
 
     @property
     def derived_path(self):
@@ -272,6 +296,18 @@ class Credential(PrimaryModel):
     def clean(self):
         self._apply_defaults()
         super().clean()
+
+        # Replaces the field-level `choices` validation the field deliberately
+        # does not have, so an operator-defined type is accepted and a typo
+        # still is not.
+        from netbox_openbao.secrets.registry import is_known_credential_type
+
+        if self.credential_type and not is_known_credential_type(self.credential_type):
+            raise ValidationError({
+                'credential_type': _('Unknown credential type: {value}.').format(
+                    value=self.credential_type,
+                ),
+            })
 
         # The policy is the authorization tier and carries the AppRole. If the
         # credential's engine could differ from its policy's, the tier's

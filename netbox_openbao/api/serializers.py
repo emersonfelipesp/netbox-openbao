@@ -18,7 +18,6 @@ from netbox_openbao.choices import (
     AccessActionChoices,
     AuthMethodChoices,
     CredentialStatusChoices,
-    CredentialTypeChoices,
     EngineStatusChoices,
     PurposeChoices,
 )
@@ -27,6 +26,7 @@ from netbox_openbao.models import (
     CredentialAccessLog,
     CredentialAssignment,
     CredentialPolicy,
+    CredentialTypeSchema,
     SecretEngine,
 )
 from netbox_openbao.secrets.registry import validate_payload
@@ -38,6 +38,7 @@ __all__ = (
     'CredentialAssignmentSerializer',
     'CredentialPolicySerializer',
     'CredentialSerializer',
+    'CredentialTypeSchemaSerializer',
     'RevealResponseSerializer',
     'RevealRequestSerializer',
     'SecretEngineSerializer',
@@ -79,7 +80,8 @@ class CredentialPolicySerializer(OrganizationalModelSerializer):
 
 class CredentialSerializer(PrimaryModelSerializer):
     url = serializers.HyperlinkedIdentityField(view_name='plugins-api:netbox_openbao-api:credential-detail')
-    credential_type = ChoiceField(choices=CredentialTypeChoices)
+    # Dynamic: built-in types plus every operator-defined one.
+    credential_type = serializers.CharField()
     status = ChoiceField(choices=CredentialStatusChoices, required=False)
     policy = CredentialPolicySerializer(nested=True)
     engine = SecretEngineSerializer(nested=True, required=False)
@@ -141,6 +143,20 @@ class CredentialSerializer(PrimaryModelSerializer):
         if secret_data is not None:
             data['secret_data'] = secret_data
         return data
+
+
+class CredentialTypeSchemaSerializer(NetBoxModelSerializer):
+    url = serializers.HyperlinkedIdentityField(
+        view_name='plugins-api:netbox_openbao-api:credentialtypeschema-detail'
+    )
+
+    class Meta:
+        model = CredentialTypeSchema
+        fields = (
+            'id', 'url', 'display_url', 'display', 'name', 'slug', 'description', 'schema',
+            'secret_fields', 'extractor', 'tags', 'custom_fields', 'created', 'last_updated',
+        )
+        brief_fields = ('id', 'url', 'display', 'name', 'slug', 'description')
 
 
 class PromoteRequestSerializer(serializers.Serializer):

@@ -193,7 +193,6 @@ running access).
 
 Deliberately not yet here:
 
-- Operator-defined credential types (`CredentialTypeSchema`)
 - An Ansible lookup plugin
 - The optional broker mode, where a separate service holds the AppRole so a
   NetBox compromise is not a secret compromise

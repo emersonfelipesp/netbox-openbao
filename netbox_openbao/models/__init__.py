@@ -3,11 +3,13 @@ from .audit import CredentialAccessLog
 from .credentials import Credential
 from .engines import SecretEngine
 from .policies import CredentialPolicy
+from .schemas import CredentialTypeSchema
 
 __all__ = (
     'Credential',
     'CredentialAccessLog',
     'CredentialAssignment',
     'CredentialPolicy',
+    'CredentialTypeSchema',
     'SecretEngine',
 )

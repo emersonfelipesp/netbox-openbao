@@ -56,6 +56,20 @@ engines = PluginMenuItem(
     ),
 )
 
+type_schemas = PluginMenuItem(
+    link='plugins:netbox_openbao:credentialtypeschema_list',
+    link_text='Credential types',
+    permissions=['netbox_openbao.view_credentialtypeschema'],
+    buttons=(
+        PluginMenuButton(
+            link='plugins:netbox_openbao:credentialtypeschema_add',
+            title='Add',
+            icon_class='mdi mdi-plus-thick',
+            permissions=['netbox_openbao.add_credentialtypeschema'],
+        ),
+    ),
+)
+
 access_logs = PluginMenuItem(
     link='plugins:netbox_openbao:credentialaccesslog_list',
     link_text='Access log',
@@ -66,7 +80,7 @@ menu = PluginMenu(
     label='OpenBao',
     groups=(
         ('Credentials', (credentials, assignments)),
-        ('Configuration', (policies, engines)),
+        ('Configuration', (policies, engines, type_schemas)),
         ('Audit', (access_logs,)),
     ),
     icon_class='mdi mdi-shield-key',

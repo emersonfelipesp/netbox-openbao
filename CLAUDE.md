@@ -163,6 +163,14 @@ live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
 - **A new credential type** → `CredentialTypeChoices` + `CREDENTIAL_SCHEMAS` +
   (if needed) an extractor returning only `EXTRACTABLE_FIELDS` keys +
   `SECRET_INPUT_FIELDS`/`SENSITIVE_INPUT_FIELDS` in `forms.py`.
+- **`Credential.credential_type` has no Django `choices` on purpose.** Django
+  validates a choices field in `clean_fields()`, which would reject every
+  operator-defined `CredentialTypeSchema` slug. Membership is checked in
+  `clean()` instead, and the model supplies `get_credential_type_display()`
+  because tables and panels call it.
+- **`CredentialTypeSchema.extractor` must stay a registry name.** If it ever
+  becomes a dotted path resolved with `import_string`, the model is remote code
+  execution with a JSON Schema attached.
 - **A new backend** → subclass `SecretBackend`, register it in
   `backends/BACKENDS` and `BackendChoices`, and add an integration subclass of
   `_KVIntegrationTests`. Never raise a vendor exception, never log material.

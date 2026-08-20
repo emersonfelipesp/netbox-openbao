@@ -9,6 +9,7 @@ router.register('engines', views.SecretEngineViewSet)
 router.register('policies', views.CredentialPolicyViewSet)
 router.register('credentials', views.CredentialViewSet)
 router.register('assignments', views.CredentialAssignmentViewSet)
+router.register('type-schemas', views.CredentialTypeSchemaViewSet)
 router.register('access-logs', views.CredentialAccessLogViewSet)
 
 urlpatterns = router.urls
