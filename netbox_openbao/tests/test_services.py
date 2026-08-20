@@ -50,8 +50,8 @@ class WritePathTest(OpenBaoTestCase):
 
     def test_assignments_appear_once_they_exist(self):
         """Dropping empty values must not drop the key when it has content."""
-        from django.contrib.contenttypes.models import ContentType
         from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
+        from django.contrib.contenttypes.models import ContentType
 
         from netbox_openbao.models import CredentialAssignment
 
