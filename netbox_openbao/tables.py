@@ -2,13 +2,21 @@ import django_tables2 as tables
 from django.utils.translation import gettext_lazy as _
 from netbox.tables import NetBoxTable, columns
 
-from .models import Credential, CredentialAccessLog, CredentialAssignment, CredentialPolicy, SecretEngine
+from .models import (
+    Credential,
+    CredentialAccessLog,
+    CredentialAssignment,
+    CredentialPolicy,
+    CredentialTypeSchema,
+    SecretEngine,
+)
 
 __all__ = (
     'CredentialAccessLogTable',
     'CredentialAssignmentTable',
     'CredentialPolicyTable',
     'CredentialTable',
+    'CredentialTypeSchemaTable',
     'SecretEngineTable',
 )
 
@@ -127,3 +135,17 @@ class CredentialAccessLogTable(NetBoxTable):
         default_columns = (
             'timestamp', 'credential_name_snapshot', 'username_snapshot', 'action', 'success', 'source_ip',
         )
+
+
+class CredentialTypeSchemaTable(NetBoxTable):
+    name = tables.Column(linkify=True)
+    secret_fields = columns.ArrayColumn(verbose_name=_('Secret fields'))
+    tags = columns.TagColumn(url_name='plugins:netbox_openbao:credentialtypeschema_list')
+
+    class Meta(NetBoxTable.Meta):
+        model = CredentialTypeSchema
+        fields = (
+            'pk', 'id', 'name', 'slug', 'extractor', 'secret_fields', 'description',
+            'tags', 'created', 'last_updated',
+        )
+        default_columns = ('name', 'slug', 'extractor', 'secret_fields', 'description')

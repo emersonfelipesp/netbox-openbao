@@ -44,6 +44,7 @@ from netbox_openbao.models import (
     CredentialAccessLog,
     CredentialAssignment,
     CredentialPolicy,
+    CredentialTypeSchema,
     SecretEngine,
 )
 from netbox_openbao.services import (
@@ -61,6 +62,7 @@ from .serializers import (
     CredentialAssignmentSerializer,
     CredentialPolicySerializer,
     CredentialSerializer,
+    CredentialTypeSchemaSerializer,
     PromoteRequestSerializer,
     RevealRequestSerializer,
     SecretEngineSerializer,
@@ -71,6 +73,7 @@ __all__ = (
     'CredentialAccessLogViewSet',
     'CredentialAssignmentViewSet',
     'CredentialPolicyViewSet',
+    'CredentialTypeSchemaViewSet',
     'CredentialViewSet',
     'SecretEngineViewSet',
 )
@@ -405,6 +408,12 @@ class CredentialAssignmentViewSet(NetBoxModelViewSet):
     ).prefetch_related('assigned_object')
     serializer_class = CredentialAssignmentSerializer
     filterset_class = filtersets.CredentialAssignmentFilterSet
+
+
+class CredentialTypeSchemaViewSet(NetBoxModelViewSet):
+    queryset = CredentialTypeSchema.objects.all()
+    serializer_class = CredentialTypeSchemaSerializer
+    filterset_class = filtersets.CredentialTypeSchemaFilterSet
 
 
 class CredentialAccessLogViewSet(ReadOnlyModelViewSet):

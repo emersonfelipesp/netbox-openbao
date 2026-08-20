@@ -25,6 +25,8 @@ __all__ = (
     'CredentialRevealPanel',
     'CredentialRotationPanel',
     'CredentialStoragePanel',
+    'CredentialTypeSchemaDefinitionPanel',
+    'CredentialTypeSchemaPanel',
     'EnginePolicyPanel',
     'PolicyCredentialPanel',
     'SecretEnginePanel',
@@ -244,3 +246,19 @@ class CredentialRotationPanel(panels.Panel):
 
     def get_context(self, context):
         return {**super().get_context(context), 'object': context['object']}
+
+
+class CredentialTypeSchemaPanel(panels.ObjectAttributesPanel):
+    name = attrs.TextAttr('name')
+    slug = attrs.TextAttr('slug', style='font-monospace')
+    extractor = attrs.TextAttr('extractor', style='font-monospace')
+    secret_fields = attrs.ArrayAttr('secret_fields', label=_('Secret fields'))
+    description = attrs.TextAttr('description')
+
+
+class CredentialTypeSchemaDefinitionPanel(panels.JSONPanel):
+    """The stored JSON Schema, rendered as-is."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault('title', _('JSON Schema'))
+        super().__init__('schema', **kwargs)

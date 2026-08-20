@@ -8,17 +8,24 @@ from .choices import (
     AccessActionChoices,
     AuthMethodChoices,
     CredentialStatusChoices,
-    CredentialTypeChoices,
     EngineStatusChoices,
     PurposeChoices,
 )
-from .models import Credential, CredentialAccessLog, CredentialAssignment, CredentialPolicy, SecretEngine
+from .models import (
+    Credential,
+    CredentialAccessLog,
+    CredentialAssignment,
+    CredentialPolicy,
+    CredentialTypeSchema,
+    SecretEngine,
+)
 
 __all__ = (
     'CredentialAccessLogFilterSet',
     'CredentialAssignmentFilterSet',
     'CredentialFilterSet',
     'CredentialPolicyFilterSet',
+    'CredentialTypeSchemaFilterSet',
     'SecretEngineFilterSet',
 )
 
@@ -71,7 +78,9 @@ class CredentialPolicyFilterSet(NetBoxModelFilterSet):
 
 
 class CredentialFilterSet(NetBoxModelFilterSet):
-    credential_type = django_filters.MultipleChoiceFilter(choices=CredentialTypeChoices)
+    # A plain char filter rather than a choice filter: the valid set now
+    # includes operator-defined types, which a static choice list cannot know.
+    credential_type = MultiValueCharFilter()
     status = django_filters.MultipleChoiceFilter(choices=CredentialStatusChoices)
     policy_id = django_filters.ModelMultipleChoiceFilter(
         queryset=CredentialPolicy.objects.all(),
@@ -196,4 +205,18 @@ class CredentialAccessLogFilterSet(BaseFilterSet):
             Q(credential_name_snapshot__icontains=value)
             | Q(username_snapshot__icontains=value)
             | Q(reason__icontains=value)
+        )
+
+
+class CredentialTypeSchemaFilterSet(NetBoxModelFilterSet):
+
+    class Meta:
+        model = CredentialTypeSchema
+        fields = ('id', 'name', 'slug', 'extractor', 'description')
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(
+            Q(name__icontains=value) | Q(slug__icontains=value) | Q(description__icontains=value)
         )

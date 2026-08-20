@@ -25,7 +25,14 @@ from utilities.views import ObjectPermissionRequiredMixin, register_model_view
 from . import filtersets, forms, tables
 from .backends.exceptions import OpenBaoError
 from .config import assignable_model_labels
-from .models import Credential, CredentialAccessLog, CredentialAssignment, CredentialPolicy, SecretEngine
+from .models import (
+    Credential,
+    CredentialAccessLog,
+    CredentialAssignment,
+    CredentialPolicy,
+    CredentialTypeSchema,
+    SecretEngine,
+)
 from .quickadd import quick_add_ssh
 from .services import discard_staged, promote_staged, reveal_material
 from .ui import panels as openbao_panels
@@ -49,6 +56,10 @@ __all__ = (
     'CredentialPromoteView',
     'CredentialRevealPartialView',
     'QuickAddSSHView',
+    'CredentialTypeSchemaDeleteView',
+    'CredentialTypeSchemaEditView',
+    'CredentialTypeSchemaListView',
+    'CredentialTypeSchemaView',
     'CredentialRevealView',
     'CredentialView',
     'SecretEngineDeleteView',
@@ -400,6 +411,44 @@ class CredentialAssignmentEditView(generic.ObjectEditView):
 @register_model_view(CredentialAssignment, 'delete')
 class CredentialAssignmentDeleteView(generic.ObjectDeleteView):
     queryset = CredentialAssignment.objects.all()
+
+
+#
+# Credential type schemas
+#
+
+@register_model_view(CredentialTypeSchema, 'list', path='', detail=False)
+class CredentialTypeSchemaListView(generic.ObjectListView):
+    queryset = CredentialTypeSchema.objects.all()
+    table = tables.CredentialTypeSchemaTable
+    filterset = filtersets.CredentialTypeSchemaFilterSet
+
+
+@register_model_view(CredentialTypeSchema)
+class CredentialTypeSchemaView(generic.ObjectView):
+    queryset = CredentialTypeSchema.objects.all()
+    layout = layout.SimpleLayout(
+        left_panels=[
+            openbao_panels.CredentialTypeSchemaPanel(),
+            CustomFieldsPanel(),
+            TagsPanel(),
+        ],
+        right_panels=[
+            openbao_panels.CredentialTypeSchemaDefinitionPanel(),
+        ],
+    )
+
+
+@register_model_view(CredentialTypeSchema, 'add', detail=False)
+@register_model_view(CredentialTypeSchema, 'edit')
+class CredentialTypeSchemaEditView(generic.ObjectEditView):
+    queryset = CredentialTypeSchema.objects.all()
+    form = forms.CredentialTypeSchemaForm
+
+
+@register_model_view(CredentialTypeSchema, 'delete')
+class CredentialTypeSchemaDeleteView(generic.ObjectDeleteView):
+    queryset = CredentialTypeSchema.objects.all()
 
 
 #

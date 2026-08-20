@@ -180,7 +180,29 @@ markup from a value would let material containing HTML execute in the
 operator's session — `test_fragment_uses_no_innerhtml` enforces that by
 substring so it cannot creep back.
 
-## 14. Form inputs are not echoed
+## 14. An operator-defined type cannot execute code or leak material
+
+`CredentialTypeSchema` lets operators define credential types as data. Two
+limits keep that from being a privilege-escalation surface:
+
+- **`extractor` names a function from a fixed registry.** It is never an import
+  path, never a dotted callable, never anything resolvable to arbitrary code. A
+  JSONField that could name any importable object would be remote code
+  execution wearing a schema. Validated in the model's `clean()`, so the API
+  enforces it as well as the form.
+- **Extraction output is filtered against `EXTRACTABLE_FIELDS`** regardless of
+  what the schema declares, and the payload itself never reaches a model field.
+  So a type whose properties are named after model columns still cannot get
+  them written.
+
+A stored type also may not shadow a built-in slug, since the plugin's own code
+paths assume the built-in definitions.
+
+Schema validation errors report the failing **path**, never the value —
+`jsonschema`'s own message embeds the failing instance, which for a secret
+payload is the material.
+
+## 15. Form inputs are not echoed
 
 Secret form fields use widgets with `render_value=False`. On a validation error
 the browser gets an empty box, not the key the user just pasted — which would

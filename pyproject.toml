@@ -13,6 +13,9 @@ dependencies = [
     # loading a passphrase-protected OpenSSH private key raises
     # UnsupportedAlgorithm("Need bcrypt module"). NetBox does not ship it.
     "bcrypt>=4.0.0",
+    # Validates operator-defined credential type schemas. Already a dependency
+    # elsewhere in this estate, so the pattern is established.
+    "jsonschema>=4.0.0",
 ]
 authors = [
     {name = "Emerson Felipe", email = "emerson.felipe@nmultifibra.com.br"},

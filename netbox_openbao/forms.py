@@ -34,9 +34,9 @@ from .choices import (
     SSHKeyTypeChoices,
 )
 from .config import get_config
-from .models import Credential, CredentialAssignment, CredentialPolicy, SecretEngine
+from .models import Credential, CredentialAssignment, CredentialPolicy, CredentialTypeSchema, SecretEngine
 from .secrets.generators import generate_ssh_keypair
-from .secrets.registry import get_schema
+from .secrets.registry import credential_type_choices, get_schema
 from .services import stage_material, store_credential
 from .utils import assignable_content_types, get_default_engine
 
@@ -48,6 +48,7 @@ __all__ = (
     'CredentialPolicyFilterForm',
     'CredentialPolicyForm',
     'QuickAddSSHForm',
+    'CredentialTypeSchemaForm',
     'SecretEngineFilterForm',
     'SecretEngineForm',
 )
@@ -215,6 +216,9 @@ class CredentialForm(PrimaryModelForm):
                 label=name.replace('_', ' ').capitalize(),
             )
 
+        # Built-in types plus every operator-defined one, resolved per
+        # instantiation so a new schema shows up without a restart.
+        self.fields['credential_type'].choices = credential_type_choices()
         self.fields['generate_key_type'].initial = get_config('default_ssh_key_type')
 
         # Staging only means anything for a credential that already has live
@@ -329,7 +333,11 @@ class CredentialForm(PrimaryModelForm):
 
 class CredentialFilterForm(NetBoxModelFilterSetForm):
     model = Credential
-    credential_type = forms.MultipleChoiceField(choices=CredentialTypeChoices, required=False)
+    credential_type = forms.MultipleChoiceField(choices=[], required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['credential_type'].choices = credential_type_choices()
     status = forms.MultipleChoiceField(choices=CredentialStatusChoices, required=False)
     policy_id = DynamicModelMultipleChoiceField(
         queryset=CredentialPolicy.objects.all(),
@@ -477,3 +485,40 @@ class QuickAddSSHForm(forms.Form):
         if source == 'generate' and not get_config('allow_generation', True):
             raise forms.ValidationError({'source': _('Key generation is disabled on this installation.')})
         return cleaned
+class CredentialTypeSchemaForm(NetBoxModelForm):
+    """
+    Define a credential type as data.
+
+    `extractor` is rendered as a select over a fixed registry rather than a
+    free-text field. That is the point of the design: it is a name chosen from
+    a vetted list, never a path that could resolve to arbitrary code.
+    """
+
+    slug = SlugField()
+
+    fieldsets = (
+        FieldSet('name', 'slug', 'description', name=_('Type')),
+        FieldSet('schema', 'secret_fields', 'extractor', name=_('Payload')),
+        FieldSet('tags', name=_('Tags')),
+    )
+
+    class Meta:
+        model = CredentialTypeSchema
+        fields = ('name', 'slug', 'description', 'schema', 'secret_fields', 'extractor', 'tags')
+        help_texts = {
+            'secret_fields': _(
+                'Which properties hold secret material. Anything omitted may be mirrored into a '
+                'NetBox column, so an omission here is a disclosure rather than a cosmetic slip.'
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .secrets.registry import EXTRACTORS
+
+        self.fields['extractor'] = forms.ChoiceField(
+            required=False,
+            choices=[('', '---------')] + [(name, name) for name in sorted(EXTRACTORS)],
+            label=_('Extractor'),
+            help_text=_('Chosen from a fixed list. This is a name, never a path to code.'),
+        )
