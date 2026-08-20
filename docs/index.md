@@ -6,6 +6,7 @@ Secret material in OpenBao. Credential inventory and relationships in NetBox.
   the AppRole
 - [Configuration](configuration.md) — `PLUGINS_CONFIG`, environment, policy
   tiers
+- [Quick-add SSH](quick-add-ssh.md) — the one-form path, and what it creates
 - [Security model](security.md) — what is guaranteed, and by what mechanism
 - [REST API](api.md) — endpoints, the reveal contract, filtering
 - [Migrating from netbox-secrets](migration-from-netbox-secrets.md) — the

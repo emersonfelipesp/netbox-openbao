@@ -11,6 +11,7 @@ credential out of the URL bar and the referrer header.
 from django.contrib import messages
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
@@ -23,7 +24,9 @@ from utilities.views import ObjectPermissionRequiredMixin, register_model_view
 
 from . import filtersets, forms, tables
 from .backends.exceptions import OpenBaoError
+from .config import assignable_model_labels
 from .models import Credential, CredentialAccessLog, CredentialAssignment, CredentialPolicy, SecretEngine
+from .quickadd import quick_add_ssh
 from .services import discard_staged, promote_staged, reveal_material
 from .ui import panels as openbao_panels
 
@@ -45,6 +48,7 @@ __all__ = (
     'CredentialDiscardView',
     'CredentialPromoteView',
     'CredentialRevealPartialView',
+    'QuickAddSSHView',
     'CredentialRevealView',
     'CredentialView',
     'SecretEngineDeleteView',
@@ -418,3 +422,86 @@ class CredentialAccessLogView(generic.ObjectView):
             openbao_panels.AccessLogDetailPanel(),
         ],
     )
+
+
+class QuickAddSSHView(ObjectPermissionRequiredMixin, View):
+    """
+    Give a device or VM SSH access in one form.
+
+    Reached from a button on the object's own page. Requires the permission to
+    create credentials, since that is what it does — the service and assignment
+    are consequences of it.
+    """
+
+    queryset = Credential.objects.all()
+    template_name = 'netbox_openbao/quickadd_ssh.html'
+    result_template_name = 'netbox_openbao/quickadd_ssh_result.html'
+
+    def get_required_permission(self):
+        return 'netbox_openbao.add_credential'
+
+    def _target(self, app_label, model_name, pk):
+        from django.apps import apps
+
+        label = f'{app_label}.{model_name}'.lower()
+        if label not in assignable_model_labels():
+            raise Http404(f'Credentials may not be assigned to {label}.')
+        try:
+            model = apps.get_model(app_label, model_name)
+        except LookupError:
+            raise Http404(f'No such model: {label}') from None
+        return get_object_or_404(model.objects.restrict(self.request.user, 'view'), pk=pk)
+
+    def get(self, request, app_label, model_name, pk):
+        target = self._target(app_label, model_name, pk)
+        return render(request, self.template_name, {
+            'target': target,
+            'form': forms.QuickAddSSHForm(initial={'name': f'{target} ssh'}),
+            'return_url': target.get_absolute_url(),
+        })
+
+    def post(self, request, app_label, model_name, pk):
+        target = self._target(app_label, model_name, pk)
+        form = forms.QuickAddSSHForm(request.POST)
+
+        if form.is_valid():
+            data = form.cleaned_data
+            source = data['source']
+            try:
+                credential, service, public_key = quick_add_ssh(
+                    target,
+                    data['policy'],
+                    username=data['username'],
+                    name=data.get('name') or None,
+                    existing_credential=data.get('existing_credential') if source == 'reuse' else None,
+                    private_key=data.get('private_key') if source == 'paste' else None,
+                    passphrase=data.get('passphrase') if source == 'paste' else None,
+                    generate=(source == 'generate'),
+                    key_type=data.get('key_type'),
+                    port=data['port'],
+                    create_service=data['create_service'],
+                    user=request.user,
+                    request=request,
+                )
+            except OpenBaoError as exc:
+                form.add_error(None, _('Could not write to OpenBao: {error}').format(error=exc))
+            except DjangoValidationError as exc:
+                form.add_error(None, '; '.join(exc.messages))
+            else:
+                if public_key:
+                    # Shown once, so it can go straight into authorized_keys.
+                    # The public half only — the private key never renders.
+                    return render(request, self.result_template_name, {
+                        'target': target,
+                        'object': credential,
+                        'service': service,
+                        'public_key': public_key,
+                    })
+                messages.success(request, _('Added SSH access to {target}.').format(target=target))
+                return redirect(target.get_absolute_url())
+
+        return render(request, self.template_name, {
+            'target': target,
+            'form': form,
+            'return_url': target.get_absolute_url(),
+        })

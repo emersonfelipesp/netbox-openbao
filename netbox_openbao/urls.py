@@ -1,9 +1,19 @@
 from django.urls import include, path
 from utilities.urls import get_model_urls
 
+from . import views
+
 app_name = 'netbox_openbao'
 
 urlpatterns = (
+    # Quick-add is keyed by the target object rather than by a credential, so
+    # it is a plain path rather than a registered model view.
+    path(
+        'quick-add/ssh/<str:app_label>/<str:model_name>/<int:pk>/',
+        views.QuickAddSSHView.as_view(),
+        name='quickadd_ssh',
+    ),
+
     path('engines/', include(get_model_urls('netbox_openbao', 'secretengine', detail=False))),
     path('engines/<int:pk>/', include(get_model_urls('netbox_openbao', 'secretengine'))),
 

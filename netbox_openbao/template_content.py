@@ -9,6 +9,7 @@ credential coverage without ever holding reveal rights.
 """
 
 from django.contrib.contenttypes.models import ContentType
+from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from netbox.plugins import PluginTemplateExtension
 
@@ -20,6 +21,29 @@ __all__ = ('template_extensions',)
 
 class CredentialsPanel(PluginTemplateExtension):
     """Lists the credentials assigned to the object being viewed."""
+
+    def buttons(self):
+        """
+        A quick-add button, on the objects it makes sense for.
+
+        Only Devices and VMs: adding SSH access to a Service would be circular,
+        since the service is what the action creates.
+        """
+        obj = self.context['object']
+        request = self.context['request']
+
+        label = f'{obj._meta.app_label}.{obj._meta.model_name}'
+        if label not in ('dcim.device', 'virtualization.virtualmachine'):
+            return ''
+        if not request.user.has_perm('netbox_openbao.add_credential'):
+            return ''
+
+        url = reverse('plugins:netbox_openbao:quickadd_ssh', kwargs={
+            'app_label': obj._meta.app_label,
+            'model_name': obj._meta.model_name,
+            'pk': obj.pk,
+        })
+        return self.render('netbox_openbao/inc/quickadd_button.html', extra_context={'url': url})
 
     def right_page(self):
         obj = self.context['object']

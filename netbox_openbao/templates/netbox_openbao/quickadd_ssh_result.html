@@ -1,0 +1,56 @@
+{% extends 'base/layout.html' %}
+{% load i18n %}
+
+{% comment %}
+  Shown once, after generating a keypair. The PUBLIC half only — the private
+  key went to OpenBao and is never rendered anywhere.
+{% endcomment %}
+
+{% block title %}{% trans "SSH access added" %}{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col col-12 col-lg-8 offset-lg-2">
+
+    <div class="alert alert-success d-flex align-items-center" role="alert">
+      <span class="mdi mdi-check-circle me-2" aria-hidden="true"></span>
+      <div>
+        {% blocktrans with target=target %}Added SSH access to {{ target }}.{% endblocktrans %}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-header">{% trans "Public key" %}</h2>
+      <div class="card-body">
+        <p class="text-muted small">
+          {% trans "Add this to the target's authorized_keys. The private key was written to OpenBao and is not shown — reveal the credential if you need it later." %}
+        </p>
+        <pre class="font-monospace small p-2 border rounded"
+             style="white-space: pre-wrap; word-break: break-all;">{{ public_key }}</pre>
+      </div>
+    </div>
+
+    <table class="table table-hover attr-table mt-3">
+      <tr>
+        <th scope="row">{% trans "Credential" %}</th>
+        <td><a href="{{ object.get_absolute_url }}">{{ object }}</a></td>
+      </tr>
+      <tr>
+        <th scope="row">{% trans "Fingerprint" %}</th>
+        <td class="font-monospace">{{ object.fingerprint }}</td>
+      </tr>
+      {% if service %}
+        <tr>
+          <th scope="row">{% trans "Service" %}</th>
+          <td><a href="{{ service.get_absolute_url }}">{{ service }}</a></td>
+        </tr>
+      {% endif %}
+    </table>
+
+    <div class="text-end my-3">
+      <a href="{{ target.get_absolute_url }}" class="btn btn-primary">{% trans "Done" %}</a>
+    </div>
+
+  </div>
+</div>
+{% endblock content %}
