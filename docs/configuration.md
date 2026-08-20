@@ -5,9 +5,6 @@
 ```python
 PLUGINS_CONFIG = {
     'netbox_openbao': {
-        # Slug of the SecretEngine used when a credential does not name one.
-        'default_engine': 'primary',
-
         # Path prefix beneath the KV mount. The full logical path for a
         # credential is "<path_prefix>/credentials/<uuid>".
         #
@@ -57,12 +54,26 @@ PLUGINS_CONFIG = {
         # Days before expiry at which ExpiryScanJob warns.
         'expiry_warning_days': [30, 14, 7, 1],
 
-        # Background job intervals, in minutes.
+        # Background job intervals, in minutes. Read at import time by the
+        # @system_job decorators, so a change needs a NetBox restart.
         'engine_health_interval': 5,
         'expiry_scan_interval': 1440,
+        'credential_verify_interval': 1440,
+        'rotation_due_interval': 1440,
+        'access_log_prune_interval': 10080,
     },
 }
 ```
+
+## The default engine
+
+There is no `default_engine` setting. The default is the `SecretEngine` whose
+`is_default` flag is set, which is enforced by a database constraint (at most
+one), visible and changeable in the UI, and does not need a restart. A
+duplicate setting in `PLUGINS_CONFIG` would have been a second place for the
+same decision to live, and therefore a place for the two to disagree.
+
+The default engine pre-selects itself when you create a new `CredentialPolicy`.
 
 ## Environment
 

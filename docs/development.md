@@ -45,7 +45,7 @@ API_TOKEN_PEPPERS = {1: 'ZGV2ZWxvcG1lbnQtcGVwcGVy'}   # v2 API tokens
 
 DEVELOPER = True          # required for makemigrations
 PLUGINS = ['netbox_openbao']
-PLUGINS_CONFIG = {'netbox_openbao': {'default_engine': 'primary'}}
+PLUGINS_CONFIG = {'netbox_openbao': {}}
 ```
 
 Without `API_TOKEN_PEPPERS`, `Token.objects.create()` raises

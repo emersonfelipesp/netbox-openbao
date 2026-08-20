@@ -106,7 +106,6 @@ PLUGINS = ['netbox_openbao']
 
 PLUGINS_CONFIG = {
     'netbox_openbao': {
-        'default_engine': 'primary',
         'assignable_models': [
             'dcim.device',
             'virtualization.virtualmachine',

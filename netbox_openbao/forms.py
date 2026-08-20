@@ -37,7 +37,7 @@ from .models import Credential, CredentialAssignment, CredentialPolicy, SecretEn
 from .secrets.generators import generate_ssh_keypair
 from .secrets.registry import get_schema
 from .services import store_credential
-from .utils import assignable_content_types
+from .utils import assignable_content_types, get_default_engine
 
 __all__ = (
     'CredentialAssignmentFilterForm',
@@ -119,6 +119,14 @@ class CredentialPolicyForm(OrganizationalModelForm):
             'name', 'slug', 'engine', 'openbao_policy', 'approle_env_prefix', 'groups', 'max_reveal_ttl',
             'require_reason', 'description', 'tags',
         )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Pre-select the engine marked as default on a new policy. This is what
+        # gives SecretEngine.is_default an effect beyond being a label.
+        if not self.instance.pk and not self.initial.get('engine'):
+            if (default := get_default_engine()) is not None:
+                self.initial['engine'] = default.pk
 
 
 class CredentialPolicyFilterForm(NetBoxModelFilterSetForm):

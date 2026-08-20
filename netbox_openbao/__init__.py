@@ -32,9 +32,6 @@ class NetBoxOpenBaoConfig(PluginConfig):
 
     required_settings = []
     default_settings = {
-        # Slug of the SecretEngine used when a Credential does not name one.
-        'default_engine': None,
-
         # Path prefix beneath the KV mount. Full logical path for a credential
         # is "<path_prefix>/credentials/<uuid>".
         'path_prefix': 'netbox',
@@ -76,9 +73,13 @@ class NetBoxOpenBaoConfig(PluginConfig):
         # Days before expiry at which ExpiryScanJob raises an event.
         'expiry_warning_days': [30, 14, 7, 1],
 
-        # Background job intervals, in minutes.
+        # Background job intervals, in minutes. Read at import time by the
+        # @system_job decorators in jobs.py.
         'engine_health_interval': 5,
         'expiry_scan_interval': 1440,
+        'credential_verify_interval': 1440,
+        'rotation_due_interval': 1440,
+        'access_log_prune_interval': 10080,
     }
 
     def ready(self):

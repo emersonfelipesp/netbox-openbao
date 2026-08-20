@@ -29,7 +29,7 @@ PLUGINS = ['netbox_openbao']
 
 PLUGINS_CONFIG = {
     'netbox_openbao': {
-        'default_engine': 'primary',
+        # All settings have defaults; override only what you need.
     },
 }
 ```

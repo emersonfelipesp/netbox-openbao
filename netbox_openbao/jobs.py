@@ -34,7 +34,10 @@ __all__ = (
 )
 
 
-@system_job(interval=5)
+# `system_job` requires a plain int and reads it at import time. This module is
+# imported from PluginConfig.ready(), by which point PLUGINS_CONFIG is loaded,
+# so the configured interval is honoured rather than documented-and-ignored.
+@system_job(interval=int(get_config('engine_health_interval') or 5))
 class EngineHealthJob(JobRunner):
     """Probe every engine's `sys/health` and record the observed status."""
 
@@ -57,7 +60,7 @@ class EngineHealthJob(JobRunner):
         return f'Checked {checked} engine(s).'
 
 
-@system_job(interval=1440)
+@system_job(interval=int(get_config('expiry_scan_interval') or 1440))
 class ExpiryScanJob(JobRunner):
     """
     Flag credentials at or past their validity window.
@@ -107,7 +110,7 @@ class ExpiryScanJob(JobRunner):
         return summary
 
 
-@system_job(interval=1440)
+@system_job(interval=int(get_config('credential_verify_interval') or 1440))
 class CredentialVerifyJob(JobRunner):
     """
     Confirm every credential's path still resolves, and refresh `kv_version`.
@@ -152,7 +155,7 @@ class CredentialVerifyJob(JobRunner):
         return f'{verified} verified, {missing} missing, {errored} unreachable.'
 
 
-@system_job(interval=1440)
+@system_job(interval=int(get_config('rotation_due_interval') or 1440))
 class RotationDueJob(JobRunner):
     """Report credentials past their configured rotation interval."""
 
@@ -178,7 +181,7 @@ class RotationDueJob(JobRunner):
         return f'{len(due)} credential(s) due for rotation.'
 
 
-@system_job(interval=10080)
+@system_job(interval=int(get_config('access_log_prune_interval') or 10080))
 class AccessLogPruneJob(JobRunner):
     """Enforce the configured audit retention window."""
 
