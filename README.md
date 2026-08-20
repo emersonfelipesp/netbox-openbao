@@ -196,9 +196,18 @@ Deliberately not yet here:
 - HTMX reveal with countdown-to-clear, and the quick-add SSH wizard
 - Operator-defined credential types (`CredentialTypeSchema`)
 - An Ansible lookup plugin
-- A `netbox-secrets` importer
 - The optional broker mode, where a separate service holds the AppRole so a
   NetBox compromise is not a secret compromise
+
+## Coming from netbox-secrets?
+
+```bash
+python manage.py openbao_import_secrets --engine primary --policy imported --dry-run
+```
+
+The importer copies — it never deletes — infers each secret's type and proves
+the inference by extraction, and is resumable. See
+[`docs/migration-from-netbox-secrets.md`](docs/migration-from-netbox-secrets.md).
 
 ## Development
 

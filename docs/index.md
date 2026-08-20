@@ -8,6 +8,8 @@ Secret material in OpenBao. Credential inventory and relationships in NetBox.
   tiers
 - [Security model](security.md) — what is guaranteed, and by what mechanism
 - [REST API](api.md) — endpoints, the reveal contract, filtering
+- [Migrating from netbox-secrets](migration-from-netbox-secrets.md) — the
+  importer, and how it types what it finds
 - [Development](development.md) — running the suite against real NetBox and
   OpenBao
 

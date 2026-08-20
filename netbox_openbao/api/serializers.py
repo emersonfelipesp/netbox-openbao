@@ -101,14 +101,16 @@ class CredentialSerializer(PrimaryModelSerializer):
             'id', 'url', 'display_url', 'display', 'name', 'uuid', 'credential_type', 'policy', 'engine',
             'path', 'username', 'public_key', 'fingerprint', 'key_type', 'cert_serial', 'cert_subject',
             'cert_issuer', 'valid_from', 'valid_until', 'status', 'rotation_interval', 'last_rotated',
-            'kv_version', 'live_kv_version', 'staged_kv_version', 'has_staged_version', 'last_verified',
+            'import_source', 'kv_version', 'live_kv_version', 'staged_kv_version', 'has_staged_version',
+            'last_verified',
             'assignment_count',
             'secret_data', 'description', 'owner', 'comments', 'tags', 'custom_fields', 'created',
             'last_updated',
         )
         brief_fields = ('id', 'url', 'display', 'name', 'credential_type', 'status', 'description')
         read_only_fields = (
-            'uuid', 'path', 'kv_version', 'live_kv_version', 'staged_kv_version', 'last_verified',
+            'uuid', 'path', 'import_source', 'kv_version', 'live_kv_version', 'staged_kv_version',
+            'last_verified',
         )
 
     def validate(self, data):
