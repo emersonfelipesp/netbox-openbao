@@ -108,6 +108,15 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   it in a transaction — and raise `AbortRequest` for backend failures.
 - **`super().clean()` can return `None`** in NetBox's form chain; fall back to
   `self.cleaned_data`.
+- **`get_plugin_config()` returns `None`, not the default**, for a key absent
+  from the merged config — which happens whenever `PLUGINS_CONFIG` is replaced
+  after startup, including every `override_settings` in a test. `config.get_config`
+  therefore treats `None` as "use the default". Before it did,
+  `store_public_material` silently resolved to None and turned metadata
+  extraction off, which looks exactly like the extractors failing.
+- **An explicit `None` argument overrides a function default.** `generate_ssh_keypair(None)`
+  raises rather than generating an Ed25519 key; callers must resolve the
+  fallback themselves.
 - **`TokenPermissions.perms_map` maps POST to `add_<model>`.** A custom POST
   `@action` therefore demands *create* rights unless you override it — which
   made `rotate` require `add_credential` and left `rotate_credential`
@@ -149,7 +158,7 @@ python manage.py test netbox_openbao
 `docker-compose.dev.yml` brings up PostgreSQL, Redis, and OpenBao 2.6 dev mode.
 Full procedure in [`docs/development.md`](docs/development.md).
 
-Current state: **188 tests**, all passing against real NetBox 4.7.0-beta1 and a
+Current state: **205 tests**, all passing against real NetBox 4.7.0-beta1 and a
 live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
 
 ## When changing things

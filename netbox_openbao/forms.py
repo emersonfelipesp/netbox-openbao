@@ -47,6 +47,7 @@ __all__ = (
     'CredentialForm',
     'CredentialPolicyFilterForm',
     'CredentialPolicyForm',
+    'QuickAddSSHForm',
     'SecretEngineFilterForm',
     'SecretEngineForm',
 )
@@ -391,3 +392,88 @@ class CredentialAssignmentFilterForm(NetBoxModelFilterSetForm):
     )
     purpose = forms.MultipleChoiceField(choices=PurposeChoices, required=False)
     is_primary = forms.NullBooleanField(required=False)
+
+
+class QuickAddSSHForm(forms.Form):
+    """
+    Give a device or VM SSH access in one form.
+
+    Not a ModelForm: it creates three objects, so there is no single instance
+    to bind to. Secret inputs reuse the same `render_value=False` discipline as
+    `CredentialForm` — a rejected form must not echo the key back into the
+    page.
+    """
+
+    name = forms.CharField(
+        required=False,
+        label=_('Credential name'),
+        help_text=_('Defaults to "<object> ssh".'),
+    )
+    username = forms.CharField(label=_('Username'))
+    policy = DynamicModelChoiceField(queryset=CredentialPolicy.objects.all(), label=_('Policy'))
+
+    create_service = forms.BooleanField(
+        required=False,
+        initial=True,
+        label=_('Create or update an SSH service'),
+    )
+    port = forms.IntegerField(initial=22, min_value=1, max_value=65535, label=_('Port'))
+
+    source = forms.ChoiceField(
+        label=_('Key material'),
+        choices=(
+            ('generate', _('Generate a new keypair')),
+            ('paste', _('Paste an existing private key')),
+            ('reuse', _('Reuse an existing credential')),
+        ),
+        initial='generate',
+    )
+    key_type = forms.ChoiceField(choices=SSHKeyTypeChoices, required=False, label=_('Generated key type'))
+    private_key = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={'rows': 6, 'autocomplete': 'off'}),
+        label=_('Private key'),
+    )
+    passphrase = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(render_value=False, attrs={'autocomplete': 'new-password'}),
+        label=_('Passphrase'),
+    )
+    existing_credential = DynamicModelChoiceField(
+        queryset=Credential.objects.all(),
+        required=False,
+        label=_('Existing credential'),
+        query_params={'credential_type': 'ssh-keypair'},
+    )
+
+    fieldsets = (
+        FieldSet('name', 'username', 'policy', name=_('Credential')),
+        FieldSet('create_service', 'port', name=_('Service')),
+        FieldSet('source', 'key_type', 'private_key', 'passphrase', 'existing_credential',
+                 name=_('Key material')),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['key_type'].initial = get_config('default_ssh_key_type')
+        if not get_config('allow_generation', True):
+            self.fields['source'].choices = [
+                choice for choice in self.fields['source'].choices if choice[0] != 'generate'
+            ]
+            self.fields['source'].initial = 'paste'
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned is None:
+            cleaned = self.cleaned_data
+
+        source = cleaned.get('source')
+        if source == 'paste' and not cleaned.get('private_key'):
+            raise forms.ValidationError({'private_key': _('Paste a private key, or choose another source.')})
+        if source == 'reuse' and not cleaned.get('existing_credential'):
+            raise forms.ValidationError({
+                'existing_credential': _('Choose a credential, or choose another source.'),
+            })
+        if source == 'generate' and not get_config('allow_generation', True):
+            raise forms.ValidationError({'source': _('Key generation is disabled on this installation.')})
+        return cleaned

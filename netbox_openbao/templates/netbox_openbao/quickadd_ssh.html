@@ -1,0 +1,40 @@
+{% extends 'base/layout.html' %}
+{% load form_helpers %}
+{% load i18n %}
+
+{% block title %}{% trans "Add SSH access to" %} {{ target }}{% endblock %}
+
+{% block content %}
+<form method="post" autocomplete="off">
+  {% csrf_token %}
+  <div class="row">
+    <div class="col col-12 col-lg-8 offset-lg-2">
+
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger" role="alert">
+          {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+        </div>
+      {% endif %}
+
+      {% for fieldset in form.fieldsets %}
+        <div class="card">
+          <h2 class="card-header">{{ fieldset.name }}</h2>
+          <div class="card-body">
+            {% for name in fieldset.items %}
+              {% with field=form|getfield:name %}
+                {% render_field field %}
+              {% endwith %}
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+
+      <div class="text-end my-3">
+        <a href="{{ return_url }}" class="btn btn-outline-secondary">{% trans "Cancel" %}</a>
+        <button type="submit" class="btn btn-primary">{% trans "Add SSH access" %}</button>
+      </div>
+
+    </div>
+  </div>
+</form>
+{% endblock content %}

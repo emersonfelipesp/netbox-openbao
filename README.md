@@ -193,11 +193,18 @@ running access).
 
 Deliberately not yet here:
 
-- The quick-add SSH wizard
 - Operator-defined credential types (`CredentialTypeSchema`)
 - An Ansible lookup plugin
 - The optional broker mode, where a separate service holds the AppRole so a
   NetBox compromise is not a secret compromise
+
+## Giving a device SSH access
+
+There is an **Add SSH access** button on every Device and VM page. One form
+creates the `ipam.Service`, generates or accepts the keypair, writes the
+private half to OpenBao, and assigns the credential — in a single transaction.
+If it generates the key, the **public** half is shown once so it can go
+straight into `authorized_keys`.
 
 ## Coming from netbox-secrets?
 
