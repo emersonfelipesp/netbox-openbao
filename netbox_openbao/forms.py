@@ -14,13 +14,16 @@ which passes it to the backend and drops it.
 from django import forms
 from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext_lazy as _
+from netbox.context import current_request
 from netbox.forms import NetBoxModelFilterSetForm, NetBoxModelForm, OrganizationalModelForm, PrimaryModelForm
 from users.models import Group
+from utilities.exceptions import AbortRequest
 from utilities.forms import GenericObjectFormMixin
 from utilities.forms.fields import CommentField, DynamicModelChoiceField, DynamicModelMultipleChoiceField, SlugField
 from utilities.forms.fields.generic import GenericObjectChoiceField
 from utilities.forms.rendering import FieldSet
 
+from .backends.exceptions import OpenBaoError
 from .choices import (
     AuthMethodChoices,
     CredentialStatusChoices,
@@ -33,6 +36,7 @@ from .config import get_config
 from .models import Credential, CredentialAssignment, CredentialPolicy, SecretEngine
 from .secrets.generators import generate_ssh_keypair
 from .secrets.registry import get_schema
+from .services import store_credential
 from .utils import assignable_content_types
 
 __all__ = (
@@ -201,7 +205,11 @@ class CredentialForm(PrimaryModelForm):
         self._material_required = self.instance.pk is None
 
     def clean(self):
+        # NetBox's form chain can return None from clean(); NetBox's own
+        # GenericObjectFormMixin guards the same way.
         cleaned = super().clean()
+        if cleaned is None:
+            cleaned = self.cleaned_data
         credential_type = cleaned.get('credential_type')
         if not credential_type:
             return cleaned
@@ -234,9 +242,51 @@ class CredentialForm(PrimaryModelForm):
                 _('Secret material is required when creating a credential.')
             )
 
-        # Consumed by the view; deliberately not attached to self.instance.
+        # Held for save(); deliberately never attached to self.instance.
         self.secret_payload = payload or None
         return cleaned
+
+    def save(self, *args, **kwargs):
+        """
+        Persist the row and the material together.
+
+        Hooked here rather than in the view because NetBox's `ObjectEditView`
+        already wraps `form.save()` in `transaction.atomic()` — so the row and
+        the backend write share one transaction without the view having to be
+        reimplemented. An earlier version overrode the view's `post()` instead
+        and silently dropped `restrict_form_fields()`, `snapshot()`, and
+        `alter_object()` along with it.
+
+        Backend failures become `AbortRequest`, which NetBox renders as a form
+        error rather than a 500.
+        """
+        payload = getattr(self, 'secret_payload', None)
+        if not payload:
+            return super().save(*args, **kwargs)
+
+        request = current_request.get()
+        user = getattr(request, 'user', None) if request else None
+
+        def persist(metadata):
+            for field, value in metadata.items():
+                setattr(self.instance, field, value)
+            return super(CredentialForm, self).save(*args, **kwargs)
+
+        try:
+            credential, _version = store_credential(
+                persist,
+                self.cleaned_data['credential_type'],
+                payload,
+                # A new credential must not overwrite anything already at its
+                # path; an edit checks against the version we believe is live.
+                cas=self.instance.kv_version if self.instance.pk else 0,
+                user=user,
+                request=request,
+                subject=self.instance,
+            )
+        except OpenBaoError as exc:
+            raise AbortRequest(str(exc)) from None
+        return credential
 
 
 class CredentialFilterForm(NetBoxModelFilterSetForm):

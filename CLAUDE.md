@@ -91,6 +91,20 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   test errors in `setUp` with `ValueError`, which does not look like a config
   problem.
 - **`makemigrations` requires `DEVELOPER = True`.**
+- **Every `ObjectView` still needs an `<app_label>/<model_name>.html` stub**,
+  even when the page is entirely panel-driven. NetBox 4.7's declarative layout
+  does not remove the template lookup — without the stub the detail page raises
+  `TemplateDoesNotExist`. All five stubs live in `templates/netbox_openbao/`.
+- **`NetBoxTable` injects an actions column** linking to `<model>_changelog`.
+  On a plain (non-NetBoxModel) model that view does not exist and the list page
+  dies with `NoReverseMatch`. Set `actions = columns.ActionsColumn(actions=())`.
+- **Do not reimplement `ObjectEditView.post()`.** An earlier revision did, and
+  silently dropped `restrict_form_fields()` (which limits related-object
+  selectors to what the user may view), changelog snapshots, and
+  `alter_object()`. Hook `form.save()` instead — the generic view already wraps
+  it in a transaction — and raise `AbortRequest` for backend failures.
+- **`super().clean()` can return `None`** in NetBox's form chain; fall back to
+  `self.cleaned_data`.
 
 ## Testing
 
@@ -108,8 +122,8 @@ python manage.py test netbox_openbao
 `docker-compose.dev.yml` brings up PostgreSQL, Redis, and OpenBao 2.6 dev mode.
 Full procedure in [`docs/development.md`](docs/development.md).
 
-Current state: **91 tests**, all passing against real NetBox 4.7.0-beta1 and a
-live OpenBao 2.6.0. `ruff check` clean.
+Current state: **106 tests**, all passing against real NetBox 4.7.0-beta1 and a
+live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
 
 ## When changing things
 

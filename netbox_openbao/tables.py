@@ -103,10 +103,16 @@ class CredentialAssignmentTable(NetBoxTable):
 
 class CredentialAccessLogTable(NetBoxTable):
     """
-    Read-only view of the audit trail. `actions = ()` because there is nothing
-    to edit or delete: the log is evidence, not an object.
+    Read-only view of the audit trail.
+
+    The actions dropdown is removed outright: there is nothing to edit or
+    delete, because the log is evidence rather than an object. It also cannot
+    render — CredentialAccessLog is a plain Django model with no changelog
+    view, so the default column raises NoReverseMatch on
+    `credentialaccesslog_changelog`.
     """
 
+    actions = columns.ActionsColumn(actions=())
     timestamp = columns.DateTimeColumn(linkify=True)
     credential = tables.Column(linkify=True)
     action = columns.ChoiceFieldColumn()
@@ -121,4 +127,3 @@ class CredentialAccessLogTable(NetBoxTable):
         default_columns = (
             'timestamp', 'credential_name_snapshot', 'username_snapshot', 'action', 'success', 'source_ip',
         )
-        actions = ()

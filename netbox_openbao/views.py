@@ -22,7 +22,7 @@ from utilities.views import ObjectPermissionRequiredMixin, register_model_view
 from . import filtersets, forms, tables
 from .backends.exceptions import OpenBaoError
 from .models import Credential, CredentialAccessLog, CredentialAssignment, CredentialPolicy, SecretEngine
-from .services import reveal_material, store_credential
+from .services import reveal_material
 from .ui import panels as openbao_panels
 
 __all__ = (
@@ -180,65 +180,18 @@ class CredentialView(generic.ObjectView):
 @register_model_view(Credential, 'add', detail=False)
 @register_model_view(Credential, 'edit')
 class CredentialEditView(generic.ObjectEditView):
+    """
+    Standard NetBox edit view.
+
+    The material write is hooked in `CredentialForm.save()`, not here, because
+    the generic view already wraps `form.save()` in a transaction and also
+    supplies `restrict_form_fields()`, changelog snapshots, `alter_object()`,
+    and quick-add handling that a bespoke `post()` would have to reproduce
+    correctly.
+    """
+
     queryset = Credential.objects.all()
     form = forms.CredentialForm
-
-    def form_valid_hook(self, form, request):  # pragma: no cover - hook for future use
-        return None
-
-    def post(self, request, *args, **kwargs):
-        """
-        Route the save through the service layer.
-
-        NetBox's generic `ObjectEditView` would call `form.save()` directly,
-        which persists the row without ever writing the material — leaving a
-        credential whose path resolves to nothing. The material and the row
-        have to be committed together, with the rollback compensator wrapping
-        both.
-        """
-        obj = self.get_object(**kwargs)
-        form = self.form(data=request.POST, files=request.FILES, instance=obj)
-
-        if not form.is_valid():
-            return render(request, self.template_name, {
-                'model': self.queryset.model,
-                'object': obj,
-                'form': form,
-                'return_url': self.get_return_url(request, obj),
-                **self.get_extra_context(request, obj),
-            })
-
-        payload = getattr(form, 'secret_payload', None)
-        try:
-            if payload:
-                instance, _version = store_credential(
-                    lambda metadata: self._save_form(form, metadata),
-                    form.cleaned_data['credential_type'],
-                    payload,
-                    cas=obj.kv_version if obj.pk else 0,
-                    user=request.user,
-                    request=request,
-                )
-            else:
-                instance = form.save()
-        except OpenBaoError as exc:
-            messages.error(request, _('Could not write to OpenBao: {error}').format(error=exc))
-            return render(request, self.template_name, {
-                'model': self.queryset.model,
-                'object': obj,
-                'form': form,
-                'return_url': self.get_return_url(request, obj),
-                **self.get_extra_context(request, obj),
-            })
-
-        messages.success(request, _('Saved credential {name}.').format(name=instance))
-        return redirect(self.get_return_url(request, instance))
-
-    @staticmethod
-    def _save_form(form, metadata):
-        for field, value in metadata.items():
-            setattr(form.instance, field, value)
-        return form.save()
 
 
 @register_model_view(Credential, 'delete')
