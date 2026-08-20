@@ -155,8 +155,43 @@ python manage.py test netbox_openbao
 `docker-compose.dev.yml` brings up PostgreSQL, Redis, and OpenBao 2.6 dev mode.
 Full procedure in [`docs/development.md`](docs/development.md).
 
-Current state: **205 tests**, all passing against real NetBox 4.7.0-beta1 and a
-live OpenBao 2.6.0. `ruff check` clean, `makemigrations --check` clean.
+Broker-mode tests need a running
+[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker)
+and skip cleanly without one:
+
+```bash
+export NETBOX_OPENBAO_BROKER_ADDR=https://localhost:8201
+export NETBOX_OPENBAO_BROKER_CERT=/path/netbox-prod.pem
+export NETBOX_OPENBAO_BROKER_KEY=/path/netbox-prod.key
+export NETBOX_OPENBAO_BROKER_CA=/path/client-ca.pem
+```
+
+### Two things that will cost you an hour otherwise
+
+- **A "hanging" test run is almost always stale Postgres connections**, not a
+  deadlock in the code. Killing a `--keepdb` run leaves backends holding the
+  test database, and the next run blocks on them forever. Clear them first:
+
+  ```sql
+  SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+   WHERE datname LIKE 'test_%' AND pid <> pg_backend_pid();
+  ```
+
+- **Never `pkill -f "manage.py test"`.** The pattern matches the shell that ran
+  it, so the kill takes your own session with it (exit 144). Match narrowly on
+  the interpreter path, or find the process by its database connection.
+
+### Why the live tests are not optional
+
+Three separate defects have hidden behind a passing fake in this repository:
+a whole-path delete where a version-scoped one was needed, tombstoned versions,
+and an empty `custom_metadata` value that **both** OpenBao and Vault reject —
+that last one broke credential creation against every real server while 200+
+tests stayed green (#17). A fake only fails in ways its author already thought
+of. Run against a real server before believing a green suite.
+
+Current state: **256 tests**, all passing against real NetBox 4.7.0-beta1, a
+live OpenBao 2.6.0, a live Vault, and a live broker. `ruff check` clean, `makemigrations --check` clean.
 
 ## When changing things
 
