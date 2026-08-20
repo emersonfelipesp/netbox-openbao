@@ -261,6 +261,86 @@ class StagedRotationViewTest(OpenBaoViewTestCase):
         self.assertNotIn(b'hunter2', response.content)
 
 
+class HTMXRevealTest(OpenBaoViewTestCase):
+    """
+    The HTMX partial must be exactly as guarded as the full-page view. Two
+    paths to the same secret is how the permission check, the policy gate, and
+    the no-store headers drift apart.
+    """
+
+    def url(self):
+        return reverse('plugins:netbox_openbao:credential_reveal-partial', kwargs={'pk': self.credential.pk})
+
+    def test_rejects_get(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+        response = self.client.get(self.url())
+
+        self.assertEqual(response.status_code, 405)
+        self.assertNotIn(b'hunter2', response.content)
+
+    def test_view_permission_alone_cannot_reveal(self):
+        self.add_permissions('netbox_openbao.view_credential')
+        response = self.client.post(self.url(), data={})
+
+        self.assertIn(response.status_code, (403, 302, 404))
+        self.assertNotIn(b'hunter2', response.content)
+
+    def test_returns_the_material_fragment(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+        response = self.client.post(self.url(), data={'reason': 'CHG-5'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'hunter2', response.content)
+        # A fragment, not a page.
+        self.assertNotIn(b'<html', response.content.lower())
+
+    def test_fragment_is_not_storable(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+        response = self.client.post(self.url(), data={})
+
+        self.assertIn('no-store', response['Cache-Control'])
+
+    def test_fragment_carries_the_policy_capped_ttl(self):
+        self.policy.max_reveal_ttl = 45
+        self.policy.save()
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+
+        response = self.client.post(self.url(), data={})
+        self.assertIn(b'data-ttl="45"', response.content)
+
+    def test_policy_required_reason_is_enforced_and_leaks_nothing(self):
+        self.policy.require_reason = True
+        self.policy.save()
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+
+        response = self.client.post(self.url(), data={})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn(b'hunter2', response.content)
+
+    def test_backend_failure_renders_an_error_without_material(self):
+        FakeBackend.reset()  # the path no longer exists
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
+
+        response = self.client.post(self.url(), data={})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn(b'hunter2', response.content)
+        self.assertIn('no-store', response['Cache-Control'])
+
+    def test_fragment_uses_no_innerhtml(self):
+        """
+        The fragment ships inline script. It must not build markup from values
+        — the material would be parsed as HTML, and a value containing markup
+        would execute in the operator's session.
+        """
+        from django.template.loader import get_template
+
+        source = get_template('netbox_openbao/partials/reveal_fragment.html').template.source
+        for forbidden in ('innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'eval('):
+            self.assertNotIn(forbidden, source, f'{forbidden} must not appear in the reveal fragment')
+
+
 class CredentialListViewTest(OpenBaoViewTestCase):
 
     def test_list_renders_without_material(self):

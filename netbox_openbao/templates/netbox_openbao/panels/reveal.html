@@ -2,12 +2,18 @@
 {% load i18n %}
 
 {% block panel_content %}
-  <div class="p-3">
+  <div class="p-3" id="reveal-panel">
     <p class="text-muted small mb-3">
       {% trans "Reading this credential is recorded in the access log against your account." %}
     </p>
-    {# POST-only: a GET-reachable reveal could be prefetched, bookmarked, or replayed from history. #}
-    <form method="post" action="{% url 'plugins:netbox_openbao:credential_reveal' pk=object.pk %}">
+
+    {# POST, not GET: a GET-reachable reveal could be prefetched, bookmarked, #}
+    {# or replayed from history. hx-post keeps that property over HTMX.       #}
+    <form hx-post="{% url 'plugins:netbox_openbao:credential_reveal-partial' pk=object.pk %}"
+          hx-target="#reveal-slot"
+          hx-swap="innerHTML"
+          method="post"
+          action="{% url 'plugins:netbox_openbao:credential_reveal' pk=object.pk %}">
       {% csrf_token %}
       <div class="mb-3">
         <label class="form-label" for="reveal-reason">
@@ -24,4 +30,8 @@
       </button>
     </form>
   </div>
+
+  {# HTMX swaps the material in here. With scripting disabled the form falls  #}
+  {# back to its plain action attribute and the full-page view instead.       #}
+  <div id="reveal-slot"></div>
 {% endblock panel_content %}

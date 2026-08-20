@@ -163,7 +163,24 @@ silently overwrite material written outside NetBox. Rotations use the recorded
 Both are verified against a live OpenBao in the integration tests, because a
 mock proves nothing about whether `hvac` and OpenBao agree on what `cas` means.
 
-## 13. Form inputs are not echoed
+## 13. The reveal countdown is a convenience, not a control
+
+Revealed material clears itself from the page after the policy-capped TTL, and
+there is a "clear now" button. Both are worth having: a screen left unattended
+stops displaying a secret.
+
+Neither is a security boundary, and the UI says so rather than implying
+otherwise. The material has already left the server by the time it renders;
+anyone who wants to keep it can. Clearing the page does not revoke anything,
+and the access-log entry stands regardless.
+
+The fragment ships inline script, which is only safe because values reach the
+DOM through `textContent` and the node is dropped with `remove()`. Building
+markup from a value would let material containing HTML execute in the
+operator's session — `test_fragment_uses_no_innerhtml` enforces that by
+substring so it cannot creep back.
+
+## 14. Form inputs are not echoed
 
 Secret form fields use widgets with `render_value=False`. On a validation error
 the browser gets an empty box, not the key the user just pasted — which would

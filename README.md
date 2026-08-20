@@ -193,7 +193,7 @@ running access).
 
 Deliberately not yet here:
 
-- HTMX reveal with countdown-to-clear, and the quick-add SSH wizard
+- The quick-add SSH wizard
 - Operator-defined credential types (`CredentialTypeSchema`)
 - An Ansible lookup plugin
 - The optional broker mode, where a separate service holds the AppRole so a

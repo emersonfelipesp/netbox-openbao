@@ -12,6 +12,7 @@ from django.contrib import messages
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import View
 from extras.ui.panels import CustomFieldsPanel, TagsPanel
@@ -43,6 +44,7 @@ __all__ = (
     'CredentialPolicyView',
     'CredentialDiscardView',
     'CredentialPromoteView',
+    'CredentialRevealPartialView',
     'CredentialRevealView',
     'CredentialView',
     'SecretEngineDeleteView',
@@ -211,46 +213,99 @@ class CredentialBulkDeleteView(generic.BulkDeleteView):
     table = tables.CredentialTable
 
 
-@register_model_view(Credential, 'reveal')
-class CredentialRevealView(ObjectPermissionRequiredMixin, View):
+class _RevealBase(ObjectPermissionRequiredMixin, View):
     """
-    Reveal a credential's material in the UI.
+    Shared authorization and resolution for both reveal surfaces.
 
-    POST-only by design (see the module docstring), and the response carries
-    `no-store` so neither the browser nor any proxy retains the rendered
-    material.
+    Extracted rather than duplicated on purpose: two code paths to the same
+    secret are two places for the permission check, the policy reason gate, and
+    the `no-store` headers to drift apart, and drift on this path is a
+    disclosure bug.
+
+    POST-only. A GET-reachable reveal can be bookmarked, prefetched by the
+    browser, followed by a link scanner, or replayed from history — all of
+    which would fetch a secret without anyone deciding to.
     """
 
     queryset = Credential.objects.select_related('policy', 'engine')
-    template_name = 'netbox_openbao/credential_reveal.html'
 
     def get_required_permission(self):
         return 'netbox_openbao.reveal_credential'
 
-    def post(self, request, pk):
-        credential = get_object_or_404(
-            self.queryset.restrict(request.user, 'reveal'), pk=pk
+    def resolve(self, request, pk):
+        """Return `(credential, secret_data, ttl)`, or raise."""
+        credential = get_object_or_404(self.queryset.restrict(request.user, 'reveal'), pk=pk)
+        data, ttl = reveal_material(
+            credential, request.user, request=request, reason=request.POST.get('reason', ''),
         )
-        reason = request.POST.get('reason', '')
+        return credential, data, ttl
 
-        try:
-            data, ttl = reveal_material(credential, request.user, request=request, reason=reason)
-        except OpenBaoError as exc:
-            messages.error(request, _('Could not read from OpenBao: {error}').format(error=exc))
-            return redirect(credential.get_absolute_url())
-        except Exception as exc:
-            messages.error(request, str(exc))
-            return redirect(credential.get_absolute_url())
-
-        response = render(request, self.template_name, {
-            'object': credential,
-            'secret_data': data,
-            'ttl': ttl,
-        })
+    @staticmethod
+    def unstorable(response):
         response['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response['Pragma'] = 'no-cache'
         response['Expires'] = '0'
         return response
+
+
+@register_model_view(Credential, 'reveal')
+class CredentialRevealView(_RevealBase):
+    """
+    Full-page reveal, retained as the no-JavaScript fallback.
+
+    The HTMX partial below is the normal path; this one still works with
+    scripting disabled.
+    """
+
+    template_name = 'netbox_openbao/credential_reveal.html'
+
+    def post(self, request, pk):
+        try:
+            credential, data, ttl = self.resolve(request, pk)
+        except OpenBaoError as exc:
+            messages.error(request, _('Could not read from OpenBao: {error}').format(error=exc))
+            return redirect(reverse('plugins:netbox_openbao:credential', args=[pk]))
+        except DjangoValidationError as exc:
+            messages.error(request, '; '.join(exc.messages))
+            return redirect(reverse('plugins:netbox_openbao:credential', args=[pk]))
+
+        return self.unstorable(render(request, self.template_name, {
+            'object': credential,
+            'secret_data': data,
+            'ttl': ttl,
+        }))
+
+
+@register_model_view(Credential, 'reveal-partial', path='reveal-partial')
+class CredentialRevealPartialView(_RevealBase):
+    """
+    Reveal into the credential page over HTMX.
+
+    Returns only the material fragment, which the panel swaps in place. Same
+    authorization, same policy gate, same headers as the full-page view —
+    because it is literally the same code.
+    """
+
+    template_name = 'netbox_openbao/partials/reveal_fragment.html'
+    error_template_name = 'netbox_openbao/partials/reveal_error.html'
+
+    def post(self, request, pk):
+        try:
+            credential, data, ttl = self.resolve(request, pk)
+        except OpenBaoError as exc:
+            return self.unstorable(render(request, self.error_template_name, {
+                'message': _('Could not read from OpenBao: {error}').format(error=exc),
+            }, status=502))
+        except DjangoValidationError as exc:
+            return self.unstorable(render(request, self.error_template_name, {
+                'message': '; '.join(exc.messages),
+            }, status=400))
+
+        return self.unstorable(render(request, self.template_name, {
+            'object': credential,
+            'secret_data': data,
+            'ttl': ttl,
+        }))
 
 
 class _StagedTransitionView(ObjectPermissionRequiredMixin, View):
