@@ -33,6 +33,48 @@ class WritePathTest(OpenBaoTestCase):
         self.assertEqual(Credential.objects.count(), 1)
         self.assertEqual(Credential.objects.get().kv_version, 1)
 
+    def test_custom_metadata_never_contains_an_empty_value(self):
+        """
+        OpenBao refuses an empty value in custom_metadata, and
+        `netbox_assignments` is empty for every credential at creation time —
+        assignments can only be added after the credential exists. Sending it
+        made every create fail against a real server.
+        """
+        credential = self.make_credential()
+        write_material(credential, {'password': 'hunter2'}, user=self.user)
+
+        metadata = FakeBackend.metadata[credential.path]
+        self.assertNotIn('netbox_assignments', metadata)
+        for key, value in metadata.items():
+            self.assertTrue(value, f'custom_metadata["{key}"] is empty; OpenBao rejects that')
+
+    def test_assignments_appear_once_they_exist(self):
+        """Dropping empty values must not drop the key when it has content."""
+        from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
+        from django.contrib.contenttypes.models import ContentType
+
+        from netbox_openbao.models import CredentialAssignment
+
+        site = Site.objects.create(name='S', slug='s')
+        manufacturer = Manufacturer.objects.create(name='M', slug='m')
+        device_type = DeviceType.objects.create(manufacturer=manufacturer, model='T', slug='t')
+        role = DeviceRole.objects.create(name='R', slug='r')
+        device = Device.objects.create(
+            name='d1', site=site, device_type=device_type, role=role,
+        )
+
+        credential = self.make_credential()
+        write_material(credential, {'password': 'hunter2'}, user=self.user)
+        CredentialAssignment.objects.create(
+            credential=credential,
+            assigned_object_type=ContentType.objects.get_for_model(Device),
+            assigned_object_id=device.pk,
+        )
+
+        metadata = FakeBackend.metadata[credential.path]
+        self.assertIn('netbox_assignments', metadata)
+        self.assertIn(f'dcim.device:{device.pk}', metadata['netbox_assignments'])
+
     def test_custom_metadata_is_written(self):
         credential = self.make_credential()
         write_material(credential, {'password': 'hunter2'}, user=self.user)

@@ -137,7 +137,18 @@ def build_custom_metadata(credential):
     job recognise material under the plugin's prefix that NetBox no longer has
     a row for — an orphan.
 
-    All values must be strings; OpenBao rejects other JSON types here.
+    All values must be non-empty strings. OpenBao rejects both other JSON types
+    and empty values:
+
+        custom_metadata validation failed: length of value for key "x" is 0
+        but must be 0 < len(value) <= 512
+
+    which matters because `netbox_assignments` is empty for a credential that
+    has no assignments yet — that is, every credential at the moment it is
+    created, since assignments can only be added afterwards. Sending it made
+    every create fail against a real server. An absent key and an empty one
+    mean the same thing to every consumer of this metadata, and only one of
+    them is legal.
     """
     assignments = ','.join(
         f'{a.assigned_object_type.app_label}.{a.assigned_object_type.model}:{a.assigned_object_id}'
@@ -163,7 +174,10 @@ def build_custom_metadata(credential):
         except Exception:
             # A missing URL is cosmetic; it must not fail the write.
             logger.debug('Could not resolve absolute URL for credential %s', credential.pk)
-    return metadata
+
+    # Drop empties. OpenBao refuses a zero-length value, and an absent key
+    # means the same thing to every consumer of this metadata.
+    return {key: value for key, value in metadata.items() if value}
 
 
 def prepare_material(credential_type, payload):

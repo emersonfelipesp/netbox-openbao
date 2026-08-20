@@ -275,6 +275,47 @@ class _KVIntegrationTests:
         with self.assertRaises(OpenBaoNotFound):
             self.backend.read(self.path)
 
+    def test_full_write_path_against_a_real_server(self):
+        """
+        `store_credential` end to end, not just `set_metadata` in isolation.
+
+        Every other integration test here calls one backend method with values
+        chosen by the test. This one lets the plugin build its own
+        custom_metadata and send it, which is how an empty value reached a real
+        server unnoticed while 200-odd unit tests stayed green.
+        """
+        from netbox_openbao.choices import CredentialTypeChoices
+        from netbox_openbao.models import Credential, CredentialPolicy
+        from netbox_openbao.services import write_material
+
+        policy = CredentialPolicy.objects.create(
+            name=f'ITest {self.backend_value}', slug=f'{self.engine_slug}-policy',
+            engine=self.engine, openbao_policy='netbox-itest',
+        )
+        credential = Credential(
+            name=f'itest {self.backend_value}',
+            credential_type=CredentialTypeChoices.TYPE_PASSWORD,
+            policy=policy, engine=self.engine,
+        )
+        # A brand-new credential has no assignments, which is exactly the case
+        # that produced an empty custom_metadata value.
+        credential, version = write_material(credential, {'password': 'hunter2'})
+        self.addCleanup(lambda: self._safe_delete(credential.path))
+
+        self.assertEqual(version, 1)
+        self.assertEqual(self.backend.read(credential.path), {'password': 'hunter2'})
+
+        metadata = self.backend.read_metadata(credential.path)['custom_metadata'] or {}
+        self.assertEqual(metadata.get('managed_by'), 'netbox-openbao')
+        for key, value in metadata.items():
+            self.assertTrue(value, f'custom_metadata["{key}"] is empty')
+
+    def _safe_delete(self, path):
+        try:
+            self.backend.delete(path)
+        except OpenBaoError:
+            pass
+
     def test_bad_token_is_scrubbed_auth_error(self):
         slug = f'{self.engine_slug}-bad'
         engine = SecretEngine.objects.create(
