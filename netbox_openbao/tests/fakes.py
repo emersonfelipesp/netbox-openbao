@@ -1,7 +1,7 @@
 """An in-memory SecretBackend, so tests never need a live OpenBao."""
 
 from netbox_openbao.backends.base import SecretBackend
-from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoNotFound
+from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoError, OpenBaoNotFound
 
 __all__ = ('FakeBackend', 'install_fake_backend')
 
@@ -104,8 +104,22 @@ class FakeBackend(SecretBackend):
         }
 
     def set_metadata(self, path, metadata):
+        """
+        Reject what a real OpenBao rejects.
+
+        Empty values are refused server-side ("length of value for key ... is
+        0"), and this fake used to accept them — which is how an empty
+        `netbox_assignments` shipped and broke every credential create against
+        a real server while the whole suite stayed green.
+        """
         if self.fail_on_metadata:
             raise OpenBaoConflict()
+        for key, value in (metadata or {}).items():
+            if not isinstance(value, str) or not value:
+                raise OpenBaoError(
+                    f'custom_metadata validation failed: value for key "{key}" must be a '
+                    f'non-empty string'
+                )
         self.metadata[path] = dict(metadata)
 
     def health(self):
