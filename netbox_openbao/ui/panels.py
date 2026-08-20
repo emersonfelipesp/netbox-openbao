@@ -35,6 +35,7 @@ __all__ = (
 class SecretEnginePanel(panels.ObjectAttributesPanel):
     name = attrs.TextAttr('name')
     slug = attrs.TextAttr('slug', style='font-monospace')
+    backend = attrs.ChoiceAttr('backend')
     api_url = attrs.TextAttr('api_url', label=_('API URL'), style='font-monospace', copy_button=True)
     namespace = attrs.TextAttr('namespace')
     kv_mount = attrs.TextAttr('kv_mount', label=_('KV mount'), style='font-monospace')

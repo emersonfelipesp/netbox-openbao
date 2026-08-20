@@ -29,7 +29,7 @@ class SecretEngineFilterSet(NetBoxModelFilterSet):
 
     class Meta:
         model = SecretEngine
-        fields = ('id', 'name', 'slug', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'tls_verify',
+        fields = ('id', 'name', 'slug', 'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'tls_verify',
                   'is_default', 'description')
 
     def search(self, queryset, name, value):

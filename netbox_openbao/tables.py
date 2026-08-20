@@ -28,7 +28,7 @@ class SecretEngineTable(NetBoxTable):
     class Meta(NetBoxTable.Meta):
         model = SecretEngine
         fields = (
-            'pk', 'id', 'name', 'slug', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method',
+            'pk', 'id', 'name', 'slug', 'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method',
             'tls_verify', 'is_default', 'status', 'status_message', 'last_checked', 'credential_count',
             'description', 'comments', 'tags', 'created', 'last_updated',
         )

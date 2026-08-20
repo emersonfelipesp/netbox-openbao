@@ -1,12 +1,16 @@
 """
 Backend behaviour.
 
-Split in two. The unit tests below assert the error-translation contract
-without a server, because that contract is about what *doesn't* escape and is
-easiest to verify in isolation. The integration tests run against a real
-OpenBao dev server when `NETBOX_OPENBAO_TEST_ADDR` is set, because a mock of a
-secret store proves nothing about whether `hvac` and OpenBao actually agree on
-check-and-set semantics, custom metadata, or version handling.
+Split in two. The unit tests assert the error-translation contract without a
+server, because that contract is about what *doesn't* escape and is easiest to
+verify in isolation. The integration tests run against real servers when their
+addresses are set, because a mock of a secret store proves nothing about
+whether `hvac` and the server actually agree on check-and-set semantics,
+custom metadata, or version handling.
+
+The integration contract is shared between OpenBao and Vault on purpose: a
+Vault backend tested only against OpenBao would prove exactly nothing about
+Vault.
 """
 
 import os
@@ -14,6 +18,7 @@ import unittest
 
 from django.test import TestCase
 
+from netbox_openbao.backends import BACKENDS, get_backend
 from netbox_openbao.backends.exceptions import (
     OpenBaoAuthError,
     OpenBaoConflict,
@@ -27,6 +32,9 @@ from netbox_openbao.models import SecretEngine
 
 TEST_ADDR = os.environ.get('NETBOX_OPENBAO_TEST_ADDR')
 TEST_TOKEN = os.environ.get('NETBOX_OPENBAO_TEST_TOKEN')
+
+VAULT_TEST_ADDR = os.environ.get('NETBOX_VAULT_TEST_ADDR')
+VAULT_TEST_TOKEN = os.environ.get('NETBOX_VAULT_TEST_TOKEN')
 
 
 class ErrorTranslationTest(TestCase):
@@ -89,6 +97,31 @@ class ErrorTranslationTest(TestCase):
         self.assertNotIn('10.0.0.5', str(translated))
 
 
+class BackendSelectionTest(TestCase):
+    """`SecretEngine.backend` decides which implementation is used."""
+
+    def _engine(self, backend):
+        return SecretEngine(
+            name=f'E-{backend}', slug=f'e-{backend}', backend=backend,
+            api_url='https://bao.invalid:8200',
+        )
+
+    def test_openbao_is_the_default(self):
+        engine = SecretEngine(name='D', slug='d', api_url='https://bao.invalid:8200')
+        self.assertIsInstance(get_backend(engine), BACKENDS['openbao'])
+
+    def test_vault_engine_resolves_to_the_vault_backend(self):
+        self.assertIsInstance(get_backend(self._engine('vault')), BACKENDS['vault'])
+
+    def test_unknown_backend_degrades_to_the_default(self):
+        """
+        An engine row written by a newer plugin version must not take every
+        credential on it offline; the two implementations are compatible.
+        """
+        engine = self._engine('something-newer')
+        self.assertIsInstance(get_backend(engine), OpenBaoBackend)
+
+
 class ConfigurationTest(TestCase):
 
     def test_kv_v1_engine_rejects_version_specific_operations(self):
@@ -117,34 +150,43 @@ class ConfigurationTest(TestCase):
         self.assertIn('NETBOX_BAO_NO_ENV_HERE_ROLE_ID', str(ctx.exception))
 
 
-@unittest.skipUnless(TEST_ADDR, 'Set NETBOX_OPENBAO_TEST_ADDR to run OpenBao integration tests')
-class OpenBaoIntegrationTest(TestCase):
+class _KVIntegrationTests:
     """
-    Exercises the real wire protocol against a live OpenBao.
+    The wire-protocol contract, run against a real server.
 
-    A fake cannot tell you whether hvac and OpenBao agree on what `cas` means,
-    or whether `custom_metadata` round-trips — which are precisely the
-    behaviours this plugin's correctness depends on.
+    Subclasses supply `server_addr`, `server_token`, `backend_value`, and
+    `engine_slug`. If a subclass ever needs to override one of these tests, the
+    divergence belongs in that backend class with a comment explaining what
+    actually differs — not papered over here.
     """
+
+    server_addr = None
+    server_token = None
+    backend_value = None
+    engine_slug = None
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        os.environ['NETBOX_BAO_ITEST_TOKEN'] = TEST_TOKEN or 'devroot'
+        prefix = f"NETBOX_BAO_{cls.engine_slug.upper().replace('-', '_')}"
+        os.environ[f'{prefix}_TOKEN'] = cls.server_token or 'devroot'
 
     def setUp(self):
         super().setUp()
         self.engine = SecretEngine.objects.create(
-            name='Integration',
-            slug='itest',
-            api_url=TEST_ADDR,
+            name=f'Integration {self.backend_value}',
+            slug=self.engine_slug,
+            backend=self.backend_value,
+            api_url=self.server_addr,
             kv_mount='secret',
             kv_version=2,
             auth_method=AuthMethodChoices.METHOD_TOKEN,
             tls_verify=False,
         )
-        self.backend = OpenBaoBackend(self.engine)
-        self.path = f'netbox-itest/{self.id().rsplit(".", 1)[-1]}'
+        # Resolved through the registry, so the engine's `backend` value is
+        # part of what is under test rather than bypassed.
+        self.backend = get_backend(self.engine)
+        self.path = f'netbox-itest/{self.backend_value}/{self.id().rsplit(".", 1)[-1]}'
         self.addCleanup(self._cleanup)
 
     def _cleanup(self):
@@ -153,9 +195,15 @@ class OpenBaoIntegrationTest(TestCase):
         except OpenBaoError:
             pass
 
+    def test_backend_class_matches_the_engine(self):
+        self.assertIsInstance(self.backend, BACKENDS[self.backend_value])
+
     def test_health_reports_unsealed(self):
         result = self.backend.health()
         self.assertEqual(result['status'], EngineStatusChoices.STATUS_HEALTHY)
+        # Both servers must expose every field the base parser reads.
+        for field in ('initialized', 'sealed', 'standby', 'version'):
+            self.assertIn(field, result['raw'])
 
     def test_write_then_read_roundtrip(self):
         version = self.backend.write(self.path, {'password': 'hunter2'}, cas=0)
@@ -190,6 +238,20 @@ class OpenBaoIntegrationTest(TestCase):
         self.assertEqual(self.backend.read(self.path, version=1), {'password': 'v1'})
         self.assertEqual(self.backend.read(self.path, version=2), {'password': 'v2'})
 
+    def test_version_scoped_delete_leaves_the_others(self):
+        """
+        What staged rotation's discard depends on, and what the write-path
+        compensator depends on for a rotation.
+        """
+        self.backend.write(self.path, {'password': 'v1'}, cas=0)
+        self.backend.write(self.path, {'password': 'v2'}, cas=1)
+
+        self.backend.delete(self.path, versions=[2])
+
+        self.assertEqual(self.backend.read(self.path, version=1), {'password': 'v1'})
+        listed = {v['version']: v for v in self.backend.list_versions(self.path)}
+        self.assertTrue(listed[2]['deletion_time'] or listed[2]['destroyed'])
+
     def test_custom_metadata_roundtrips(self):
         self.backend.write(self.path, {'password': 'x'}, cas=0)
         self.backend.set_metadata(self.path, {
@@ -214,13 +276,39 @@ class OpenBaoIntegrationTest(TestCase):
             self.backend.read(self.path)
 
     def test_bad_token_is_scrubbed_auth_error(self):
+        slug = f'{self.engine_slug}-bad'
         engine = SecretEngine.objects.create(
-            name='BadToken', slug='itest-bad', api_url=TEST_ADDR,
+            name=f'BadToken {self.backend_value}', slug=slug,
+            backend=self.backend_value, api_url=self.server_addr,
             auth_method=AuthMethodChoices.METHOD_TOKEN, tls_verify=False,
         )
-        os.environ['NETBOX_BAO_ITEST_BAD_TOKEN'] = 'not-a-real-token'
-        backend = OpenBaoBackend(engine)
+        os.environ[f"NETBOX_BAO_{slug.upper().replace('-', '_')}_TOKEN"] = 'not-a-real-token'
+        backend = get_backend(engine)
 
         with self.assertRaises(OpenBaoError) as ctx:
             backend.read('netbox-itest/anything')
         self.assertNotIn('not-a-real-token', str(ctx.exception))
+
+
+@unittest.skipUnless(TEST_ADDR, 'Set NETBOX_OPENBAO_TEST_ADDR to run OpenBao integration tests')
+class OpenBaoIntegrationTest(_KVIntegrationTests, TestCase):
+    server_addr = TEST_ADDR
+    server_token = TEST_TOKEN
+    backend_value = 'openbao'
+    engine_slug = 'itest-openbao'
+
+
+@unittest.skipUnless(VAULT_TEST_ADDR, 'Set NETBOX_VAULT_TEST_ADDR to run Vault integration tests')
+class VaultIntegrationTest(_KVIntegrationTests, TestCase):
+    """
+    The same contract, against HashiCorp Vault.
+
+    Vault's `sys/health` returns a strict superset of OpenBao's payload, so no
+    override is needed for it here. Any behaviour that does diverge should fail
+    one of these and be handled in `backends/vault.py`.
+    """
+
+    server_addr = VAULT_TEST_ADDR
+    server_token = VAULT_TEST_TOKEN
+    backend_value = 'vault'
+    engine_slug = 'itest-vault'

@@ -70,7 +70,8 @@ class SecretEngineForm(PrimaryModelForm):
     comments = CommentField()
 
     fieldsets = (
-        FieldSet('name', 'slug', 'api_url', 'namespace', 'is_default', 'description', name=_('Engine')),
+        FieldSet('name', 'slug', 'backend', 'api_url', 'namespace', 'is_default', 'description',
+                 name=_('Engine')),
         FieldSet('kv_mount', 'kv_version', name=_('Key/value mount')),
         FieldSet('auth_method', 'tls_verify', 'ca_cert_path', name=_('Authentication')),
         FieldSet('tags', name=_('Tags')),
@@ -79,7 +80,7 @@ class SecretEngineForm(PrimaryModelForm):
     class Meta:
         model = SecretEngine
         fields = (
-            'name', 'slug', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method', 'tls_verify',
+            'name', 'slug', 'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method', 'tls_verify',
             'ca_cert_path', 'is_default', 'description', 'comments', 'tags',
         )
         help_texts = {
