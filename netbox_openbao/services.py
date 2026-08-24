@@ -38,6 +38,7 @@ __all__ = (
     'delete_material',
     'discard_staged',
     'enforce_policy_access',
+    'enforce_update_access',
     'promote_staged',
     'stage_material',
     'log_access',
@@ -168,6 +169,41 @@ def enforce_policy_access(credential, user, action=None, request=None):
     raise PermissionDenied(
         'Your groups are not permitted to access credentials under this policy.'
     )
+
+
+def enforce_update_access(credential, user, action=None, request=None):
+    """
+    Gate an update against the tier the credential is on **in the database**.
+
+    `enforce_policy_access` reads `credential.policy`, and by the time an
+    update reaches the service layer that attribute is already the *incoming*
+    tier rather than the one the caller has to satisfy. Both layers mutate the
+    instance in place before any of this runs:
+
+    * NetBox's `ValidatedModelSerializer.validate()` `setattr()`s every
+      validated attribute onto `self.instance` so it can `full_clean()` it.
+    * Django's `ModelForm._post_clean()` calls `construct_instance()`.
+
+    That is not a detail — it is the whole bug. `policy` is a writable field,
+    so a caller outside a tier's groups could move a credential to a tier they
+    *are* in and then reveal it, and the paths are UUID-derived under one
+    shared prefix, so the receiving tier's AppRole reads the very same secret.
+    Checking the mutated instance would compare the caller against the tier
+    they chose, which they always satisfy.
+
+    So the committed row is re-read. One indexed query, on an operation that is
+    already writing to two systems.
+    """
+    if credential is None or getattr(credential, 'pk', None) is None:
+        return
+
+    committed = type(credential).objects.filter(pk=credential.pk).select_related('policy').first()
+    if committed is None:
+        # Mid-rollback, or deleted concurrently. There is no tier left to
+        # satisfy, and the update is going to fail on its own.
+        return
+
+    enforce_policy_access(committed, user, action, request=request)
 
 
 # ----------------------------------------------------------------------

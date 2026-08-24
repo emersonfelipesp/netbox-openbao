@@ -157,6 +157,15 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   wrong reason if the user lacks the permission. Assert the absent handler on
   the viewset structurally, or grant the permission first and then assert 405 —
   `test_policy_gate` does both.
+- **NetBox mutates the instance before your view code runs.**
+  `ValidatedModelSerializer.validate()` `setattr()`s every validated attribute
+  onto `self.instance` so it can `full_clean()` it, and Django's
+  `ModelForm._post_clean()` calls `construct_instance()`. So by the time
+  `perform_update()` or `form.save()` runs, `instance.<field>` is the
+  **incoming** value, not the stored one. Any authorization decision that has
+  to be made against the *current* state must re-read the committed row —
+  `services.enforce_update_access` does. Getting this wrong is silent: the
+  check runs, passes, and compares the caller against the value they chose.
 - **An authorization check in a view is a check the other four surfaces do not
   have.** The `CredentialPolicy` group gate lived in
   `api/views.CredentialViewSet._authorize` and nowhere else, so the web UI

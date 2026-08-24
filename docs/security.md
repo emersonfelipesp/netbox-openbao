@@ -93,7 +93,16 @@ reveal, the HTMX reveal, the UI promote and discard, the edit form's material
 write, and `PATCH`/`PUT` of `secret_data`. A refusal is recorded in the access
 log.
 
-That is worth stating precisely, because it was not always true: the check
+It also covers **every** update of an existing credential, not only those
+carrying material. `policy` is a writable field, so a user in one tier's groups
+could otherwise move a credential out of a tier they are not in and into one
+they are — an update with no `secret_data` — and then reveal it. Credential
+paths are UUID-derived under one shared prefix, so the receiving tier's AppRole
+reads the same secret; layers 2 and 3 both fall to one request that never
+touches material. The gate is on the update itself rather than on the `policy`
+field, because anything narrower is a denylist.
+
+That is worth stating precisely, because none of it was always true: the check
 lived in the REST viewset's authorization helper and nowhere else, so a user
 belonging to none of a tier's groups was refused over the API and served the
 same material by the credential page. `PATCH` of `secret_data` bypassed it in

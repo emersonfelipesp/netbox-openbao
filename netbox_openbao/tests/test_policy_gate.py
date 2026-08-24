@@ -354,3 +354,99 @@ class AccessLogRestrictionTest(APITestCase):
         self.assertEqual(
             self.client.patch(detail, {'reason': 'x'}, format='json', **self.header).status_code, 405
         )
+
+
+class PolicyReassignmentTest(_GateFixture, APITestCase):
+    """
+    Moving a credential between tiers must not be a way around the group gate.
+
+    The escalation this closes, in three requests: a user in `lab`'s groups but
+    not `production`'s is refused a reveal on a production credential, PATCHes
+    its `policy` to `lab` — an update carrying no `secret_data`, and therefore
+    ungated when only material-bearing updates were checked — and reveals it.
+
+    It works because credential paths are UUID-derived under one shared prefix,
+    so the receiving tier's AppRole reads the very same secret. Layer 2 (the
+    group gate) and layer 3 (the tier's own OpenBao policy) both fall to one
+    request that never touches material.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.build_estate()
+        self.lab = CredentialPolicy.objects.create(
+            name='Lab', slug='lab', engine=self.engine, openbao_policy='netbox-lab',
+        )
+        self.my_group = Group.objects.create(name='labops')
+        self.lab.groups.add(self.my_group)
+        self.user.groups.add(self.my_group)
+
+        self.detail_url = reverse(
+            'plugins-api:netbox_openbao-api:credential-detail', kwargs={'pk': self.credential.pk}
+        )
+        self.reveal_url = reverse(
+            'plugins-api:netbox_openbao-api:credential-reveal', kwargs={'pk': self.credential.pk}
+        )
+
+    def grant_everything_except_membership(self):
+        self.add_permissions(
+            'netbox_openbao.view_credential',
+            'netbox_openbao.change_credential',
+            'netbox_openbao.reveal_credential',
+        )
+
+    def test_moving_a_credential_out_of_a_tier_is_refused(self):
+        self.grant_everything_except_membership()
+
+        response = self.client.patch(
+            self.detail_url, {'policy': self.lab.pk}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.policy_id, self.policy.pk)
+
+    def test_the_material_is_still_unreachable_after_attempting_the_move(self):
+        self.grant_everything_except_membership()
+
+        self.client.patch(self.detail_url, {'policy': self.lab.pk}, format='json', **self.header)
+        response = self.client.get(self.reveal_url + '?reason=x', **self.header)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn(SECRET, response.content.decode())
+
+    def test_an_ordinary_edit_is_refused_too(self):
+        """
+        The gate is on the update, not on the `policy` field specifically.
+        Anything else would be a denylist, and the next writable field that
+        changes who may read a credential would walk straight through it.
+        """
+        self.grant_everything_except_membership()
+
+        response = self.client.patch(
+            self.detail_url, {'description': 'harmless'}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_a_member_of_the_tier_may_still_edit_and_move(self):
+        self.grant_everything_except_membership()
+        self.join_permitted_group()
+
+        response = self.client.patch(
+            self.detail_url, {'policy': self.lab.pk}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.policy_id, self.lab.pk)
+
+    def test_an_ungated_tier_is_unaffected(self):
+        self.policy.groups.clear()
+        self.grant_everything_except_membership()
+
+        response = self.client.patch(
+            self.detail_url, {'description': 'harmless'}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 200)

@@ -29,6 +29,7 @@ Fix the test.
 | `view` alone cannot reveal | `restrict(user, 'reveal')` | `test_api.test_view_permission_alone_cannot_reveal`, `test_views.test_view_permission_alone_cannot_reveal` (×2 surfaces) |
 | ObjectPermission constraints hide other tiers | The same `restrict()` — a 404, not a 403 | `test_api.test_constrained_permission_hides_other_tiers` |
 | The policy group gate applies on **every** surface | `services.enforce_policy_access`, called from the service chokepoint and from the REST authorization helper | `test_policy_gate` — 12 tests across the REST reveal, `PATCH` of `secret_data`, the full-page UI reveal, the HTMX reveal, and UI promote/discard |
+| A credential cannot be moved between tiers to escape the gate | The gate runs on **every** update, against the **committed** row — NetBox mutates the instance before the check would see it | `test_policy_gate.PolicyReassignmentTest` — 5 tests |
 | A reveal is never reachable by `GET` in the UI | POST-only views | `test_views.test_get_is_not_allowed`, `test_rejects_get`, `test_promote_and_discard_reject_get` |
 | The response is unstorable | `renderer_classes=[JSONRenderer]` + `no-store` | `test_security.test_reveal_uses_json_renderer_only`, `test_rotate_uses_json_renderer_only`; `test_api.test_reveal_response_is_not_storable`; `test_views.test_reveal_response_is_not_storable`, `test_fragment_is_not_storable` |
 | A leaked token cannot drain the store silently | `RevealRateThrottle`, default `30/hour` | `test_security.test_reveal_is_throttled`, `test_api.test_reveal_is_rate_limited` |

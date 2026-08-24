@@ -49,9 +49,12 @@ not an inconsistency.
     A refusal is recorded in the access log. A refused reveal is the entry you
     most want to see.
 
-    It gates reading and replacing material, not **creating** or **deleting** a
-    credential — those are governed by `add_credential` and `delete_credential`
-    respectively, and neither is a disclosure path. See [Set up a policy
+    It gates reading and replacing material, and **every** update of an
+    existing credential — including one that carries no material at all,
+    because `policy` is writable and moving a credential to a tier you are in
+    would otherwise make it revealable to you. It does not gate **creating** or
+    **deleting** a credential; those are `add_credential` and
+    `delete_credential`, and neither is a disclosure path. See [Set up a policy
     tier](../how-to/policy-tiers.md#what-the-group-gate-covers-exactly).
 
 ## Why the response cannot be stored

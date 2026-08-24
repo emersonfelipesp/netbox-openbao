@@ -141,13 +141,39 @@ It gates the operations that **read or replace** a credential's material:
 | `PATCH`/`PUT` of `secret_data`, including on the bulk list endpoint | yes |
 | The edit form's material write | yes |
 | `versions` (metadata only) | yes |
+| **Any** update of an existing credential, material or not — including moving it to another tier | yes |
 | **Creating** a credential on the tier | **no** — governed by `add_credential`. Provisioning into a tier you cannot yourself read from is a legitimate separation of duties, and gating it would break that. |
 | **Deleting** a credential | **no** — governed by `delete_credential` and its object-permission constraints. |
 | Management commands and background jobs | **no** — they run with no user, outside the web authorization model entirely. |
 
-The two "no" rows are deliberate rather than pending. Neither is a disclosure
-path: a create writes material the creator still cannot reveal, and a delete
-destroys material rather than exposing it.
+!!! danger "Why *every* update is gated, not just the material-bearing ones"
+
+    `policy` is a writable field. Gating only updates that carry `secret_data`
+    left this, in three requests:
+
+    1. A user in `lab`'s groups but not `production`'s asks to reveal a
+       production credential. Refused — `403`.
+    2. They `PATCH` its `policy` to `lab`. No `secret_data`, so under a
+       material-only gate this was an ordinary edit. `200`.
+    3. They reveal it. `200`, and the material is returned.
+
+    It works because credential paths are UUID-derived under one shared prefix,
+    so the receiving tier's AppRole reads the very same secret — **layer 2 and
+    layer 3 both fall to one request that never touches material.**
+
+    The gate is therefore on the update itself, not on the `policy` field.
+    Anything narrower is a denylist, and the next writable field that changes
+    who may read a credential walks straight through it.
+
+    A properly constrained deployment was never exposed to this: an
+    ObjectPermission carrying `{"policy__slug": "lab"}` returns `404` on the
+    `change` action for a production credential, so step 2 never succeeded.
+    The gate is what protects a deployment that relies on group membership
+    without also constraining every permission.
+
+The two remaining "no" rows are deliberate rather than pending. Neither is a
+disclosure path: a create writes material the creator still cannot reveal, and
+a delete destroys material rather than exposing it.
 
 ## 5. Verify the separation is real
 

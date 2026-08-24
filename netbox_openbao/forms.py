@@ -38,7 +38,7 @@ from .config import get_config
 from .models import Credential, CredentialAssignment, CredentialPolicy, CredentialTypeSchema, SecretEngine
 from .secrets.generators import generate_ssh_keypair
 from .secrets.registry import credential_type_choices, get_schema
-from .services import enforce_policy_access, stage_material, store_credential
+from .services import enforce_update_access, stage_material, store_credential
 from .utils import assignable_content_types, get_default_engine
 
 __all__ = (
@@ -290,12 +290,24 @@ class CredentialForm(PrimaryModelForm):
         Backend failures become `AbortRequest`, which NetBox renders as a form
         error rather than a 500.
         """
+        request = current_request.get()
+        user = getattr(request, 'user', None) if request else None
+
+        # Gate every edit of an existing credential against the tier it is on
+        # *now*. Not only the material-bearing ones: `policy` is an editable
+        # field, so an edit that changes nothing else could otherwise move a
+        # credential to a tier the operator is in and make it revealable to
+        # them. `self.instance` is no help here — ModelForm._post_clean() has
+        # already written cleaned_data onto it — so the committed row is
+        # re-read; see services.enforce_update_access.
+        if self.instance.pk:
+            enforce_update_access(
+                self.instance, user, AccessActionChoices.ACTION_WRITE, request=request,
+            )
+
         payload = getattr(self, 'secret_payload', None)
         if not payload:
             return super().save(*args, **kwargs)
-
-        request = current_request.get()
-        user = getattr(request, 'user', None) if request else None
 
         if self.cleaned_data.get('stage_rotation') and self.instance.pk:
             # Save the non-secret edits first, then stage the material. The two
@@ -309,17 +321,6 @@ class CredentialForm(PrimaryModelForm):
             except DjangoValidationError as exc:
                 raise AbortRequest('; '.join(exc.messages)) from None
             return instance
-
-        # Replacing material on an existing credential is a rotation whatever
-        # the form calls it, so the tier's group gate applies. The staged
-        # branch above reaches it through `stage_material`; this branch calls
-        # `store_credential` directly and would otherwise skip it. A *create*
-        # has no tier to be gated on yet — the policy is being chosen here, and
-        # `add_credential` is what governs that.
-        if self.instance.pk:
-            enforce_policy_access(
-                self.instance, user, AccessActionChoices.ACTION_ROTATE, request=request,
-            )
 
         def persist(metadata):
             for field, value in metadata.items():

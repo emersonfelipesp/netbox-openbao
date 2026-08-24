@@ -29,6 +29,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `PATCH`/`PUT` of `secret_data` (which is routed by DRF's own `update()` and
   never reached the helper). Refusals are recorded in the access log.
 
+- **A credential can no longer be moved between policy tiers to escape the
+  group gate.** `policy` is a writable field, and the gate originally applied
+  only to updates carrying `secret_data`. So a user in `lab`'s groups but not
+  `production`'s could be refused a reveal on a production credential, `PATCH`
+  its `policy` to `lab` — an update with no material, and therefore ungated —
+  and reveal it. Credential paths are UUID-derived under one shared prefix, so
+  the receiving tier's AppRole reads the same secret; layer 2 and layer 3 both
+  fell to one request that never touched material. The gate now runs on every
+  update of an existing credential, against the **committed** row: NetBox's
+  `ValidatedModelSerializer` and Django's `ModelForm` both mutate the instance
+  before the check would see it, so `credential.policy` at that point is the
+  incoming tier rather than the one the caller must satisfy. A deployment whose
+  permissions carried per-policy constraints was never exposed — `change` on a
+  production credential returned `404` — so this protects deployments relying
+  on group membership alone.
+
 ### Added
 
 - A Material for MkDocs documentation site (`mkdocs.yml`, `docs/`), covering

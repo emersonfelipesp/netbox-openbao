@@ -48,6 +48,7 @@ from netbox_openbao.models import (
 from netbox_openbao.services import (
     discard_staged,
     enforce_policy_access,
+    enforce_update_access,
     promote_staged,
     reveal_material,
     rotate_material,
@@ -168,21 +169,41 @@ class CredentialViewSet(NetBoxModelViewSet):
         """
         Update the row, and the material with it when a payload is supplied.
 
-        The tier's group gate is applied explicitly. `PUT`/`PATCH` are routed
-        by DRF's own `update()` and never reach `_authorize`, so a caller could
-        otherwise replace material through the standard update route that the
-        dedicated `rotate` action would have refused — the same gate bypassed
-        by a different verb.
+        The tier's group gate is applied to **every** update, not only to those
+        carrying material, and against the instance as it is *now* — before the
+        serializer's changes land.
+
+        Both of those matter. `PUT`/`PATCH` are routed by DRF's own `update()`
+        and never reach `_authorize`, so gating only the dedicated `rotate`
+        action left the same write reachable by a different verb.
+
+        And gating only material-bearing updates left a worse hole: `policy` is
+        a writable field, so a caller outside a tier's groups could move a
+        credential to a tier they *are* in — an update carrying no
+        `secret_data`, and therefore ungated — and then reveal it. The paths are
+        UUID-derived under one shared prefix, so the receiving tier's AppRole
+        reads the same secret; layer 2 and layer 3 both fall to one `PATCH`.
+        Checking the pre-change instance is what refuses the move, because the
+        instance still carries the tier the caller has to satisfy.
+
+        A create is deliberately not gated: the policy is being chosen there and
+        `add_credential` governs it. See `services.enforce_update_access` for
+        why the committed row has to be re-read rather than trusting
+        `serializer.instance`, which NetBox has already mutated by this point.
         """
+        enforce_update_access(
+            serializer.instance,
+            self.request.user,
+            AccessActionChoices.ACTION_WRITE,
+            request=self.request,
+        )
+
         payload = serializer.validated_data.pop('secret_data', None)
         if not payload:
             serializer.save()
             return
 
         instance = serializer.instance
-        enforce_policy_access(
-            instance, self.request.user, AccessActionChoices.ACTION_ROTATE, request=self.request,
-        )
         credential_type = serializer.validated_data.get('credential_type', instance.credential_type)
         store_credential(
             lambda metadata: serializer.save(**metadata),
