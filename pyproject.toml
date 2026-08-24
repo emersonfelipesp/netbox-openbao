@@ -4,7 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "netbox-openbao"
-version = "0.1.0"
+# Single-sourced from `netbox_openbao.__version__`, which NetBox itself reads
+# off the PluginConfig. Two literals would drift, and a plugin reporting a
+# version its distribution does not carry is the kind of thing nobody notices
+# until they are trying to reproduce a bug report.
+#
+# setuptools resolves this by parsing the module's AST, not by importing it, so
+# the build does not need NetBox installed.
+dynamic = ["version"]
 requires-python = ">=3.12"
 dependencies = [
     "hvac>=2.3.0",
@@ -18,7 +25,7 @@ dependencies = [
     "jsonschema>=4.0.0",
 ]
 authors = [
-    {name = "Emerson Felipe", email = "emerson.felipe@nmultifibra.com.br"},
+    {name = "Emerson Felipe", email = "emerson@netdevopsbr.com"},
 ]
 description = "Keep NetBox device, VM, and service secret material in OpenBao while NetBox owns the credential inventory"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -43,11 +50,27 @@ classifiers = [
 ]
 
 [project.urls]
-Source = "https://git.nmulti.cloud/emersonfelipesp/netbox-openbao"
-Issues = "https://git.nmulti.cloud/emersonfelipesp/netbox-openbao/issues"
+Homepage = "https://github.com/emersonfelipesp/netbox-openbao"
+Documentation = "https://emersonfelipesp.github.io/netbox-openbao/"
+Source = "https://github.com/emersonfelipesp/netbox-openbao"
+Issues = "https://github.com/emersonfelipesp/netbox-openbao/issues"
+Changelog = "https://github.com/emersonfelipesp/netbox-openbao/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# Documentation site. Kept out of the runtime dependencies: a NetBox host has
+# no reason to install a static-site generator.
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+    "mkdocs-gen-files>=0.5",
+    "mkdocs-literate-nav>=0.6",
+]
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "netbox_openbao.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["netbox_openbao*"]

@@ -88,7 +88,7 @@ test in `netbox_openbao/tests/test_security.py`:
 | Redis | 6+ |
 | OpenBao | 2.6.x, KV v2 mount |
 | HashiCorp Vault | supported as an alternative backend — see below |
-| Broker mode | optional; needs [`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker) |
+| Broker mode | optional; needs [`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker) |
 
 NetBox 4.7 is required deliberately rather than incidentally: it replaced
 `ipam.Service`'s `protocol`/`ports` with `port_mappings` and moved the service's
@@ -171,7 +171,7 @@ is verified rather than claimed.
 ## Broker mode, and what it is honestly worth
 
 A third backend, `broker`, points an engine at
-[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker)
+[`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker)
 instead of at OpenBao. NetBox then holds a **client certificate** that lets it
 *ask*, and the broker holds the AppRole that can actually *read*.
 
@@ -217,7 +217,7 @@ the background jobs, and staged rotation (write, verify, promote — never break
 running access).
 
 Also shipped since: the
-[Ansible lookup plugin](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-ansible)
+[Ansible lookup plugin](https://github.com/emersonfelipesp/netbox-openbao-ansible)
 and [broker mode](#broker-mode-and-what-it-is-honestly-worth), whose earlier
 description here — "so a NetBox compromise is not a secret compromise" —
 claimed more than the design delivers and has been corrected above.

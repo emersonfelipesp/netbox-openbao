@@ -112,11 +112,11 @@ NETBOX_BAO_PRIMARY_SECRET_ID_FILE=/run/secrets/bao-secret-id
 
 Optional. Set a `SecretEngine`'s **backend** to `Broker (netbox-openbao-broker)`
 and point its **API URL** at a running
-[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker).
+[`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker).
 NetBox then presents a client certificate to the broker, and the broker holds
 the AppRole. Nothing above the backend abstraction changes.
 
-Read [the broker's threat model](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker#what-this-buys-stated-honestly)
+Read [the broker's threat model](https://github.com/emersonfelipesp/netbox-openbao-broker#what-this-buys-stated-honestly)
 before deploying it. In short: an attacker with code execution in NetBox can
 still *ask* the broker for material and be answered. What changes is that
 stealing the database or the configuration no longer yields vault credentials,

@@ -20,7 +20,7 @@ class NetBoxOpenBaoConfig(PluginConfig):
     version = __version__
     base_url = 'openbao'
     author = 'Emerson Felipe'
-    author_email = 'emerson.felipe@nmultifibra.com.br'
+    author_email = 'emerson@netdevopsbr.com'
 
     # NetBox 4.7 only. 4.7 replaced ipam.Service's protocol/ports with
     # port_mappings and moved its parent to a GenericForeignKey; supporting 4.6

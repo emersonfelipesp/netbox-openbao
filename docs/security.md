@@ -224,7 +224,7 @@ otherwise land in the back/forward cache and in any saved HTML or screenshot.
 ## Broker mode
 
 An engine set to the `broker` backend reaches OpenBao through
-[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker),
+[`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker),
 which holds the AppRole so this NetBox does not.
 
 **It does not make "NetBox compromise ≠ secret compromise" true.** An attacker

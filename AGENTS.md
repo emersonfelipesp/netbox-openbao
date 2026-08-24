@@ -6,8 +6,7 @@
 A NetBox plugin that keeps **secret material in OpenBao** while **NetBox owns
 credential inventory and relationships**.
 
-Repository: `https://git.nmulti.cloud/emersonfelipesp/netbox-openbao` (Gitea
-only — this repo has no GitHub remote).
+Repository: <https://github.com/emersonfelipesp/netbox-openbao>.
 
 ## Hard constraints
 
@@ -159,7 +158,7 @@ python manage.py test netbox_openbao
 Full procedure in [`docs/development.md`](docs/development.md).
 
 Broker-mode tests need a running
-[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker)
+[`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker)
 and skip cleanly without one:
 
 ```bash
@@ -253,7 +252,7 @@ live OpenBao 2.6.0, a live Vault, and a live broker. `ruff check` clean, `makemi
   `_KVIntegrationTests`. Never raise a vendor exception, never log material.
   A backend tested only against a different server proves nothing about it.
 - **`BrokerBackend` is a transport swap, not a different store.** It speaks to
-  [`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker),
+  [`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker),
   which holds the AppRole so NetBox does not, and it must stay
   indistinguishable from direct mode above `SecretBackend` — same exception
   types for the same conditions. Three traps:
@@ -278,9 +277,10 @@ live OpenBao 2.6.0, a live Vault, and a live broker. `ruff check` clean, `makemi
   `tests/test_security.py` still fails when you break the invariant.
 - **A behaviour change** → update `docs/` and this file in the same change.
 
-## Workspace policy
+## Contributing
 
-This repo follows the `personal-context` workspace rules: Gitea-first issues
-and PRs through `nms git`, a session journal for multi-window work, and the
-capped adversarial-review gate before merge. See
-[`/root/personal-context/CLAUDE.md`](/root/personal-context/CLAUDE.md).
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request. In
+short: every change that alters behaviour updates `docs/` and this file in the
+same commit, `ruff check .` and `makemigrations --check` must be clean, and a
+change to the reveal, write, or backend paths is expected to come with a test
+that fails when the invariant it protects is broken.

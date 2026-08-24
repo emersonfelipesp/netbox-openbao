@@ -8,10 +8,13 @@ name: CI
 # dev server, and the untrusted runner provides no services. That suite runs
 # against the real stack via docker-compose.dev.yml — see docs/development.md.
 #
-# Runner: `ci-untrusted-python312` is the estate's label for untrusted plugin
-# CI, served for this repository by the user-scoped `ci-untrusted-emersonfelipesp`
-# runner. It has no service containers and no network-fetched actions, which is
-# why this job uses `uv` from the image rather than `actions/setup-python`.
+# Runner: `ci-untrusted-python312` is a self-hosted label carrying Python 3.12
+# and `uv`. It runs with no service containers and fetches no actions from the
+# network, which is why this job builds its environment with `uv` from the
+# image rather than with `actions/setup-python`.
+#
+# The equivalent job for GitHub pull requests is `.github/workflows/ci.yml`,
+# which runs the same checks on GitHub-hosted runners.
 
 on:
   push:
