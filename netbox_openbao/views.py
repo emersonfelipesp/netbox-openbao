@@ -9,6 +9,7 @@ credential out of the URL bar and the referrer header.
 """
 
 from django.contrib import messages
+from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count
 from django.http import Http404
@@ -280,6 +281,13 @@ class CredentialRevealView(_RevealBase):
         except OpenBaoError as exc:
             messages.error(request, _('Could not read from OpenBao: {error}').format(error=exc))
             return redirect(reverse('plugins:netbox_openbao:credential', args=[pk]))
+        except PermissionDenied as exc:
+            # Raised by the policy tier's group gate in the service layer.
+            # Rendered as a message rather than Django's 403 page so it reads
+            # like the authorization decision it is, next to the credential it
+            # concerns.
+            messages.error(request, str(exc))
+            return redirect(reverse('plugins:netbox_openbao:credential', args=[pk]))
         except DjangoValidationError as exc:
             messages.error(request, '; '.join(exc.messages))
             return redirect(reverse('plugins:netbox_openbao:credential', args=[pk]))
@@ -311,6 +319,14 @@ class CredentialRevealPartialView(_RevealBase):
             return self.unstorable(render(request, self.error_template_name, {
                 'message': _('Could not read from OpenBao: {error}').format(error=exc),
             }, status=502))
+        except PermissionDenied as exc:
+            # Caught rather than left to propagate: an uncaught PermissionDenied
+            # returns Django's 403 page, and HTMX does not swap a non-2xx
+            # response by default — so the panel would simply not update and
+            # the refusal would be invisible.
+            return self.unstorable(render(request, self.error_template_name, {
+                'message': str(exc),
+            }, status=403))
         except DjangoValidationError as exc:
             return self.unstorable(render(request, self.error_template_name, {
                 'message': '; '.join(exc.messages),
@@ -346,6 +362,8 @@ class _StagedTransitionView(ObjectPermissionRequiredMixin, View):
             self.apply(credential, request)
         except OpenBaoError as exc:
             messages.error(request, _('Could not reach OpenBao: {error}').format(error=exc))
+        except PermissionDenied as exc:
+            messages.error(request, str(exc))
         except DjangoValidationError as exc:
             messages.error(request, '; '.join(exc.messages))
         else:

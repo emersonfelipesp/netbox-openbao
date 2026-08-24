@@ -22,7 +22,7 @@ and internal callers just need `instance.save()`.
 
 import logging
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -37,6 +37,7 @@ __all__ = (
     'build_custom_metadata',
     'delete_material',
     'discard_staged',
+    'enforce_policy_access',
     'promote_staged',
     'stage_material',
     'log_access',
@@ -122,6 +123,51 @@ def log_access(credential, user, action, success=True, reason='', message='', re
         # must also never vanish quietly.
         logger.exception('Failed to write credential access log for action %s', action)
         return None
+
+
+# ----------------------------------------------------------------------
+# Authorization
+# ----------------------------------------------------------------------
+
+def enforce_policy_access(credential, user, action=None, request=None):
+    """
+    Apply the policy tier's coarse group gate.
+
+    `CredentialPolicy.groups` is documented as authorization layer 2 — applied
+    in addition to object permissions, never instead of them. It lives here,
+    with the rest of the material path, rather than in a view, because there
+    are five surfaces that reach a credential: the REST actions, the full-page
+    UI reveal, the HTMX UI reveal, the UI promote/discard, and the edit form's
+    staged rotation. A gate implemented in one of them is a gate that is
+    missing from the other four.
+
+    It was. The check lived only in `api/views.CredentialViewSet._authorize`,
+    so a user in none of the tier's groups was refused by the API and served
+    by the web UI — which is the drift `CLAUDE.md` warns about, and a
+    disclosure bug rather than an inconsistency.
+
+    An empty group list means the tier does not use the gate, which is the
+    default. `user=None` is an internal caller — a management command, a
+    background job — and there is no group membership to consult.
+    """
+    if user is None or getattr(user, 'is_superuser', False):
+        return
+
+    permitted = list(credential.policy.groups.values_list('pk', flat=True))
+    if not permitted:
+        return
+
+    if user.groups.filter(pk__in=permitted).exists():
+        return
+
+    if action is not None:
+        log_access(
+            credential, user, action, success=False,
+            message='Policy group membership required.', request=request,
+        )
+    raise PermissionDenied(
+        'Your groups are not permitted to access credentials under this policy.'
+    )
 
 
 # ----------------------------------------------------------------------
@@ -348,6 +394,8 @@ def rotate_material(credential, payload, user=None, request=None):
     Uses the recorded `kv_version` as the check-and-set precondition so a
     rotation cannot clobber a concurrent write it never saw.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_ROTATE, request=request)
+
     return write_material(
         credential,
         payload,
@@ -371,6 +419,8 @@ def reveal_material(credential, user, request=None, reason='', version=None):
     of the credential rather than of the user: a policy-mandated reason, and
     the tier's reveal ceiling.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_REVEAL, request=request)
+
     policy = credential.policy
     if policy.require_reason and not (reason or '').strip():
         log_access(
@@ -409,6 +459,8 @@ def stage_material(credential, payload, user=None, request=None):
     that is deployed to hundreds of hosts by flipping it in one write leaves no
     verification step and no way back except reading an old version by number.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_STAGE, request=request)
+
     if credential.has_staged_version:
         raise ValidationError({
             'status': _('This credential already has a staged version. Promote or discard it first.'),
@@ -441,6 +493,8 @@ def promote_staged(credential, user=None, request=None, verified=False, note='')
     Promotion is purely the NetBox-side decision about which version consumers
     are handed, which is why it cannot fail halfway and needs no compensator.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_PROMOTE, request=request)
+
     if not credential.has_staged_version:
         raise ValidationError({'status': _('This credential has no staged version to promote.')})
 
@@ -478,8 +532,9 @@ def promote_staged(credential, user=None, request=None, verified=False, note='')
     credential.save(update_fields=['live_kv_version', 'staged_kv_version', 'status', 'last_rotated'])
 
     # `verified` records that a human or a job confirmed the new material works
-    # before it went live. Actually testing it against a device belongs to
-    # netbox-rpc; this is the place that remembers someone did.
+    # before it went live. Actually testing it against the device belongs to
+    # whatever drives your devices; this is the place that remembers someone
+    # did, so the access log can answer "was this rotation checked?" later.
     reason = note or ''
     if verified:
         reason = f'verified: {reason}'.strip().rstrip(':')
@@ -501,6 +556,8 @@ def discard_staged(credential, user=None, request=None):
     "is something staged?" needs its own field rather than being inferred from
     a comparison of the two.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_DISCARD, request=request)
+
     if not credential.has_staged_version:
         raise ValidationError({'status': _('This credential has no staged version to discard.')})
 

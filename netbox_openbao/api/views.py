@@ -26,14 +26,12 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from netbox.api.viewsets import NetBoxModelViewSet
+from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
-from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from netbox_openbao import filtersets
 from netbox_openbao.backends import get_backend
@@ -49,6 +47,7 @@ from netbox_openbao.models import (
 )
 from netbox_openbao.services import (
     discard_staged,
+    enforce_policy_access,
     promote_staged,
     reveal_material,
     rotate_material,
@@ -166,12 +165,24 @@ class CredentialViewSet(NetBoxModelViewSet):
         )
 
     def perform_update(self, serializer):
+        """
+        Update the row, and the material with it when a payload is supplied.
+
+        The tier's group gate is applied explicitly. `PUT`/`PATCH` are routed
+        by DRF's own `update()` and never reach `_authorize`, so a caller could
+        otherwise replace material through the standard update route that the
+        dedicated `rotate` action would have refused — the same gate bypassed
+        by a different verb.
+        """
         payload = serializer.validated_data.pop('secret_data', None)
         if not payload:
             serializer.save()
             return
 
         instance = serializer.instance
+        enforce_policy_access(
+            instance, self.request.user, AccessActionChoices.ACTION_ROTATE, request=self.request,
+        )
         credential_type = serializer.validated_data.get('credential_type', instance.credential_type)
         store_credential(
             lambda metadata: serializer.save(**metadata),
@@ -189,6 +200,15 @@ class CredentialViewSet(NetBoxModelViewSet):
     # Reveal
     # ------------------------------------------------------------------
 
+    # Audit action recorded when the tier's group gate refuses. `view` — the
+    # `versions` action — records nothing: listing version numbers is not an
+    # access to material, and an audit row for every refused metadata read
+    # would bury the reveals that matter.
+    _GATE_AUDIT_ACTION = {
+        'reveal': AccessActionChoices.ACTION_REVEAL,
+        'rotate': AccessActionChoices.ACTION_ROTATE,
+    }
+
     def _authorize(self, request, pk, action_name):
         """
         Resolve a credential the user is permitted to act on.
@@ -197,19 +217,22 @@ class CredentialViewSet(NetBoxModelViewSet):
         granting ObjectPermission, so a group limited to `{"policy__slug":
         "lab"}` gets a 404 on a production credential rather than a 403 that
         confirms it exists.
+
+        The tier's group gate is then applied through `enforce_policy_access`,
+        which is the same function the service layer calls. It used to be
+        implemented inline here, which meant the API enforced it and every UI
+        path did not — see that function's docstring.
         """
         credential = get_object_or_404(
             Credential.objects.restrict(request.user, action_name).select_related('policy', 'engine'),
             pk=pk,
         )
-
-        # Coarse tier gate, applied in addition to object permissions.
-        groups = credential.policy.groups.all()
-        if groups.exists() and not request.user.is_superuser:
-            if not request.user.groups.filter(pk__in=groups.values_list('pk', flat=True)).exists():
-                raise PermissionDenied(
-                    "Your groups are not permitted to access credentials under this policy."
-                )
+        enforce_policy_access(
+            credential,
+            request.user,
+            self._GATE_AUDIT_ACTION.get(action_name),
+            request=request,
+        )
         return credential
 
     @action(
@@ -416,11 +439,27 @@ class CredentialTypeSchemaViewSet(NetBoxModelViewSet):
     filterset_class = filtersets.CredentialTypeSchemaFilterSet
 
 
-class CredentialAccessLogViewSet(ReadOnlyModelViewSet):
+class CredentialAccessLogViewSet(NetBoxReadOnlyModelViewSet):
     """
     Read-only by construction. The audit trail is evidence: exposing create,
     update, or delete would let the same token that reveals a secret erase the
     record of having done so.
+
+    `NetBoxReadOnlyModelViewSet` rather than DRF's `ReadOnlyModelViewSet`,
+    because object permissions are applied in NetBox's `BaseViewSet.initial()`
+    — it is the thing that calls `queryset.restrict(user, action)`. A viewset
+    outside that hierarchy is still gated on the model-level permission by
+    `TokenPermissions`, but every **constraint** attached to the granting
+    ObjectPermission is silently ignored. This viewset was outside it, so a
+    role scoped to one tier with `{"credential__policy__slug": "lab"}` was
+    held to that in the UI list view and read the whole estate's log through
+    the API — credential names, usernames, reveal reasons, and source IPs.
+
+    The base composes only `RetrieveModelMixin` and `ListModelMixin`, so
+    append-only is preserved: there is still no create, update, or delete
+    route. Its `CustomFieldsMixin`, `ExportTemplatesMixin`, and `ETagMixin` all
+    probe with `hasattr`/`getattr` and tolerate a plain Django model that has
+    no custom fields and no `last_updated`.
     """
 
     queryset = CredentialAccessLog.objects.select_related('credential', 'user')

@@ -26,6 +26,7 @@ from utilities.forms.rendering import FieldSet
 
 from .backends.exceptions import OpenBaoError
 from .choices import (
+    AccessActionChoices,
     AuthMethodChoices,
     CredentialStatusChoices,
     CredentialTypeChoices,
@@ -37,7 +38,7 @@ from .config import get_config
 from .models import Credential, CredentialAssignment, CredentialPolicy, CredentialTypeSchema, SecretEngine
 from .secrets.generators import generate_ssh_keypair
 from .secrets.registry import credential_type_choices, get_schema
-from .services import stage_material, store_credential
+from .services import enforce_policy_access, stage_material, store_credential
 from .utils import assignable_content_types, get_default_engine
 
 __all__ = (
@@ -308,6 +309,17 @@ class CredentialForm(PrimaryModelForm):
             except DjangoValidationError as exc:
                 raise AbortRequest('; '.join(exc.messages)) from None
             return instance
+
+        # Replacing material on an existing credential is a rotation whatever
+        # the form calls it, so the tier's group gate applies. The staged
+        # branch above reaches it through `stage_material`; this branch calls
+        # `store_credential` directly and would otherwise skip it. A *create*
+        # has no tier to be gated on yet — the policy is being chosen here, and
+        # `add_credential` is what governs that.
+        if self.instance.pk:
+            enforce_policy_access(
+                self.instance, user, AccessActionChoices.ACTION_ROTATE, request=request,
+            )
 
         def persist(metadata):
             for field, value in metadata.items():
