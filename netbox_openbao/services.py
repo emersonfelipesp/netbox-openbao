@@ -251,16 +251,19 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
     Persist a credential row and its material as one unit.
 
     Args:
-        persist: Callable taking the extracted metadata dict and returning the
-            saved `Credential`. The REST API passes `serializer.save`; forms
-            and internal callers pass a closure over `instance.save()`.
-        subject: The Credential this operation concerns, used only to identify
-            the audit entry when `persist` itself fails and never returns one.
-        promote: Whether the new version becomes the one consumers are served.
+        persist (Callable[[dict], Credential]): Takes the extracted metadata
+            dict and returns the saved `Credential`. The REST API passes
+            `serializer.save`; forms and internal callers pass a closure over
+            `instance.save()`.
+        subject (Credential | None): The credential this operation concerns,
+            used only to identify the audit entry when `persist` itself fails
+            and never returns one.
+        promote (bool): Whether the new version becomes the one consumers are
+            served.
             False writes it alongside the live version instead — which is the
             whole point of staging, and the reason resolution has to consult
             `live_kv_version` rather than always taking latest.
-        cas: Check-and-set precondition. `0` requires the path not to exist,
+        cas (int | None): Check-and-set precondition. `0` requires the path not to exist,
             which is what stops a create silently overwriting an existing
             secret at a colliding path. Pass the current `kv_version` when
             updating.

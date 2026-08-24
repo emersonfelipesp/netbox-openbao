@@ -87,6 +87,21 @@ Layer 3 is what makes layers 1 and 2 survivable. A NetBox-side permission bug
 on `prod-core` credentials still cannot read them, because OpenBao's own policy
 refuses the AppRole the request is carrying.
 
+Layer 2 is enforced in `services.enforce_policy_access()`, which is the
+chokepoint **every** surface goes through — the REST actions, the full-page UI
+reveal, the HTMX reveal, the UI promote and discard, the edit form's material
+write, and `PATCH`/`PUT` of `secret_data`. A refusal is recorded in the access
+log.
+
+That is worth stating precisely, because it was not always true: the check
+lived in the REST viewset's authorization helper and nowhere else, so a user
+belonging to none of a tier's groups was refused over the API and served the
+same material by the credential page. `PATCH` of `secret_data` bypassed it in
+the other direction — routed by DRF's own `update()`, it never reached the
+helper at all, so the dedicated `rotate` action refused what the ordinary
+update route allowed. `tests/test_policy_gate.py` asserts the gate on each
+surface separately.
+
 A `Credential`'s engine is validated to match its policy's engine. Without
 that, a tier's AppRole could be scoped to one instance while the material sat
 on another — the exact mismatch per-tier AppRoles exist to prevent.
@@ -111,6 +126,14 @@ it succeeded. **Never the value.**
 
 - It is append-only and exposed read-only through the API. The same token that
   reveals a secret cannot erase the record of having done so.
+- Its viewset extends `NetBoxReadOnlyModelViewSet`, **not** DRF's
+  `ReadOnlyModelViewSet`. That distinction is load-bearing: NetBox applies
+  object permissions in `BaseViewSet.initial()`, which is the thing that calls
+  `queryset.restrict()`. A viewset outside that hierarchy is still gated on the
+  model-level permission, but silently ignores every *constraint* on the
+  granting ObjectPermission — so a role scoped to one tier was held to its
+  constraint by the UI list view and read the whole estate's log through the
+  API, including credential names, usernames, reveal reasons, and source IPs.
 - It survives deletion of the credential, via name and UUID snapshots.
 - Failures are audited too — a refused reveal is the entry you most want.
 - It is written **synchronously**. The original design deferred it to RQ for

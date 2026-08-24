@@ -102,7 +102,10 @@ material is returned:
 1. **NetBox object permissions** — `netbox_openbao.reveal_credential`, with
    optional constraints (`{"policy__slug": "lab"}`).
 2. **The policy's group gate** — `CredentialPolicy.groups`, a coarse filter
-   applied in addition to, never instead of, object permissions.
+   applied in addition to, never instead of, object permissions. Enforced in
+   `services.enforce_policy_access()`, so it covers every surface that reaches
+   a credential rather than only the REST API, and a refusal is audited. An
+   empty group list means the tier does not use the gate.
 3. **The OpenBao policy itself** — reached through that tier's AppRole.
 
 The third layer is what makes the first two survivable. A NetBox-side

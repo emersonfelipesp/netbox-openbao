@@ -138,7 +138,8 @@ NETBOX_BAO_PRIMARY_SECRET_ID_FILE=/run/secrets/bao-secret-id
 ```
 
 Full detail in [`docs/installation.md`](docs/installation.md) and
-[`docs/configuration.md`](docs/configuration.md).
+[`docs/configuration.md`](docs/configuration.md), or on the documentation site:
+<https://emersonfelipesp.github.io/netbox-openbao/>.
 
 ## Using it
 
@@ -252,7 +253,17 @@ docker compose -f docker-compose.dev.yml up -d
 ```
 
 See [`docs/development.md`](docs/development.md) for running the suite against
-real NetBox 4.7 and a live OpenBao dev server.
+real NetBox 4.7 and a live OpenBao dev server, and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for what a change is expected to bring
+with it.
+
+The documentation site builds from the checkout with no package install and no
+NetBox — `mkdocstrings` reads the source statically:
+
+```bash
+pip install '.[docs]'
+mkdocs serve
+```
 
 ## License
 

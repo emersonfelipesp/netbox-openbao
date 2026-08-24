@@ -138,6 +138,35 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   If that changes, two policy tiers on the same engine URL could send each
   other's tokens. Do not move auth onto the session.
 
+- **A plain DRF viewset never applies object-permission constraints.** NetBox
+  calls `queryset.restrict()` in `netbox.api.viewsets.BaseViewSet.initial()`, so
+  a viewset built on `rest_framework.viewsets.ReadOnlyModelViewSet` is still
+  gated on the model-level permission by `TokenPermissions` — which is exactly
+  why it looks fine — while every **constraint** on the granting
+  ObjectPermission is silently dropped. `CredentialAccessLogViewSet` was that
+  viewset. Use `NetBoxReadOnlyModelViewSet` for a read-only NetBox endpoint;
+  it composes only the retrieve and list mixins, so append-only survives, and
+  its `CustomFieldsMixin`/`ExportTemplatesMixin`/`ETagMixin` all probe with
+  `hasattr`/`getattr` and tolerate a plain Django model.
+- **DRF runs `initial()` before it resolves the handler**, so a permission
+  failure returns 403 and *masks* the 405 that would prove a route does not
+  exist. A test asserting "the audit log rejects POST" therefore passes for the
+  wrong reason if the user lacks the permission. Assert the absent handler on
+  the viewset structurally, or grant the permission first and then assert 405 —
+  `test_policy_gate` does both.
+- **An authorization check in a view is a check the other four surfaces do not
+  have.** The `CredentialPolicy` group gate lived in
+  `api/views.CredentialViewSet._authorize` and nowhere else, so the web UI
+  served material the API refused. Anything of that shape belongs in
+  `services.py`. Note also that `PATCH`/`PUT` are routed by DRF's own
+  `update()` and never reach a custom action's authorization helper, so a gate
+  applied only in that helper is bypassable by verb.
+- **`netbox_openbao/secrets/` had no `__init__.py`** and worked only as an
+  implicit namespace package. It now has one. A namespace portion inside a
+  regular package merges with any same-named directory another distribution
+  installs, and it is invisible to static tooling — which is how the
+  documentation build found it.
+
 ## Testing
 
 ```bash
@@ -272,7 +301,11 @@ live OpenBao 2.6.0, a live Vault, and a live broker. `ruff check` clean, `makemi
 - **Anything touching the reveal path** → re-read
   [`docs/security.md`](docs/security.md) first and make sure
   `tests/test_security.py` still fails when you break the invariant.
-- **A behaviour change** → update `docs/` and this file in the same change.
+- **A behaviour change** → update `docs/` and this file in the same change,
+  and rebuild the site: `pip install '.[docs]' && mkdocs build --strict`. The
+  nav in `mkdocs.yml` is explicit, so a new page that is not listed there is
+  built but unreachable — except under `docs/reference/`, which
+  `scripts/gen_ref_pages.py` generates from the package at build time.
 
 ## Contributing
 

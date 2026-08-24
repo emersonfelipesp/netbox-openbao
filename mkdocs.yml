@@ -1,0 +1,161 @@
+---
+site_name: netbox-openbao
+site_description: >-
+  Keep NetBox device, VM, and service secret material in OpenBao while NetBox
+  owns the credential inventory and its relationships.
+site_url: https://emersonfelipesp.github.io/netbox-openbao/
+repo_url: https://github.com/emersonfelipesp/netbox-openbao
+repo_name: emersonfelipesp/netbox-openbao
+edit_uri: edit/main/docs/
+copyright: Licensed under the Apache License, Version 2.0
+
+theme:
+  name: material
+  icon:
+    logo: material/shield-key
+    repo: fontawesome/brands/github
+  palette:
+    # The site follows the reader's system setting first, and both explicit
+    # choices are reachable — a documentation site about secrets is read at
+    # odd hours as often as not.
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Follow the system theme
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.tabs.link
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - scripts/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - mkdocstrings:
+      handlers:
+        python:
+          # The repository root, so griffe resolves `netbox_openbao` from the
+          # checkout. The package is deliberately not installed for the docs
+          # build: griffe parses source statically and never imports it, so
+          # neither NetBox nor hvac is required.
+          paths: [.]
+          options:
+            docstring_style: google
+            docstring_section_style: table
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            separate_signature: true
+            signature_crossrefs: true
+            filters: ["!^_", "^__init__$"]
+            merge_init_into_class: true
+            # Base classes and inherited members come from NetBox and Django,
+            # which are not in the build environment. Rendering them would emit
+            # a griffe warning per unresolvable base — and `--strict` turns
+            # warnings into a failed build, so this is what keeps the promise
+            # in CONTRIBUTING.md honest rather than the build lax.
+            show_bases: false
+            inherited_members: false
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/emersonfelipesp/netbox-openbao
+      name: netbox-openbao on GitHub
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/netbox-openbao/
+      name: netbox-openbao on PyPI
+
+watch:
+  - netbox_openbao
+  - scripts
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: installation.md
+      - Configuration: configuration.md
+      - Your first credential: getting-started/first-credential.md
+  - Architecture:
+      - Overview: architecture/index.md
+      - Data model: architecture/data-model.md
+      - The write path: architecture/write-path.md
+      - The reveal path: architecture/reveal-path.md
+      - Staged rotation: architecture/staged-rotation.md
+      - Secret backends: architecture/backends.md
+      - Credential types: architecture/credential-types.md
+      - Background jobs: architecture/background-jobs.md
+      - Security invariants: architecture/invariants.md
+  - How-to:
+      - how-to/index.md
+      - Grant a device SSH access: quick-add-ssh.md
+      - Rotate without breaking consumers: how-to/rotate-a-credential.md
+      - Define your own credential type: custom-credential-types.md
+      - Scope an OpenBao policy: how-to/scope-openbao-policies.md
+      - Set up a policy tier: how-to/policy-tiers.md
+      - Run broker mode: how-to/broker-mode.md
+      - Use HashiCorp Vault: how-to/use-vault.md
+      - Migrate from netbox-secrets: migration-from-netbox-secrets.md
+      - Report on expiry: how-to/expiry-reporting.md
+      - Troubleshoot: how-to/troubleshooting.md
+  - Security model: security.md
+  - REST API: api.md
+  - Code reference: reference/
+  - Development: development.md
