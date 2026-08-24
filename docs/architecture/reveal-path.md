@@ -49,6 +49,11 @@ not an inconsistency.
     A refusal is recorded in the access log. A refused reveal is the entry you
     most want to see.
 
+    It gates reading and replacing material, not **creating** or **deleting** a
+    credential — those are governed by `add_credential` and `delete_credential`
+    respectively, and neither is a disclosure path. See [Set up a policy
+    tier](../how-to/policy-tiers.md#what-the-group-gate-covers-exactly).
+
 ## Why the response cannot be stored
 
 - **`renderer_classes = [JSONRenderer]`** on the action. DRF's

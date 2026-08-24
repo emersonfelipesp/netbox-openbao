@@ -208,6 +208,30 @@ class APIGateTest(_GateFixture, APITestCase):
         self.credential.refresh_from_db()
         self.assertEqual(self.credential.kv_version, before)
 
+    def test_bulk_patching_secret_data_is_refused_outside_the_permitted_groups(self):
+        """
+        `PATCH` on the *list* endpoint is a third route to the same write.
+
+        NetBox's `BulkUpdateModelMixin.perform_bulk_update()` loops calling
+        `self.perform_update(serializer)`, so the gate applied there covers this
+        too — but only because it is applied in `perform_update` rather than in
+        the detail route's dispatch. Asserted so a future refactor that moves it
+        cannot silently open a bulk-shaped hole.
+        """
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
+        before = self.credential.kv_version
+
+        response = self.client.patch(
+            reverse('plugins-api:netbox_openbao-api:credential-list'),
+            [{'id': self.credential.pk, 'secret_data': {'password': 'replaced'}}],
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.kv_version, before)
+
     def test_a_member_of_a_permitted_group_may_patch_secret_data(self):
         self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
         self.join_permitted_group()

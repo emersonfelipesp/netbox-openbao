@@ -130,6 +130,25 @@ material write, and `PATCH` of `secret_data`. Refusals are audited.
 
 Superusers bypass it, as they bypass object permissions.
 
+### What the group gate covers, exactly
+
+It gates the operations that **read or replace** a credential's material:
+
+| Operation | Gated |
+|---|---|
+| `reveal` — REST, full-page UI, HTMX UI | yes |
+| `rotate`, `stage`, `promote`, `discard` — REST and UI | yes |
+| `PATCH`/`PUT` of `secret_data`, including on the bulk list endpoint | yes |
+| The edit form's material write | yes |
+| `versions` (metadata only) | yes |
+| **Creating** a credential on the tier | **no** — governed by `add_credential`. Provisioning into a tier you cannot yourself read from is a legitimate separation of duties, and gating it would break that. |
+| **Deleting** a credential | **no** — governed by `delete_credential` and its object-permission constraints. |
+| Management commands and background jobs | **no** — they run with no user, outside the web authorization model entirely. |
+
+The two "no" rows are deliberate rather than pending. Neither is a disclosure
+path: a create writes material the creator still cannot reveal, and a delete
+destroys material rather than exposing it.
+
 ## 5. Verify the separation is real
 
 The test that matters is not "can the right person read it" — it is **"does the
