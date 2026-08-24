@@ -213,15 +213,16 @@ class APIGateTest(_GateFixture, APITestCase):
         self.credential.refresh_from_db()
         self.assertEqual(self.credential.kv_version, before)
 
-    def test_bulk_patching_secret_data_is_refused_outside_the_permitted_groups(self):
+    def test_bulk_patching_secret_data_is_refused(self):
         """
-        `PATCH` on the *list* endpoint is a third route to the same write.
+        `PATCH` on the *list* endpoint is a third route to the same write, and
+        it is now refused outright — before the tier gate is consulted —
+        because the batch shares one transaction the compensator cannot reach.
+        See `BulkMaterialWriteTest`.
 
-        NetBox's `BulkUpdateModelMixin.perform_bulk_update()` loops calling
-        `self.perform_update(serializer)`, so the gate applied there covers this
-        too — but only because it is applied in `perform_update` rather than in
-        the detail route's dispatch. Asserted so a future refactor that moves it
-        cannot silently open a bulk-shaped hole.
+        Kept here too, so that if bulk material writes are ever supported,
+        whoever does it has to decide deliberately what this assertion becomes
+        rather than finding the tier gate silently uncovered.
         """
         self.add_permissions(
             'netbox_openbao.view_credential',
@@ -237,7 +238,7 @@ class APIGateTest(_GateFixture, APITestCase):
             **self.header,
         )
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 400)
         self.credential.refresh_from_db()
         self.assertEqual(self.credential.kv_version, before)
 
@@ -520,7 +521,12 @@ class RotatePermissionOnUpdateTest(_GateFixture, APITestCase):
         self.credential.refresh_from_db()
         self.assertEqual(self.credential.kv_version, before)
 
-    def test_bulk_patching_secret_data_needs_rotate(self):
+    def test_bulk_patching_secret_data_is_refused_before_permissions_are_reached(self):
+        """
+        Refused as a bulk material write (400), not as a permission failure
+        (403) — the batch is rejected before any per-object check runs. Either
+        way the material is not replaced, which is the property that matters.
+        """
         self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
         before = self.credential.kv_version
 
@@ -531,7 +537,7 @@ class RotatePermissionOnUpdateTest(_GateFixture, APITestCase):
             **self.header,
         )
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 400)
         self.credential.refresh_from_db()
         self.assertEqual(self.credential.kv_version, before)
 
@@ -764,3 +770,221 @@ class DeletionOrderingTest(TransactionTestCase):
         self.assertEqual(entry.credential_uuid_snapshot, uuid)
         self.assertEqual(entry.credential_name_snapshot, 'doomed')
         self.assertNotIn(SECRET, entry.message)
+
+
+class ConstrainedPermissionTest(_GateFixture, APITestCase):
+    """
+    A constraint must bound the *result* of a write, not only its starting
+    point.
+
+    `restrict()` decides which rows you may act on. Only a post-save re-check
+    can decide whether the row you just wrote is still one of them — which is
+    why NetBox wraps `serializer.save()` and calls `_validate_objects()`. These
+    viewsets override `perform_create`/`perform_update` to thread the material
+    write through `store_credential`, and an earlier revision dropped that
+    check with the rest of NetBox's implementation.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.build_estate()
+        self.policy.groups.clear()          # isolate from the tier group gate
+        self.lab = CredentialPolicy.objects.create(
+            name='Lab', slug='lab', engine=self.engine, openbao_policy='netbox-lab',
+        )
+        self.detail_url = reverse(
+            'plugins-api:netbox_openbao-api:credential-detail', kwargs={'pk': self.credential.pk}
+        )
+        self.list_url = reverse('plugins-api:netbox_openbao-api:credential-list')
+
+    def grant(self, action, constraints=None):
+        from core.models import ObjectType
+
+        permission = ObjectPermission(
+            name=f'{action} {constraints}', actions=[action], constraints=constraints,
+        )
+        permission.save()
+        permission.users.add(self.user)
+        permission.object_types.add(ObjectType.objects.get_for_model(Credential))
+
+    def test_a_constrained_create_cannot_land_outside_its_scope(self):
+        self.grant('view')
+        self.grant('add', {'policy__slug': 'lab'})
+
+        response = self.client.post(
+            self.list_url,
+            {
+                'name': 'sneaky',
+                'credential_type': 'password',
+                'policy': self.policy.pk,          # production, not lab
+                'secret_data': {'password': 'x'},
+            },
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Credential.objects.filter(name='sneaky').exists())
+
+    def test_a_refused_create_strands_no_material(self):
+        """
+        The post-save check runs inside `store_credential`'s atomic block, so
+        its failure reaches the compensator. Raising it afterwards would roll
+        the row back and leave the OpenBao write behind.
+        """
+        self.grant('view')
+        self.grant('add', {'policy__slug': 'lab'})
+        before = dict(FakeBackend.store)
+
+        self.client.post(
+            self.list_url,
+            {
+                'name': 'sneaky',
+                'credential_type': 'password',
+                'policy': self.policy.pk,
+                'secret_data': {'password': 'x'},
+            },
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(
+            set(FakeBackend.store) - set(before), set(),
+            'A refused create left material behind in OpenBao.',
+        )
+
+    def test_a_constrained_change_cannot_move_a_credential_out_of_scope(self):
+        self.grant('view')
+        self.grant('change', {'policy__slug': 'production'})
+
+        response = self.client.patch(
+            self.detail_url, {'policy': self.lab.pk}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.policy_id, self.policy.pk)
+
+    def test_a_rotate_constraint_matching_the_source_does_not_authorise_the_destination(self):
+        """
+        The finding this test exists for. A rotate constraint scoped to
+        `production` is satisfied by the credential as it stands, while the
+        same PATCH moves it to `lab` and writes the new material through lab's
+        policy and AppRole. Checking only the source makes the constraint
+        meaningless on a move.
+        """
+        self.grant('view')
+        self.grant('change')
+        self.grant('rotate', {'policy__slug': 'production'})
+        before = self.credential.kv_version
+
+        response = self.client.patch(
+            self.detail_url,
+            {'policy': self.lab.pk, 'secret_data': {'password': 'injected'}},
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.policy_id, self.policy.pk)
+        self.assertEqual(self.credential.kv_version, before)
+
+    def test_a_rotate_constraint_covering_both_ends_permits_the_move(self):
+        self.grant('view')
+        self.grant('change')
+        self.grant('rotate')                 # unconstrained: both ends satisfied
+        before = self.credential.kv_version
+
+        response = self.client.patch(
+            self.detail_url,
+            {'policy': self.lab.pk, 'secret_data': {'password': 'authorised'}},
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.policy_id, self.lab.pk)
+        self.assertGreater(self.credential.kv_version, before)
+
+
+class BulkMaterialWriteTest(_GateFixture, APITestCase):
+    """
+    A bulk update carrying material is refused rather than half-supported.
+
+    `BulkUpdateModelMixin` wraps the whole batch in one transaction and rolls
+    all of it back if any later item fails, while `store_credential`'s
+    compensator only fires for the exception raised inside its own atomic
+    block. An early item whose OpenBao write succeeded would keep that write
+    while its row and its audit entry disappear with the batch — an unaudited
+    version that collides with the next check-and-set, and which on a
+    credential with no `live_kv_version` becomes the value served as latest.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.build_estate()
+        self.policy.groups.clear()
+        self.second = Credential(
+            name='second',
+            credential_type=CredentialTypeChoices.TYPE_PASSWORD,
+            policy=self.policy,
+            engine=self.engine,
+        )
+        write_material(self.second, {'password': 'second-secret'})
+        self.second.refresh_from_db()
+        self.list_url = reverse('plugins-api:netbox_openbao-api:credential-list')
+        self.add_permissions(
+            'netbox_openbao.view_credential',
+            'netbox_openbao.change_credential',
+            'netbox_openbao.rotate_credential',
+        )
+
+    def test_a_bulk_update_carrying_material_is_refused(self):
+        before = (self.credential.kv_version, self.second.kv_version)
+
+        response = self.client.patch(
+            self.list_url,
+            [
+                {'id': self.credential.pk, 'secret_data': {'password': 'one'}},
+                {'id': self.second.pk, 'secret_data': {'password': 'two'}},
+            ],
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.credential.refresh_from_db()
+        self.second.refresh_from_db()
+        self.assertEqual((self.credential.kv_version, self.second.kv_version), before)
+
+    def test_the_refusal_names_the_offending_credentials(self):
+        response = self.client.patch(
+            self.list_url,
+            [
+                {'id': self.credential.pk, 'secret_data': {'password': 'one'}},
+                {'id': self.second.pk, 'description': 'harmless'},
+            ],
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(str(self.credential.pk), str(response.data))
+        self.assertNotIn(str(self.second.pk), str(response.data))
+
+    def test_a_metadata_only_bulk_update_still_works(self):
+        response = self.client.patch(
+            self.list_url,
+            [
+                {'id': self.credential.pk, 'description': 'a'},
+                {'id': self.second.pk, 'description': 'b'},
+            ],
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.description, 'a')

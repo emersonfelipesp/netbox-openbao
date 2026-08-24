@@ -147,13 +147,39 @@ server agree on what `cas` means. See [Development](../development.md).
 
 ## Deleting
 
-A `pre_delete` signal destroys the material when a `Credential` row is removed,
-so deleting a credential in NetBox never leaves a readable secret behind on the
-mount with nothing referencing it.
+A `post_delete` signal destroys the material when a `Credential` row is
+removed, so deleting a credential in NetBox never leaves a readable secret
+behind on the mount with nothing referencing it.
 
-A backend failure there is **logged rather than raised**: blocking the delete
-would leave an operator unable to remove a credential whose engine is
-unreachable, and `CredentialVerifyJob` reports the residue either way.
+!!! danger "`post_delete`, deferred to `transaction.on_commit` — never `pre_delete`"
+
+    Destroying a secret cannot be undone; a database transaction can be. Doing
+    the irreversible half first gets the ordering exactly backwards: any later
+    failure in the same transaction restores the row and leaves it pointing at
+    material that no longer exists, which is unrecoverable and breaks every
+    consumer of that credential.
+
+    Bulk deletion made that routine rather than exotic —
+    `perform_bulk_destroy()` puts N deletions in one transaction, so a single
+    failure at the end destroyed the material of every credential before it
+    while restoring all their rows.
+
+    Deferring to commit trades it for the opposite residue: the row is gone and
+    the material is not. That one is *recoverable* — the secret is still there
+    to be found — so it is the right way round.
+
+A backend failure is **logged rather than raised**: by the time the callback
+runs the deletion has already committed, so raising could not undo it and would
+only turn a logged residue into a 500 on a request that succeeded.
+
+**Nothing reconciles that residue.**
+[`CredentialVerifyJob`](background-jobs.md#credentialverifyjob) iterates
+existing credential rows, so it finds a row whose secret is missing and is
+structurally blind to a secret whose row is missing. Alert on the
+`ORPHANED SECRET` log line — it names the engine and the path, and it is the
+only signal. Reconciling in that direction means walking the mount for
+`managed_by: netbox-openbao` material with no matching row, which the plugin
+does not do yet.
 
 ## Custom metadata
 

@@ -47,18 +47,38 @@ def destroy_material_on_delete(instance, **kwargs):
     """
     from .services import delete_material
 
+    # Captured now, not read inside the callback. Django's Collector sets
+    # `instance.pk = None` as part of deleting it, so by the time this runs the
+    # log line below would name no credential at all — losing the one
+    # identifier an operator needs to go and find the residue.
+    identity = {
+        'pk': instance.pk,
+        'uuid': instance.uuid,
+        'path': instance.path,
+        'engine': instance.engine.slug,
+    }
+
     def destroy():
         try:
             delete_material(instance)
         except OpenBaoError:
             logger.error(
-                'ORPHANED SECRET: credential %s was deleted but its material at %s on engine %s '
-                'could not be destroyed. It is still readable by anything holding that tier\'s '
+                'ORPHANED SECRET: credential %s (%s) was deleted but its material at %s on engine '
+                '%s could not be destroyed. It is still readable by anything holding that tier\'s '
                 'AppRole, and no job will find it — there is no row left to scan from. '
                 'Remove it by hand.',
-                instance.pk,
-                instance.path,
-                instance.engine.slug,
+                identity['pk'], identity['uuid'], identity['path'], identity['engine'],
+            )
+        except Exception:
+            # Deliberately broad, and deliberately not re-raised. This runs
+            # from `run_and_clear_commit_hooks()`, *after* the deletion has
+            # committed — an exception escaping here becomes a 500 on a request
+            # whose database change already succeeded, and cannot undo it.
+            # Anything the backends failed to translate lands here.
+            logger.exception(
+                'ORPHANED SECRET: credential %s (%s) was deleted and destroying its material at '
+                '%s on engine %s raised an untranslated error. Remove it by hand.',
+                identity['pk'], identity['uuid'], identity['path'], identity['engine'],
             )
 
     transaction.on_commit(destroy)

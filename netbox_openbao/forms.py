@@ -295,7 +295,10 @@ class CredentialForm(PrimaryModelForm):
         user = getattr(request, 'user', None) if request else None
         payload = getattr(self, 'secret_payload', None)
 
-        if self.instance.pk:
+        # Captured before super().save() assigns a primary key.
+        is_create = self.instance.pk is None
+
+        if not is_create:
             # Gate every edit of an existing credential against the tier it is
             # on *now*. Not only the material-bearing ones: `policy` is an
             # editable field, so an edit that changes nothing else could
@@ -346,7 +349,31 @@ class CredentialForm(PrimaryModelForm):
         def persist(metadata):
             for field, value in metadata.items():
                 setattr(self.instance, field, value)
-            return super(CredentialForm, self).save(*args, **kwargs)
+            saved = super(CredentialForm, self).save(*args, **kwargs)
+
+            # NetBox's ObjectEditView performs this same check *after*
+            # form.save() returns, and raises PermissionsViolation — which
+            # rolls the row back while leaving the OpenBao write stranded,
+            # because by then `store_credential` has already returned and its
+            # compensator will never run. Doing it here puts it inside the
+            # compensated region.
+            #
+            # Which permissions the *result* must satisfy. A create is governed
+            # by `add` — supplying the initial material is part of creating the
+            # credential, which is why `rotate` is not required there and is
+            # not required by the REST create either. An edit that replaces
+            # material is a rotation, and the destination is checked as well as
+            # the source: moving a credential into a tier the operator may not
+            # rotate would otherwise write the new material through that tier.
+            actions = ('add',) if is_create else ('change', 'rotate')
+            for action in actions:
+                if not Credential.objects.restrict(user, action).filter(pk=saved.pk).exists():
+                    raise AbortRequest(
+                        'You do not have permission to leave this credential in that state. '
+                        f'The {action} permission does not cover the result of this '
+                        f'{"creation" if is_create else "edit"}.'
+                    )
+            return saved
 
         try:
             credential, _version = store_credential(

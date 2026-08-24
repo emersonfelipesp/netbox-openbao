@@ -22,7 +22,9 @@ that way: GraphQL queries are logged verbatim by most gateways, and a graph
 API's response shape is harder to audit than a single named REST action.
 """
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import router, transaction
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -174,6 +176,30 @@ class CredentialViewSet(NetBoxModelViewSet):
                 'Replacing secret material requires the rotate permission on this credential.'
             )
 
+    def _conform(self, instance):
+        """
+        Re-check a just-saved object against the view's restricted queryset.
+
+        This is NetBox's `_validate_objects()`, and it is what enforces
+        *constraints* on a create or an update: `restrict()` bounds which rows
+        you may act on, but only a post-save check can tell you whether the row
+        you just wrote is still one of them. Without it a constrained
+        `add_credential` grant creates credentials outside its allowed policy,
+        and a constrained `change_credential` grant moves an existing one out
+        of scope.
+
+        These viewsets override `perform_create`/`perform_update` to thread the
+        material write through `store_credential`, and an earlier revision
+        dropped the check along with the rest of NetBox's implementation.
+
+        It is called from **inside** the persist callback on purpose, so it
+        runs within `store_credential`'s atomic block. Raising it outside would
+        roll the row back while leaving the OpenBao write stranded, which is
+        precisely the residue the compensator exists to prevent.
+        """
+        if not self.queryset.filter(pk=instance.pk).exists():
+            raise ObjectDoesNotExist
+
     def perform_create(self, serializer):
         """
         Persist the row and the material as one unit.
@@ -182,18 +208,28 @@ class CredentialViewSet(NetBoxModelViewSet):
         model constructor even transiently. Persistence is handed to
         `store_credential` as a callback so the serializer still owns tags,
         custom fields, and m2m assignment while the rollback compensator wraps
-        the whole operation.
+        the whole operation — and so the post-save permission check happens
+        inside that compensated region.
         """
         payload = serializer.validated_data.pop('secret_data', None)
         credential_type = serializer.validated_data['credential_type']
-        store_credential(
-            lambda metadata: serializer.save(**metadata),
-            credential_type,
-            payload,
-            cas=0,
-            user=self.request.user,
-            request=self.request,
-        )
+
+        def persist(metadata):
+            instance = serializer.save(**metadata)
+            self._conform(instance)
+            return instance
+
+        try:
+            store_credential(
+                persist,
+                credential_type,
+                payload,
+                cas=0,
+                user=self.request.user,
+                request=self.request,
+            )
+        except ObjectDoesNotExist:
+            raise PermissionDenied() from None
 
     def perform_update(self, serializer):
         """
@@ -233,24 +269,84 @@ class CredentialViewSet(NetBoxModelViewSet):
         )
 
         payload = serializer.validated_data.pop('secret_data', None)
+
         if not payload:
-            serializer.save()
+            try:
+                with transaction.atomic(using=router.db_for_write(self.queryset.model)):
+                    instance = serializer.save()
+                    self._conform(instance)
+            except ObjectDoesNotExist:
+                raise PermissionDenied() from None
             return
 
         instance = serializer.instance
+        # The tier the credential is on *now*.
         self._require_rotate(instance)
         credential_type = serializer.validated_data.get('credential_type', instance.credential_type)
-        store_credential(
-            lambda metadata: serializer.save(**metadata),
-            credential_type,
-            payload,
-            # Check-and-set against the version we believe is current, so a
-            # concurrent write cannot be silently clobbered.
-            cas=instance.kv_version,
-            user=self.request.user,
-            request=self.request,
-            action=AccessActionChoices.ACTION_ROTATE,
+
+        def persist(metadata):
+            saved = serializer.save(**metadata)
+            self._conform(saved)
+            # ...and the tier it has *become*. Checking only the source lets a
+            # rotate constraint scoped to `lab` be satisfied by a PATCH that
+            # simultaneously moves the credential to `prod` and writes the new
+            # material through prod's policy and AppRole. Both ends, or the
+            # constraint means nothing on a move.
+            self._require_rotate(saved)
+            return saved
+
+        try:
+            store_credential(
+                persist,
+                credential_type,
+                payload,
+                # Check-and-set against the version we believe is current, so a
+                # concurrent write cannot be silently clobbered.
+                cas=instance.kv_version,
+                user=self.request.user,
+                request=self.request,
+                action=AccessActionChoices.ACTION_ROTATE,
+            )
+        except ObjectDoesNotExist:
+            raise PermissionDenied() from None
+
+    def perform_bulk_update(self, objects, update_data, partial):
+        """
+        Refuse a bulk update that carries secret material.
+
+        `BulkUpdateModelMixin` wraps the whole batch in **one** transaction and
+        rolls all of it back if any later item fails. `store_credential`'s
+        compensator only fires for the exception raised inside its own atomic
+        block, so an early item whose OpenBao write succeeded keeps that write
+        while its database row and its audit entry disappear with the batch.
+
+        The residue is worse than an orphan. The version is real and unaudited,
+        it collides with the next check-and-set, and on a credential written
+        before staged rotation existed — no `live_kv_version`, so "serve
+        latest" — the supposedly rolled-back material becomes the value every
+        consumer is handed.
+
+        Compensating across the outer boundary would mean the plugin taking
+        ownership of a transaction NetBox opened, for an operation nobody has
+        asked for: rotating N credentials in one request is not a workflow this
+        plugin supports, and doing them one at a time is both correct and
+        auditable. So this refuses rather than half-solves, and says why.
+        """
+        offenders = sorted(
+            str(pk) for pk, data in (update_data or {}).items()
+            if isinstance(data, dict) and data.get('secret_data')
         )
+        if offenders:
+            raise DRFValidationError({
+                'secret_data': (
+                    'Secret material cannot be written through a bulk update: the batch shares one '
+                    'transaction, so a later failure would roll back the database while leaving '
+                    'material already written to OpenBao. Rotate these credentials individually, '
+                    'through the detail endpoint or the rotate action. '
+                    f'Offending credential ID(s): {", ".join(offenders)}.'
+                ),
+            })
+        return super().perform_bulk_update(objects, update_data, partial)
 
     # ------------------------------------------------------------------
     # Reveal

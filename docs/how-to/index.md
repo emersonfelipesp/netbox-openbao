@@ -23,8 +23,9 @@ gets you to a working result.
 
     ---
 
-    A tier with its own OpenBao policy and its own AppRole, so a NetBox bug is
-    not sufficient on its own.
+    A tier with its own OpenBao policy and its own AppRole, so a leaked
+    SecretID reaches only that tier — and an honest account of what that does
+    not buy.
 
 -   :material-lock-outline: **[Scope an OpenBao policy](scope-openbao-policies.md)**
 

@@ -60,6 +60,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is now a `post_delete` handler deferred with `transaction.on_commit`, and the
   audit entry records the credential by snapshot rather than by a foreign key
   that no longer resolves.
+- **Constrained permissions are enforced against the result of a write, not
+  only its starting point.** These viewsets override
+  `perform_create`/`perform_update` to thread the material write through
+  `store_credential`, and dropped NetBox's post-save `_validate_objects()`
+  check along with the rest of its implementation — so a constrained
+  `add_credential` grant could create a credential outside its allowed policy,
+  and a constrained `change_credential` grant could move an existing one out of
+  scope. A rotate constraint compounded it: checking only the pre-update row
+  meant a constraint scoped to `lab` was satisfied by a `PATCH` that
+  simultaneously moved the credential to `prod` and wrote the new material
+  through prod's policy and AppRole. Both ends are now checked, from inside the
+  compensated region so a refusal cannot strand an OpenBao write.
+
+- **Bulk updates carrying `secret_data` are refused.** `BulkUpdateModelMixin`
+  wraps the batch in one transaction and rolls all of it back if a later item
+  fails, while the write-path compensator only fires for the exception raised
+  inside its own atomic block — so an early item's OpenBao write survived while
+  its row and its audit entry disappeared. That residue is worse than an
+  orphan: unaudited, colliding with the next check-and-set, and on a credential
+  with no `live_kv_version` it becomes the value served as latest. The same
+  window in the UI edit flow is closed by moving the post-save permission check
+  inside `store_credential`'s atomic block.
 
 ### Fixed
 
@@ -84,12 +106,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   everywhere, with the `ORPHANED SECRET` log line named as the only current
   signal.
 
-- The public CI workflow's dependency-free field check tested three of the five
-  forbidden tokens and only plain assignments, so `secret_data =
-  models.JSONField()` or an annotated `token: str = ...` would have passed
-  every check it advertised. It is now `scripts/check_no_secret_fields.py`,
-  which handles both assignment forms and scans every model, and whose token
-  list is imported by `tests/test_security.py` so the two cannot drift.
+- The field check that CI reports as a restatement of the central invariant was
+  a name heuristic dressed as a guarantee. It is now an **allowlist**: every
+  `Credential` field is enumerated in `scripts/check_no_secret_fields.py`
+  having been reviewed as non-secret, and anything else fails whatever it is
+  called. A denylist of secret-sounding names passed `material =
+  models.JSONField()` and `payload = models.JSONField()` outright, and missed
+  annotated and tuple-assigned targets entirely. `tests/test_security.py`
+  imports the same allowlist and applies it to the live model and to the
+  serializer's read representation.
 
 ### Added
 
