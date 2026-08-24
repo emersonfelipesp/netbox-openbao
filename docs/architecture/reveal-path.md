@@ -30,7 +30,7 @@ not an inconsistency.
 | ObjectPermission **constraints** | the same `restrict()` | `{"policy__slug": "lab"}` yields **404** on a production credential — not 403, which would confirm it exists |
 | `CredentialPolicy.groups` | `services.enforce_policy_access` | A coarse tier gate, applied in addition to object permissions |
 | `CredentialPolicy.require_reason` | `services.reveal_material` | A justification, recorded in the access log |
-| The tier's OpenBao policy | the AppRole the request carries | Independent of NetBox entirely |
+| The tier's OpenBao policy | the AppRole the request carries | Bounds what *this NetBox* can reach at all. It authenticates the plugin, not the user, so it does not re-check the caller — see [Per-tier AppRoles](../security.md#7-per-tier-approles) |
 | Rate limit | `RevealRateThrottle` | Default `30/hour` per user |
 
 !!! note "Why the group gate lives in the service layer"

@@ -13,6 +13,7 @@ which passes it to the backend and drops it.
 
 from django import forms
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
 from netbox.context import current_request
@@ -292,20 +293,40 @@ class CredentialForm(PrimaryModelForm):
         """
         request = current_request.get()
         user = getattr(request, 'user', None) if request else None
-
-        # Gate every edit of an existing credential against the tier it is on
-        # *now*. Not only the material-bearing ones: `policy` is an editable
-        # field, so an edit that changes nothing else could otherwise move a
-        # credential to a tier the operator is in and make it revealable to
-        # them. `self.instance` is no help here — ModelForm._post_clean() has
-        # already written cleaned_data onto it — so the committed row is
-        # re-read; see services.enforce_update_access.
-        if self.instance.pk:
-            enforce_update_access(
-                self.instance, user, AccessActionChoices.ACTION_WRITE, request=request,
-            )
-
         payload = getattr(self, 'secret_payload', None)
+
+        if self.instance.pk:
+            # Gate every edit of an existing credential against the tier it is
+            # on *now*. Not only the material-bearing ones: `policy` is an
+            # editable field, so an edit that changes nothing else could
+            # otherwise move a credential to a tier the operator is in and make
+            # it revealable to them. `self.instance` is no help here —
+            # ModelForm._post_clean() has already written cleaned_data onto it
+            # — so the committed row is re-read; see enforce_update_access.
+            #
+            # Raised as AbortRequest rather than PermissionDenied so
+            # ObjectEditView renders it as a form error, the way a backend
+            # failure already is, instead of replacing a half-completed edit
+            # with Django's bare 403 page.
+            try:
+                enforce_update_access(
+                    self.instance, user, AccessActionChoices.ACTION_WRITE, request=request,
+                )
+            except PermissionDenied as exc:
+                raise AbortRequest(str(exc)) from None
+
+            # An edit carrying material is a rotation whatever the form calls
+            # it, so it needs `rotate_credential` and not merely `change`.
+            # Covers both branches below, including the staged one. Resolved
+            # with restrict() so ObjectPermission constraints apply, and
+            # against the committed row for the same reason as above.
+            if payload and not Credential.objects.restrict(user, 'rotate').filter(
+                pk=self.instance.pk
+            ).exists():
+                raise AbortRequest(
+                    'Replacing secret material requires the rotate permission on this credential.'
+                )
+
         if not payload:
             return super().save(*args, **kwargs)
 

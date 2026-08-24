@@ -44,6 +44,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   permissions carried per-policy constraints was never exposed — `change` on a
   production credential returned `404` — so this protects deployments relying
   on group membership alone.
+- **Replacing secret material now requires `rotate_credential`, whatever verb
+  it arrives on.** `PUT`, `PATCH`, and the bulk list endpoint all reach
+  `perform_update()` under `change_credential`, and a `secret_data` key in that
+  body wrote a new version — so a principal deliberately denied rotation could
+  still inject replacement credentials or take an integration offline. The UI
+  edit form had the same gap, including its staged-rotation path. Metadata-only
+  edits still need only `change_credential`, which is the point of the split.
+
+- **Deleting a credential no longer destroys its material before the deletion
+  commits.** The `pre_delete` signal did the irreversible half first, so any
+  later failure in the same transaction restored the row and left it pointing
+  at material that no longer existed. `perform_bulk_destroy()` puts N deletions
+  in one transaction, which made that routine rather than exotic. Destruction
+  is now a `post_delete` handler deferred with `transaction.on_commit`, and the
+  audit entry records the credential by snapshot rather than by a foreign key
+  that no longer resolves.
+
+### Fixed
+
+- The audit log's REST endpoint returned **500** for `?brief=true`, `?fields=`,
+  and `?omit=`. NetBox's `BaseViewSet` passes those down as serializer keyword
+  arguments and a plain DRF `ModelSerializer` does not accept them. Introduced
+  by adopting `NetBoxReadOnlyModelViewSet` above; the serializer now extends
+  `BaseModelSerializer`.
+
+- Documentation overstated what per-tier AppRoles provide. They were described
+  as a layer a NetBox permission bug could not pass, and as making the two
+  NetBox gates survivable. They are not: the backend selects the AppRole from
+  the credential's *own* policy, so a NetBox bug that yields a `prod-core`
+  credential reads it with the `prod-core` AppRole — the identity authorized
+  for that path. What they genuinely buy is blast radius, and the docs now say
+  that instead, across `security.md`, `configuration.md`, the architecture
+  pages, the policy-tier guide, and the model and backend docstrings.
+
+- Documentation claimed `CredentialVerifyJob` reports orphaned material. It
+  cannot: the job iterates existing credential rows, so it detects a row whose
+  secret is missing and is blind to a secret whose row is missing. Corrected
+  everywhere, with the `ORPHANED SECRET` log line named as the only current
+  signal.
+
+- The public CI workflow's dependency-free field check tested three of the five
+  forbidden tokens and only plain assignments, so `secret_data =
+  models.JSONField()` or an annotated `token: str = ...` would have passed
+  every check it advertised. It is now `scripts/check_no_secret_fields.py`,
+  which handles both assignment forms and scans every model, and whose token
+  list is imported by `tests/test_security.py` so the two cannot drift.
 
 ### Added
 

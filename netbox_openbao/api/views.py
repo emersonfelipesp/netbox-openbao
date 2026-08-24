@@ -29,6 +29,7 @@ from django.utils import timezone
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
@@ -144,6 +145,35 @@ class CredentialViewSet(NetBoxModelViewSet):
     # Write path
     # ------------------------------------------------------------------
 
+    def _require_rotate(self, instance):
+        """
+        Demand `rotate_credential` before material on an existing credential is
+        replaced.
+
+        `rotate` is a permission of its own precisely so that replacing
+        material can be withheld from someone who may otherwise edit a
+        credential — rename it, retag it, change its rotation interval. But
+        `PUT`, `PATCH`, and the bulk list endpoint all reach `perform_update()`
+        under `change_credential`, and a `secret_data` key in that body writes a
+        new version. Gating only the dedicated `rotate` action therefore left
+        the *same write* reachable by a different verb, and a principal
+        deliberately denied rotation could inject replacement credentials or
+        take an integration offline.
+
+        Resolved through `restrict()` rather than `has_perm()` so the
+        constraints on the granting ObjectPermission apply, and against the
+        committed row rather than `serializer.instance`, which NetBox has
+        already mutated with the incoming data.
+
+        A 403 rather than a 404: the caller reached this point holding
+        `change`, so the credential's existence is not a secret from them.
+        """
+        permitted = Credential.objects.restrict(self.request.user, 'rotate').filter(pk=instance.pk)
+        if not permitted.exists():
+            raise PermissionDenied(
+                'Replacing secret material requires the rotate permission on this credential.'
+            )
+
     def perform_create(self, serializer):
         """
         Persist the row and the material as one unit.
@@ -190,6 +220,10 @@ class CredentialViewSet(NetBoxModelViewSet):
         `add_credential` governs it. See `services.enforce_update_access` for
         why the committed row has to be re-read rather than trusting
         `serializer.instance`, which NetBox has already mutated by this point.
+
+        Separately, an update **carrying material** is a rotation whatever verb
+        it arrives on, so it demands `rotate_credential` and not merely
+        `change_credential` — see `_require_rotate`.
         """
         enforce_update_access(
             serializer.instance,
@@ -204,6 +238,7 @@ class CredentialViewSet(NetBoxModelViewSet):
             return
 
         instance = serializer.instance
+        self._require_rotate(instance)
         credential_type = serializer.validated_data.get('credential_type', instance.credential_type)
         store_credential(
             lambda metadata: serializer.save(**metadata),

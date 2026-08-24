@@ -170,9 +170,10 @@ back as an authorization failure naming the instance's permissions.
 That also disables the rollback compensator. When a credential write succeeds in
 OpenBao and then the NetBox transaction fails, the plugin normally removes what
 it wrote; a broker that refuses the delete turns that into a logged
-`ORPHANED SECRET` for `CredentialVerifyJob` to report. Both postures are
-defensible — just choose deliberately rather than discovering it during a
-cleanup.
+`ORPHANED SECRET` — and nothing will find it afterwards, because
+`CredentialVerifyJob` scans existing rows and this residue has none. Both
+postures are defensible; if you choose `may_delete = false`, alert on that log
+line rather than expecting a job to reconcile it.
 
 ## Using HashiCorp Vault instead
 

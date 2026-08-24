@@ -154,6 +154,36 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   wrong reason if the user lacks the permission. Assert the absent handler on
   the viewset structurally, or grant the permission first and then assert 405 —
   `test_policy_gate` does both.
+- **`rotate` is a permission, and `PATCH` is a rotation.** `PUT`, `PATCH`, and
+  the bulk list endpoint all reach `perform_update()` under
+  `change_credential`; a `secret_data` key there writes a new version. Gating
+  only the dedicated `rotate` action leaves the same write reachable by a
+  different verb. `_require_rotate` resolves it through `restrict()` so
+  constraints apply.
+- **Destroying a secret is irreversible; a transaction is not.** So the destroy
+  goes *after* the commit — `post_delete` plus `transaction.on_commit`, never
+  `pre_delete`. `perform_bulk_destroy()` puts N deletions in one transaction,
+  so a `pre_delete` destroy meant one late failure wiped the material of every
+  credential before it while restoring all their rows. The residue that remains
+  in the other direction (row gone, secret present) is recoverable; that one is
+  not.
+- **`CredentialVerifyJob` cannot find an orphan.** It iterates existing
+  credential rows, so it detects a row whose material is missing and is blind
+  to material whose row is missing. Do not write that it reports orphans — the
+  `ORPHANED SECRET` log line is the only signal until a mount-walking
+  reconciler exists.
+- **NetBox's `BaseViewSet` passes `fields`/`omit` to the serializer** for
+  `?fields=`, `?omit=`, and `?brief=true`. A plain DRF `ModelSerializer` raises
+  `TypeError: Field.__init__() got an unexpected keyword argument 'fields'` —
+  a 500, not a 400. Use `netbox.api.serializers.BaseModelSerializer` even for a
+  non-NetBoxModel.
+- **Do not write that a per-tier AppRole stops a NetBox permission bug.** It
+  does not. `get_backend()` picks the AppRole from the credential's own policy,
+  so a bug that yields a `prod-core` credential reads it with the `prod-core`
+  AppRole — the identity authorized for that path. Per-tier AppRoles bound
+  blast radius: a leaked SecretID reaches only its tier, and a tier whose
+  SecretID was never delivered to an instance is unreadable from it. Claim
+  that, not more. This is the same mistake the broker-mode sentence was.
 - **NetBox mutates the instance before your view code runs.**
   `ValidatedModelSerializer.validate()` `setattr()`s every validated attribute
   onto `self.instance` so it can `full_clean()` it, and Django's

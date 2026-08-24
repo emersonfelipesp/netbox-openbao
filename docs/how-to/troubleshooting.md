@@ -158,9 +158,10 @@ row is safe, since there is nothing left to orphan.
 The write-path compensator could not remove material it had just written, so
 there is a secret at a path NetBox has no row for.
 
-`CredentialVerifyJob` has the information to find it — material under the
-plugin's prefix carrying `managed_by: netbox-openbao` with no matching row. It
-can also be found directly:
+**No job will find it.** `CredentialVerifyJob` iterates existing credential
+rows, and this residue has none — it detects the opposite case, a row whose
+material is missing. Alert on the `ORPHANED SECRET` string; it is the only
+signal. Then find it by hand:
 
 ```bash
 bao kv metadata list secret/netbox/credentials/

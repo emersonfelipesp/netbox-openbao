@@ -10,10 +10,19 @@ class CredentialPolicy(OrganizationalModel):
     """
     An authorization tier, mapped onto a real OpenBao policy.
 
-    The plugin holds a **separate AppRole per tier**, which is what makes this
-    defence in depth rather than a label: a NetBox-side permission bug on
-    `prod-core` credentials still cannot read them unless the request is routed
-    through the `prod-core` AppRole, whose SecretID is delivered separately.
+    The plugin holds a **separate AppRole per tier**, which bounds blast radius:
+    a leaked SecretID reads only what that tier's OpenBao policy grants, and a
+    tier whose SecretID was never delivered to an instance is unreadable from
+    it at all.
+
+    It is **not** a re-authorization of the NetBox user, and the documentation
+    is careful about the difference. `get_backend()` selects the AppRole from
+    the credential's own policy, so a NetBox permission bug that hands someone
+    a `prod-core` credential makes the read with the `prod-core` AppRole —
+    which is the identity authorized for that path. OpenBao allows it. Path
+    separation only becomes real if tiers are given separate mounts, because
+    credential paths are UUID-derived and every tier's policy covers all of
+    them. See `docs/security.md`.
     """
 
     engine = models.ForeignKey(

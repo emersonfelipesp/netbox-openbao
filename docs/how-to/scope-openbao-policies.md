@@ -78,11 +78,15 @@ path "secret/data/netbox/credentials/*"     { capabilities = ["create","read","u
 path "secret/metadata/netbox/credentials/*" { capabilities = ["create","read","update","delete","list"] }
 ```
 
-Because the plugin's paths are UUID-derived, the two policies cannot be
-distinguished by path — the separation is in **which AppRole reaches which
-policy**, and that is enough: a NetBox-side permission bug on a `prod-core`
-credential still routes through the `prod-core` AppRole, and if that AppRole
-was never delivered to this NetBox, the read simply fails.
+Because the plugin's paths are UUID-derived, these two policies are
+**identical** — they cannot be distinguished by path at all. The separation is
+only in which AppRole is delivered where, so it bounds what a leaked SecretID
+reaches and what a given NetBox instance can read at all. It does **not** stop
+a NetBox permission bug on a tier whose AppRole that instance already holds:
+the read is made with that tier's own AppRole, which OpenBao allows.
+
+If you want the two tiers to differ at OpenBao rather than only in credential
+delivery, give them separate mounts — see below.
 
 → [Set up a policy tier](policy-tiers.md)
 

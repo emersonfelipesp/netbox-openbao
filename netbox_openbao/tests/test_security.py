@@ -8,6 +8,9 @@ or a `brief=true` response looks like nothing at all until someone reads the
 database.
 """
 
+import importlib.util
+from pathlib import Path
+
 from django.test import TestCase
 from rest_framework.renderers import BrowsableAPIRenderer, JSONRenderer
 
@@ -17,10 +20,36 @@ from netbox_openbao.backends.exceptions import OpenBaoAuthError, OpenBaoError
 from netbox_openbao.models import Credential
 
 # Substrings that would indicate a field capable of holding secret material.
-FORBIDDEN_FIELD_TOKENS = ('password', 'private', 'secret', 'passphrase', 'token')
+#
+# Imported from the standalone checker rather than restated here, so the two
+# cannot drift. `scripts/check_no_secret_fields.py` is what CI runs on a runner
+# that cannot stand up NetBox; a shorter copy there once checked three of these
+# five and only plain assignments, which meant `secret_data = models.JSONField()`
+# would have passed every check the public workflow advertised. One list.
+#
+# Loaded by path because `scripts/` is not part of the installed package — this
+# test runs from a NetBox checkout, where the repository root is not on
+# sys.path.
+CHECKER_PATH = Path(__file__).resolve().parents[2] / 'scripts' / 'check_no_secret_fields.py'
+MODELS_PATH = Path(__file__).resolve().parents[1] / 'models'
+
+
+def _load_checker():
+    path = CHECKER_PATH
+    spec = importlib.util.spec_from_file_location('netbox_openbao_field_checker', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_checker = _load_checker()
+
+FORBIDDEN_FIELD_TOKENS = _checker.FORBIDDEN_FIELD_TOKENS
 
 # `cert_serial` is a public certificate attribute, and `api_token`-style names
-# are absent by design; nothing here is an exception to the rule above.
+# are absent by design; nothing on Credential is an exception to the rule above.
+# The checker carries its own, wider exception list because it scans every
+# model rather than this one.
 ALLOWED_EXCEPTIONS = frozenset()
 
 
@@ -117,3 +146,37 @@ class ExceptionScrubbingTest(TestCase):
     def test_custom_message_is_still_developer_supplied(self):
         exc = OpenBaoError('OpenBao rejected the request.', status_code=400)
         self.assertEqual(str(exc), 'OpenBao rejected the request.')
+
+
+class SharedCheckerTest(TestCase):
+    """
+    The CI checker and this suite must enforce the same rule.
+
+    CI runs `scripts/check_no_secret_fields.py` on a runner with no NetBox, no
+    database, and no Redis, and reports it as a restatement of the invariant
+    above. A restatement that checks less than the original is worse than no
+    check, because it makes a weaker guarantee look like the real one.
+    """
+
+    def test_the_checker_passes_on_the_real_models(self):
+        self.assertEqual(_checker.main(['check_no_secret_fields.py', str(MODELS_PATH)]), 0)
+
+    def test_the_checker_rejects_a_plain_secret_field(self):
+        offenders = _checker.offending_names('secret_data = models.JSONField()')
+        self.assertEqual(offenders, ['secret_data'])
+
+    def test_the_checker_rejects_an_annotated_secret_field(self):
+        """
+        An `ast.Assign`-only walk misses this form entirely, which is how an
+        annotated field would have slipped past the earlier inline copy.
+        """
+        offenders = _checker.offending_names('token: str = models.CharField()')
+        self.assertEqual(offenders, ['token'])
+
+    def test_every_forbidden_token_is_actually_detected(self):
+        for token in FORBIDDEN_FIELD_TOKENS:
+            with self.subTest(token=token):
+                self.assertEqual(
+                    _checker.offending_names(f'my_{token}_field = models.CharField()'),
+                    [f'my_{token}_field'],
+                )

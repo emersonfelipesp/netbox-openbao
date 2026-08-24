@@ -73,9 +73,19 @@ lingering unnoticed:
 
 The two are counted and logged separately for exactly that reason.
 
-It also has the information to spot the opposite case: material under the
-plugin's prefix carrying `managed_by: netbox-openbao` that NetBox no longer has
-a row for — an orphan.
+!!! warning "It cannot find the opposite case"
+
+    This job iterates **existing credential rows**. Material under the plugin's
+    prefix that NetBox no longer has a row for — the residue of a failed
+    compensating delete, or of a deletion whose backend call failed — has no
+    row to iterate from, so nothing here will ever surface it.
+
+    Finding that means listing the mount for `managed_by: netbox-openbao`
+    material with no matching credential. The `custom_metadata` needed to do it
+    is written on every credential, and the OpenBao policy already grants
+    `list` on `metadata/`, but the plugin has no job that does the walk. Until
+    it does, alert on the `ORPHANED SECRET` log line — that is the only signal
+    such material exists.
 
 ## `RotationDueJob`
 

@@ -90,10 +90,20 @@ except Exception as exc:
     case removes only the version this write added.
 
 If the compensating delete *itself* fails, it is logged at `ERROR` with the
-literal string `ORPHANED SECRET` and
-[`CredentialVerifyJob`](background-jobs.md#credentialverifyjob) reports the
-residue on its next pass. There is no third fallback; there is a job whose
-purpose is to notice.
+literal string `ORPHANED SECRET`, naming the engine and the path.
+
+Log it and mean it, because nothing else will find it. `CredentialVerifyJob` cannot find it. That job iterates **existing credential
+rows** and asks whether each one's material is still there — so it detects the
+opposite failure (a row whose secret is missing) and is blind to this one,
+where the secret is present and the row is not. Reconciling in that direction
+means listing the mount for `managed_by: netbox-openbao` material with no
+matching row, which the plugin does not do yet. Alert
+on the string.
+
+On a failed **rotation** the row survives, so
+[`CredentialVerifyJob`](background-jobs.md#credentialverifyjob) does still
+check that path — but it checks that the path *resolves*, not that no extra
+version is stranded on it, so an orphaned version is invisible to it too.
 
 ## Auditing a failure that never committed
 

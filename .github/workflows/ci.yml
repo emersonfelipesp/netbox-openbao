@@ -55,28 +55,16 @@ jobs:
       - name: Build the distribution
         run: python -m build
 
-      - name: Assert no secret-bearing field crept onto the model
+      - name: Assert no model field can hold secret material
         run: |
-          # A dependency-free restatement of the central claim in
-          # netbox_openbao/tests/test_security.py, so the invariant is still
-          # checked on a runner that cannot stand up NetBox.
-          python - <<'PY'
-          import ast
-          import sys
-
-          tree = ast.parse(open('netbox_openbao/models/credentials.py').read())
-          forbidden = ('password', 'private', 'passphrase')
-          offenders = []
-          for node in ast.walk(tree):
-              if isinstance(node, ast.Assign):
-                  for target in node.targets:
-                      name = getattr(target, 'id', '')
-                      if any(token in name.lower() for token in forbidden):
-                          offenders.append(name)
-          if offenders:
-              sys.exit(f'Credential gained secret-bearing field(s): {offenders}')
-          print('Credential model carries no secret-bearing field.')
-          PY
+          # The dependency-free restatement of the central claim in
+          # netbox_openbao/tests/test_security.py, for a runner that cannot
+          # stand up NetBox. The forbidden-token list lives in the script and
+          # is imported by that test, so the two cannot drift — an earlier
+          # inline copy here checked three of the five tokens and only plain
+          # assignments, so an annotated field or `secret_data` would have
+          # passed every check this workflow advertised.
+          python scripts/check_no_secret_fields.py
 
   docs:
     name: Documentation

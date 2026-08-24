@@ -71,8 +71,10 @@ test in `netbox_openbao/tests/test_security.py`:
   prefetch, a link scanner, or a history replay.
 - **No auth material in the database.** RoleIDs and SecretIDs come from the
   process environment, or a file it points at.
-- **Per-tier AppRoles.** A NetBox-side permission bug still cannot read material
-  the tier's OpenBao policy does not grant.
+- **Per-tier AppRoles**, so a leaked SecretID reads only its own tier and a tier
+  whose SecretID was never delivered to an instance is unreadable from it. This
+  bounds blast radius; it does not re-authorize the NetBox user, and the
+  documentation is careful about the difference.
 - **Backend exceptions carry no server text.** An OpenBao 403 body can
   enumerate policy rules; it never reaches a log, a traceback, or a response.
 - **Every access is audited** — who, when, from where, and whether it
@@ -207,7 +209,9 @@ The OpenBao path is UUID-derived and immutable
 (`<prefix>/credentials/<uuid>`). A path derived from the object graph would
 break the first time a credential is renamed or reassigned, and a broken path
 is an orphaned secret nobody can find. Discovery instead comes from KV v2
-`custom_metadata`, which also lets the health job spot orphans.
+`custom_metadata`, which carries the credential's NetBox identity, type,
+policy, and assignments, so tooling outside NetBox can list the mount and
+filter on them.
 
 ## Roadmap
 

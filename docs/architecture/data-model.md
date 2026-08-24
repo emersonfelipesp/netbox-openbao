@@ -68,9 +68,13 @@ AppRole, which is what makes it defence in depth:
 2. The policy's `groups` gate
 3. The OpenBao policy itself, reached through that tier's AppRole
 
-Layer 3 is what makes layers 1 and 2 survivable. A NetBox-side permission bug on
-`prod-core` credentials still cannot read them, because OpenBao refuses the
-AppRole the request is carrying.
+Layer 3 bounds blast radius rather than re-authorizing the user: the backend
+picks the AppRole from the credential's own policy, so a NetBox bug that hands
+someone a `prod-core` credential reads it with the `prod-core` AppRole, which
+OpenBao allows. What it buys is that a leaked SecretID reaches only its own
+tier, and that a tier whose SecretID was never delivered to an instance is
+unreadable from it. See [the security
+model](../security.md#7-per-tier-approles).
 
 Give each tier a genuinely separate AppRole and deliver its SecretID separately
 — reusing one across tiers collapses layer 3 and leaves you with a label. See

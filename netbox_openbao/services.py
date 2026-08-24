@@ -370,9 +370,14 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
                         written_version, path,
                     )
             except OpenBaoError:
+                # Nothing will reconcile this. CredentialVerifyJob iterates
+                # existing credential rows and this residue may have none —
+                # on a failed create the row rolled back with the transaction.
+                # The log line is the only signal; alert on it.
                 logger.error(
-                    'ORPHANED SECRET: wrote version %s at %s but could not roll it back after a failed '
-                    'transaction. CredentialVerifyJob will report it.',
+                    'ORPHANED SECRET: wrote version %s at %s but could not roll it back after a '
+                    'failed transaction. No job will find it: CredentialVerifyJob scans from '
+                    'existing rows. Remove it by hand.',
                     written_version, path,
                 )
         # The transaction has unwound. A create leaves an in-memory object
@@ -626,16 +631,29 @@ def delete_material(credential, user=None, request=None):
     """
     Destroy a credential's material and every version of it.
 
-    Called from the pre-delete signal so removing a `Credential` row never
-    leaves its secret behind on the mount.
+    Called after the row's deletion has **committed**, so removing a
+    `Credential` never leaves its secret behind on the mount — and, equally
+    important, never destroys the secret for a deletion that then rolls back.
+    Destroying it before the commit made the irreversible half of the operation
+    happen first: a later failure in the same transaction restored the row and
+    left it pointing at material that no longer existed. Bulk deletion, where
+    N rows share one transaction, made that a routine rather than an exotic
+    failure.
+
+    `link` is resolved rather than assumed. By the time this runs the row is
+    normally gone, so a foreign key to it would raise a deferred violation at
+    commit — losing the audit record for the deletion it exists to record.
     """
     backend = get_backend(credential.engine, credential.policy)
+    link = _row_exists(credential)
     try:
         backend.delete(credential.path)
     except OpenBaoError as exc:
         log_access(
             credential, user, AccessActionChoices.ACTION_DELETE, success=False,
-            message=str(exc), request=request,
+            message=str(exc), request=request, link=link,
         )
         raise
-    log_access(credential, user, AccessActionChoices.ACTION_DELETE, success=True, request=request)
+    log_access(
+        credential, user, AccessActionChoices.ACTION_DELETE, success=True, request=request, link=link,
+    )

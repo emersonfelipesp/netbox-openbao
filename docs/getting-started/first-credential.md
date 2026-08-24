@@ -105,8 +105,10 @@ curl -X POST https://netbox.example.net/api/plugins/openbao/policies/ \
 ```
 
 For anything production, give the tier its **own** AppRole via
-`approle_env_prefix` — that is the layer a NetBox-side permission bug cannot
-get past. See [Set up a policy tier](../how-to/policy-tiers.md).
+`approle_env_prefix`. That bounds what a leaked SecretID reaches and what this
+NetBox can read at all — though not what a NetBox permission bug can do with a
+tier whose AppRole it already holds. See [Set up a policy
+tier](../how-to/policy-tiers.md).
 
 ## 5. Create a credential
 

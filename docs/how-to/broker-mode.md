@@ -128,12 +128,12 @@ sent.
 compensator.** The plugin can read, write, and rotate but not delete — so when
 a credential write succeeds in OpenBao and the NetBox transaction then fails,
 the material it wrote cannot be removed. That becomes a logged `ORPHANED
-SECRET` for
+SECRET`, and nothing reconciles it afterwards —
 [`CredentialVerifyJob`](../architecture/background-jobs.md#credentialverifyjob)
-to report.
+scans existing credential rows, and this residue has none.
 
-Both postures are defensible. Choose deliberately rather than discovering it
-during a cleanup.
+Both postures are defensible. If you choose `may_delete = false`, alert on that
+log line rather than expecting a job to clean up behind it.
 
 ## Errors
 

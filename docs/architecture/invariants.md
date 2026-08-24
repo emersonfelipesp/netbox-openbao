@@ -30,6 +30,7 @@ Fix the test.
 | ObjectPermission constraints hide other tiers | The same `restrict()` — a 404, not a 403 | `test_api.test_constrained_permission_hides_other_tiers` |
 | The policy group gate applies on **every** surface | `services.enforce_policy_access`, called from the service chokepoint and from the REST authorization helper | `test_policy_gate` — 12 tests across the REST reveal, `PATCH` of `secret_data`, the full-page UI reveal, the HTMX reveal, and UI promote/discard |
 | A credential cannot be moved between tiers to escape the gate | The gate runs on **every** update, against the **committed** row — NetBox mutates the instance before the check would see it | `test_policy_gate.PolicyReassignmentTest` — 5 tests |
+| Replacing material demands `rotate_credential`, on every verb | `_require_rotate` in `perform_update`, and the same `restrict()` check in `CredentialForm.save()` | `test_policy_gate.RotatePermissionOnUpdateTest` — 6 tests covering `PATCH`, `PUT`, bulk, the metadata-only case, and a constrained grant |
 | A reveal is never reachable by `GET` in the UI | POST-only views | `test_views.test_get_is_not_allowed`, `test_rejects_get`, `test_promote_and_discard_reject_get` |
 | The response is unstorable | `renderer_classes=[JSONRenderer]` + `no-store` | `test_security.test_reveal_uses_json_renderer_only`, `test_rotate_uses_json_renderer_only`; `test_api.test_reveal_response_is_not_storable`; `test_views.test_reveal_response_is_not_storable`, `test_fragment_is_not_storable` |
 | A leaked token cannot drain the store silently | `RevealRateThrottle`, default `30/hour` | `test_security.test_reveal_is_throttled`, `test_api.test_reveal_is_rate_limited` |
@@ -57,7 +58,10 @@ Fix the test.
 | A create cannot overwrite material at a colliding path | `cas=0` | `test_backends.test_cas_zero_refuses_to_overwrite`, `test_services.test_duplicate_path_is_refused_by_the_database` |
 | A rotation cannot clobber a concurrent write | `cas=kv_version` | `test_backends.test_cas_stale_version_refuses`, `test_services.test_cas_refuses_a_write_against_a_stale_version` |
 | A malformed payload is rejected before anything is written | `prepare_material` is pure and runs first | `test_services.test_invalid_payload_is_rejected_before_any_write` |
-| Deleting a credential destroys its material | `pre_delete` signal | `test_services.test_deleting_a_credential_destroys_its_material` |
+| Deleting a credential destroys its material | `post_delete` signal, deferred to `transaction.on_commit` | `test_services.test_deleting_a_credential_destroys_its_material` |
+| A rolled-back deletion does **not** destroy the material | the same deferral — destroying is irreversible, a transaction is not, so the irreversible half goes last | `test_policy_gate.DeletionOrderingTest` — 4 tests, including a partially failed bulk delete |
+| The audit API survives `?brief`, `?fields`, and `?omit` | `BaseModelSerializer`, which accepts NetBox's dynamic-field kwargs | `test_policy_gate.AuditLogDynamicFieldsTest` — 5 tests |
+| CI's dependency-free field check is not weaker than the real one | one `FORBIDDEN_FIELD_TOKENS` list, in `scripts/check_no_secret_fields.py`, imported by the test | `test_security.SharedCheckerTest` — 4 tests, including the annotated-assignment form |
 | A failed quick-add leaves nothing behind | One transaction wrapping service, credential, and assignment | `test_quickadd.test_a_backend_failure_leaves_nothing_behind` |
 | `custom_metadata` never carries an empty value | `build_custom_metadata` drops empties; the fake rejects them as the server does | `test_services.test_custom_metadata_never_contains_an_empty_value` |
 

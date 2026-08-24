@@ -14,7 +14,8 @@ render no material, because "returned 403" and "leaked nothing" are different
 claims and only the second one matters if the first regresses.
 """
 
-from django.test import override_settings
+from django.db import transaction
+from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
 from users.models import Group, ObjectPermission
 from utilities.testing import APITestCase
@@ -194,7 +195,11 @@ class APIGateTest(_GateFixture, APITestCase):
         material through the standard update route that `rotate` refuses —
         the same gate, bypassed by a different verb.
         """
-        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
+        self.add_permissions(
+            'netbox_openbao.view_credential',
+            'netbox_openbao.change_credential',
+            'netbox_openbao.rotate_credential',
+        )
         before = self.credential.kv_version
 
         response = self.client.patch(
@@ -218,7 +223,11 @@ class APIGateTest(_GateFixture, APITestCase):
         the detail route's dispatch. Asserted so a future refactor that moves it
         cannot silently open a bulk-shaped hole.
         """
-        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
+        self.add_permissions(
+            'netbox_openbao.view_credential',
+            'netbox_openbao.change_credential',
+            'netbox_openbao.rotate_credential',
+        )
         before = self.credential.kv_version
 
         response = self.client.patch(
@@ -233,7 +242,11 @@ class APIGateTest(_GateFixture, APITestCase):
         self.assertEqual(self.credential.kv_version, before)
 
     def test_a_member_of_a_permitted_group_may_patch_secret_data(self):
-        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
+        self.add_permissions(
+            'netbox_openbao.view_credential',
+            'netbox_openbao.change_credential',
+            'netbox_openbao.rotate_credential',
+        )
         self.join_permitted_group()
         before = self.credential.kv_version
 
@@ -450,3 +463,304 @@ class PolicyReassignmentTest(_GateFixture, APITestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+
+
+class RotatePermissionOnUpdateTest(_GateFixture, APITestCase):
+    """
+    An update carrying material is a rotation whatever verb it arrives on.
+
+    `rotate` is a permission of its own precisely so replacing material can be
+    withheld from someone who may otherwise edit a credential. `PUT`, `PATCH`,
+    and the bulk list endpoint all reach `perform_update()` under
+    `change_credential`, so gating only the dedicated `rotate` action left the
+    same write reachable by a different verb — a principal deliberately denied
+    rotation could inject replacement credentials or take an integration
+    offline.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.build_estate()
+        # Isolate from the tier group gate; this is about the NetBox permission.
+        self.policy.groups.clear()
+        self.detail_url = reverse(
+            'plugins-api:netbox_openbao-api:credential-detail', kwargs={'pk': self.credential.pk}
+        )
+        self.list_url = reverse('plugins-api:netbox_openbao-api:credential-list')
+
+    def test_patching_secret_data_needs_rotate_not_merely_change(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
+        before = self.credential.kv_version
+
+        response = self.client.patch(
+            self.detail_url, {'secret_data': {'password': 'injected'}}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.kv_version, before, 'Material was replaced without rotate.')
+
+    def test_putting_secret_data_needs_rotate(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
+        before = self.credential.kv_version
+
+        response = self.client.put(
+            self.detail_url,
+            {
+                'name': self.credential.name,
+                'credential_type': self.credential.credential_type,
+                'policy': self.policy.pk,
+                'secret_data': {'password': 'injected'},
+            },
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.kv_version, before)
+
+    def test_bulk_patching_secret_data_needs_rotate(self):
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
+        before = self.credential.kv_version
+
+        response = self.client.patch(
+            self.list_url,
+            [{'id': self.credential.pk, 'secret_data': {'password': 'injected'}}],
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.kv_version, before)
+
+    def test_a_metadata_only_edit_still_needs_only_change(self):
+        """
+        The point of the permission split. Withholding `rotate` must not also
+        withhold renaming, retagging, or adjusting a rotation interval.
+        """
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
+
+        response = self.client.patch(
+            self.detail_url, {'description': 'renamed'}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_holding_rotate_permits_the_write(self):
+        self.add_permissions(
+            'netbox_openbao.view_credential',
+            'netbox_openbao.change_credential',
+            'netbox_openbao.rotate_credential',
+        )
+        before = self.credential.kv_version
+
+        response = self.client.patch(
+            self.detail_url, {'secret_data': {'password': 'authorised'}}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.credential.refresh_from_db()
+        self.assertGreater(self.credential.kv_version, before)
+
+    def test_a_constrained_rotate_permission_is_honoured(self):
+        """`restrict()` rather than `has_perm()`, so constraints apply."""
+        from core.models import ObjectType
+
+        self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.change_credential')
+        constrained = ObjectPermission(
+            name='rotate lab only',
+            actions=['rotate'],
+            constraints={'policy__slug': 'lab-only-nothing-matches'},
+        )
+        constrained.save()
+        constrained.users.add(self.user)
+        constrained.object_types.add(ObjectType.objects.get_for_model(Credential))
+        before = self.credential.kv_version
+
+        response = self.client.patch(
+            self.detail_url, {'secret_data': {'password': 'injected'}}, format='json', **self.header
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.kv_version, before)
+
+
+class AuditLogDynamicFieldsTest(APITestCase):
+    """
+    NetBox's `BaseViewSet` passes `fields`/`omit` down to the serializer.
+
+    A plain DRF `ModelSerializer` does not accept them, so `?brief=true`,
+    `?fields=`, and `?omit=` each raised
+    `TypeError: Field.__init__() got an unexpected keyword argument 'fields'`
+    — a 500 on three ordinary query modes. Invisible while the viewset was
+    DRF's own `ReadOnlyModelViewSet`, because nothing passed the arguments;
+    adopting `NetBoxReadOnlyModelViewSet` to get constraint enforcement is what
+    started passing them.
+    """
+
+    def setUp(self):
+        super().setUp()
+        backends.BACKENDS['openbao'] = FakeBackend
+        FakeBackend.reset()
+        self.addCleanup(lambda: backends.BACKENDS.__setitem__('openbao', OpenBaoBackend))
+
+        engine = SecretEngine.objects.create(
+            name='Primary', slug='primary', api_url='https://bao.example.net:8200', is_default=True,
+        )
+        policy = CredentialPolicy.objects.create(
+            name='Lab', slug='lab', engine=engine, openbao_policy='netbox-lab',
+        )
+        credential = Credential(
+            name='switch-login',
+            credential_type=CredentialTypeChoices.TYPE_PASSWORD,
+            policy=policy,
+            engine=engine,
+        )
+        write_material(credential, {'password': SECRET})
+
+        self.entry = CredentialAccessLog.objects.first()
+        self.list_url = reverse('plugins-api:netbox_openbao-api:credentialaccesslog-list')
+        self.detail_url = reverse(
+            'plugins-api:netbox_openbao-api:credentialaccesslog-detail', kwargs={'pk': self.entry.pk}
+        )
+        self.add_permissions('netbox_openbao.view_credentialaccesslog')
+
+    def test_brief_mode(self):
+        response = self.client.get(f'{self.list_url}?brief=true', **self.header)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.data['results'][0]), {'id', 'url', 'display', 'action', 'timestamp'})
+
+    def test_explicit_fields(self):
+        response = self.client.get(f'{self.list_url}?fields=id,action', **self.header)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.data['results'][0]), {'id', 'action'})
+
+    def test_omit(self):
+        response = self.client.get(f'{self.list_url}?omit=reason', **self.header)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('reason', response.data['results'][0])
+
+    def test_detail_supports_them_too(self):
+        response = self.client.get(f'{self.detail_url}?fields=id', **self.header)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.data), {'id'})
+
+    def test_no_query_mode_returns_material(self):
+        for qs in ('', '?brief=true', '?fields=message,reason', '?omit=id'):
+            response = self.client.get(self.list_url + qs, **self.header)
+            self.assertNotIn(SECRET, response.content.decode(), qs)
+
+
+class DeletionOrderingTest(TransactionTestCase):
+    """
+    Destroying material is irreversible; a transaction is not.
+
+    So the destroy must happen **after** the row's deletion commits. Doing it
+    in `pre_delete` put the irreversible half first: a later failure in the
+    same transaction restored the row and left it pointing at material that no
+    longer existed. `perform_bulk_destroy()` puts N deletions in one
+    transaction, so one failure at the end did that to every credential before
+    it.
+
+    A `TransactionTestCase` rather than the usual `TestCase`, because the
+    behaviour under test *is* commit and rollback. `TestCase` wraps each test
+    in an atomic block it never commits, so `transaction.on_commit()` callbacks
+    would never fire and this suite would pass while asserting nothing.
+    """
+
+    def setUp(self):
+        super().setUp()
+        backends.BACKENDS['openbao'] = FakeBackend
+        FakeBackend.reset()
+        self.addCleanup(lambda: backends.BACKENDS.__setitem__('openbao', OpenBaoBackend))
+
+        self.engine = SecretEngine.objects.create(
+            name='Primary', slug='primary', api_url='https://bao.example.net:8200', is_default=True,
+        )
+        self.policy = CredentialPolicy.objects.create(
+            name='Lab', slug='lab', engine=self.engine, openbao_policy='netbox-lab',
+        )
+        self.credential = self._make('doomed', SECRET)
+        self.path = self.credential.path
+
+    def _make(self, name, password):
+        credential = Credential(
+            name=name,
+            credential_type=CredentialTypeChoices.TYPE_PASSWORD,
+            policy=self.policy,
+            engine=self.engine,
+        )
+        write_material(credential, {'password': password})
+        credential.refresh_from_db()
+        return credential
+
+    def test_a_committed_delete_destroys_the_material(self):
+        self.credential.delete()
+
+        self.assertNotIn(self.path, FakeBackend.store)
+
+    def test_a_rolled_back_delete_leaves_the_material_intact(self):
+        """
+        The regression this ordering exists for. The row survives the rollback,
+        so its material must survive with it — a restored row pointing at a
+        destroyed secret is unrecoverable, and every consumer of it fails.
+        """
+        # Captured first: Django's Collector sets `instance.pk = None` on
+        # delete(), and does not put it back when the transaction rolls back.
+        pk = self.credential.pk
+
+        with self.assertRaises(RuntimeError):
+            with transaction.atomic():
+                self.credential.delete()
+                raise RuntimeError('something later in the same transaction failed')
+
+        self.assertTrue(
+            Credential.objects.filter(pk=pk).exists(),
+            'The row should have been restored by the rollback.',
+        )
+        self.assertIn(
+            self.path, FakeBackend.store,
+            'The material was destroyed for a deletion that never committed.',
+        )
+        self.assertEqual(FakeBackend(self.engine).read(self.path), {'password': SECRET})
+
+    def test_a_partially_failed_bulk_delete_destroys_nothing(self):
+        """
+        One transaction, several rows. A failure part-way through must not have
+        already destroyed the material of the ones that came first.
+        """
+        second = self._make('also-doomed', 'second-secret')
+
+        with self.assertRaises(RuntimeError):
+            with transaction.atomic():
+                self.credential.delete()
+                second.delete()
+                raise RuntimeError('the last one failed')
+
+        self.assertEqual(Credential.objects.count(), 2)
+        self.assertIn(self.path, FakeBackend.store)
+        self.assertIn(second.path, FakeBackend.store)
+
+    def test_the_deletion_is_audited_without_a_dangling_foreign_key(self):
+        """
+        By the time the destroy runs the row is gone, so the audit entry must
+        record it by snapshot rather than by foreign key — linking would raise
+        a deferred violation at commit and lose the record for the deletion it
+        exists to capture.
+        """
+        uuid = self.credential.uuid
+        self.credential.delete()
+
+        entry = CredentialAccessLog.objects.filter(action='delete', success=True).first()
+        self.assertIsNotNone(entry)
+        self.assertIsNone(entry.credential_id)
+        self.assertEqual(entry.credential_uuid_snapshot, uuid)
+        self.assertEqual(entry.credential_name_snapshot, 'doomed')
+        self.assertNotIn(SECRET, entry.message)

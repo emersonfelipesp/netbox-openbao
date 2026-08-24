@@ -83,9 +83,28 @@ AppRole. Three independent layers must pass:
 2. The policy's group gate.
 3. The OpenBao policy reached through that tier's AppRole.
 
-Layer 3 is what makes layers 1 and 2 survivable. A NetBox-side permission bug
-on `prod-core` credentials still cannot read them, because OpenBao's own policy
-refuses the AppRole the request is carrying.
+**What layer 3 does and does not do.** OpenBao authenticates the *plugin*, not
+the person. The backend selects the AppRole from the credential's own policy,
+so if a NetBox authorization bug hands someone a `prod-core` credential, the
+read is made with the `prod-core` AppRole — the identity that is *supposed* to
+read that path — and OpenBao allows it.
+
+Per-tier AppRoles are therefore **not** a re-authorization of NetBox users, and
+they do not contain a NetBox permission or group-gate failure on a tier whose
+AppRole this instance holds. An earlier version of this page said they did.
+What they buy is blast radius, and that is worth having:
+
+- A leaked SecretID reads only what its tier's policy grants, not the estate.
+- A tier whose SecretID was never delivered to a given NetBox is unreadable
+  *from* that NetBox, whatever NetBox itself decides. That is a real
+  containment boundary, and it is the argument for keeping the most sensitive
+  tier off a shared instance.
+- OpenBao's audit device attributes each read to a specific tier rather than to
+  one estate-wide identity.
+- If tiers are given **separate mounts or path prefixes**, a bug that reaches
+  across them fails at OpenBao. With the single shared prefix documented here,
+  it does not — the paths are UUID-derived and every tier's policy covers all
+  of them.
 
 Layer 2 is enforced in `services.enforce_policy_access()`, which is the
 chokepoint **every** surface goes through — the REST actions, the full-page UI
@@ -162,10 +181,17 @@ is explicit: the backend write happens inside the atomic block, the written
 path is recorded, and the enclosing `except` deletes the orphaned path before
 re-raising.
 
-If the compensating delete itself fails, it is logged at ERROR and
-`CredentialVerifyJob` reports the residue as an orphan on its next pass. The
-`managed_by: netbox-openbao` custom metadata is what lets it recognise material
-under the plugin's prefix that NetBox no longer has a row for.
+If the compensating delete itself fails, it is logged at ERROR with the string
+`ORPHANED SECRET`, naming the engine and path. `CredentialVerifyJob` cannot find it. That job iterates **existing credential
+rows** and asks whether each one's material is still there — so it detects the
+opposite failure (a row whose secret is missing) and is blind to this one,
+where the secret is present and the row is not. Reconciling in that direction
+means listing the mount for `managed_by: netbox-openbao` material with no
+matching row, which the plugin does not do yet.
+
+The `managed_by: netbox-openbao` custom metadata is written on every credential
+precisely so that walk is possible; the job that would perform it is not
+written yet. Alert on the log line.
 
 Deleting a `Credential` destroys its material via a `pre_delete` signal, so
 removing a row never leaves a readable secret behind on the mount.

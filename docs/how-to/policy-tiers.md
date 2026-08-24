@@ -1,9 +1,11 @@
 # Set up a policy tier
 
-A `CredentialPolicy` with its own AppRole is the layer a NetBox-side permission
-bug cannot get past. A `CredentialPolicy` without one is a label.
+A `CredentialPolicy` with its own AppRole bounds what a leaked credential
+reaches and what a given NetBox can read at all. A `CredentialPolicy` without
+one is a label.
 
-This walks through making the difference real.
+This walks through making the difference real — and is precise about what the
+difference is, because it is easy to overstate.
 
 ## What a tier is
 
@@ -20,8 +22,41 @@ flowchart LR
     P3 -->|fail| Z["502, scrubbed"]
 ```
 
-Layers 1 and 2 are NetBox's. Layer 3 is not — which is what makes the first two
-survivable.
+Layers 1 and 2 are NetBox's. Layer 3 is OpenBao's — but read the next section
+before treating it as a backstop for the other two.
+
+!!! danger "Layer 3 does not re-authorize the user"
+
+    OpenBao authenticates the **plugin**, not the person. `get_backend()`
+    selects the AppRole from the credential's *own* policy, so if a NetBox
+    authorization bug hands someone a `prod-core` credential, the read is made
+    with the `prod-core` AppRole — the identity that is supposed to read that
+    path — and OpenBao allows it.
+
+    An earlier version of this page said a tier AppRole was "a layer a NetBox
+    permission bug cannot pass" and that it made the NetBox gates
+    "survivable". That was wrong in the same way the broker-mode claim was
+    wrong once, and it matters for the same reason: an operator who believes it
+    may relax something else on the strength of it.
+
+    **What per-tier AppRoles actually buy**, all of it real:
+
+    - A leaked SecretID reads only what its tier's policy grants, not the
+      estate. That covers host compromise, a stolen backup, a logged
+      environment, and an over-broad `EnvironmentFile`.
+    - A tier whose SecretID was **never delivered** to a given NetBox is
+      unreadable *from* that NetBox, whatever NetBox itself decides. That is a
+      genuine containment boundary and the argument for keeping your most
+      sensitive tier off a shared instance.
+    - OpenBao's audit device attributes each read to a specific tier rather
+      than to one estate-wide identity.
+    - If tiers are given **separate mounts or path prefixes**, a bug that
+      reaches across them fails at OpenBao. With one shared prefix it does not:
+      paths are UUID-derived and every tier's policy covers all of them.
+
+    That last point is the lever. If you want OpenBao to express the boundary
+    rather than only to bound a leak, give each tier its own `SecretEngine`
+    pointing at its own `kv_mount`, and scope each policy to that mount.
 
 ## 1. Create the OpenBao policy and AppRole
 
@@ -75,12 +110,15 @@ Apply to `netbox.service` **and** `netbox-rq.service`, then restart both.
 !!! danger "Deliver the SecretIDs separately"
 
     Reusing one AppRole across tiers collapses layer 3 entirely. So does
-    putting every tier's SecretID in one file that one compromise reads.
+    putting every tier's SecretID in one file that one compromise reads — the
+    blast-radius argument above is the *only* thing layer 3 gives you, and both
+    of those give it away.
 
     If `prod-core`'s SecretID is only ever present on the host that needs it —
-    or is only mounted into the workload that needs it — then a NetBox
-    permission bug on a `prod-core` credential fails at OpenBao regardless of
-    what NetBox decided.
+    or is only mounted into the workload that needs it — then a NetBox that
+    never received it cannot read `prod-core` at all, whatever its own
+    authorization decides. A NetBox that *did* receive it is not protected by
+    OpenBao from its own permission bugs; that is what layers 1 and 2 are for.
 
 ## 3. Create the tier in NetBox
 
@@ -177,8 +215,9 @@ a delete destroys material rather than exposing it.
 
 ## 5. Verify the separation is real
 
-The test that matters is not "can the right person read it" — it is **"does the
-wrong AppRole fail?"**
+The test that matters is not "can the right person read it" — it is **"does an
+instance without this tier's AppRole fail?"** That is the containment property
+layer 3 actually provides.
 
 Temporarily unset the tier's SecretID and restart:
 
