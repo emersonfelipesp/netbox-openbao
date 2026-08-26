@@ -4,7 +4,7 @@ Broker mode: talk to a service that holds the AppRole, instead of holding it.
 The plugin normally authenticates to OpenBao directly, which means the NetBox
 host possesses credentials able to read production secret material. In broker
 mode it instead presents a **client certificate** to
-[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker),
+[`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker),
 which holds the AppRole and answers on NetBox's behalf. NetBox keeps something
 that lets it *ask*; the broker keeps the thing that can actually *read*.
 

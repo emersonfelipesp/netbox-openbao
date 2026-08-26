@@ -13,19 +13,25 @@ which passes it to the backend and drops it.
 
 from django import forms
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
 from netbox.context import current_request
 from netbox.forms import NetBoxModelFilterSetForm, NetBoxModelForm, OrganizationalModelForm, PrimaryModelForm
 from users.models import Group
 from utilities.exceptions import AbortRequest
-from utilities.forms import GenericObjectFormMixin
 from utilities.forms.fields import CommentField, DynamicModelChoiceField, DynamicModelMultipleChoiceField, SlugField
-from utilities.forms.fields.generic import GenericObjectChoiceField
 from utilities.forms.rendering import FieldSet
+
+from netbox_openbao.compat import (
+    HAS_GENERIC_OBJECT_FIELD,
+    GenericObjectChoiceField,
+    GenericObjectFormMixin,
+)
 
 from .backends.exceptions import OpenBaoError
 from .choices import (
+    AccessActionChoices,
     AuthMethodChoices,
     CredentialStatusChoices,
     CredentialTypeChoices,
@@ -37,7 +43,7 @@ from .config import get_config
 from .models import Credential, CredentialAssignment, CredentialPolicy, CredentialTypeSchema, SecretEngine
 from .secrets.generators import generate_ssh_keypair
 from .secrets.registry import credential_type_choices, get_schema
-from .services import stage_material, store_credential
+from .services import enforce_update_access, stage_material, store_credential
 from .utils import assignable_content_types, get_default_engine
 
 __all__ = (
@@ -289,12 +295,47 @@ class CredentialForm(PrimaryModelForm):
         Backend failures become `AbortRequest`, which NetBox renders as a form
         error rather than a 500.
         """
-        payload = getattr(self, 'secret_payload', None)
-        if not payload:
-            return super().save(*args, **kwargs)
-
         request = current_request.get()
         user = getattr(request, 'user', None) if request else None
+        payload = getattr(self, 'secret_payload', None)
+
+        # Captured before super().save() assigns a primary key.
+        is_create = self.instance.pk is None
+
+        if not is_create:
+            # Gate every edit of an existing credential against the tier it is
+            # on *now*. Not only the material-bearing ones: `policy` is an
+            # editable field, so an edit that changes nothing else could
+            # otherwise move a credential to a tier the operator is in and make
+            # it revealable to them. `self.instance` is no help here —
+            # ModelForm._post_clean() has already written cleaned_data onto it
+            # — so the committed row is re-read; see enforce_update_access.
+            #
+            # Raised as AbortRequest rather than PermissionDenied so
+            # ObjectEditView renders it as a form error, the way a backend
+            # failure already is, instead of replacing a half-completed edit
+            # with Django's bare 403 page.
+            try:
+                enforce_update_access(
+                    self.instance, user, AccessActionChoices.ACTION_WRITE, request=request,
+                )
+            except PermissionDenied as exc:
+                raise AbortRequest(str(exc)) from None
+
+            # An edit carrying material is a rotation whatever the form calls
+            # it, so it needs `rotate_credential` and not merely `change`.
+            # Covers both branches below, including the staged one. Resolved
+            # with restrict() so ObjectPermission constraints apply, and
+            # against the committed row for the same reason as above.
+            if payload and not Credential.objects.restrict(user, 'rotate').filter(
+                pk=self.instance.pk
+            ).exists():
+                raise AbortRequest(
+                    'Replacing secret material requires the rotate permission on this credential.'
+                )
+
+        if not payload:
+            return super().save(*args, **kwargs)
 
         if self.cleaned_data.get('stage_rotation') and self.instance.pk:
             # Save the non-secret edits first, then stage the material. The two
@@ -312,7 +353,31 @@ class CredentialForm(PrimaryModelForm):
         def persist(metadata):
             for field, value in metadata.items():
                 setattr(self.instance, field, value)
-            return super(CredentialForm, self).save(*args, **kwargs)
+            saved = super(CredentialForm, self).save(*args, **kwargs)
+
+            # NetBox's ObjectEditView performs this same check *after*
+            # form.save() returns, and raises PermissionsViolation — which
+            # rolls the row back while leaving the OpenBao write stranded,
+            # because by then `store_credential` has already returned and its
+            # compensator will never run. Doing it here puts it inside the
+            # compensated region.
+            #
+            # Which permissions the *result* must satisfy. A create is governed
+            # by `add` — supplying the initial material is part of creating the
+            # credential, which is why `rotate` is not required there and is
+            # not required by the REST create either. An edit that replaces
+            # material is a rotation, and the destination is checked as well as
+            # the source: moving a credential into a tier the operator may not
+            # rotate would otherwise write the new material through that tier.
+            actions = ('add',) if is_create else ('change', 'rotate')
+            for action in actions:
+                if not Credential.objects.restrict(user, action).filter(pk=saved.pk).exists():
+                    raise AbortRequest(
+                        'You do not have permission to leave this credential in that state. '
+                        f'The {action} permission does not cover the result of this '
+                        f'{"creation" if is_create else "edit"}.'
+                    )
+            return saved
 
         try:
             credential, _version = store_credential(
@@ -361,22 +426,49 @@ class CredentialAssignmentForm(GenericObjectFormMixin, NetBoxModelForm):
     """
     Assign a credential to an object.
 
-    Uses 4.7's `GenericObjectChoiceField`, which renders the content-type
-    selector and the API-backed object selector as one field and re-renders
-    the object selector over HTMX when the type changes.
+    On 4.7 this is one field: `GenericObjectChoiceField` renders the
+    content-type selector and the API-backed object selector together and
+    re-renders the object half over HTMX when the type changes.
+
+    4.6 has no such field, so it declares the two halves separately and binds
+    them in `clean()`. The result is the same assignment; what is lost is the
+    HTMX re-render, so the object selector on 4.6 lists every object of the
+    chosen type rather than narrowing as you pick. That is a worse form, not a
+    different outcome, and it is confined to this class.
     """
 
     credential = DynamicModelChoiceField(queryset=Credential.objects.all())
-    assigned_object = GenericObjectChoiceField(
-        content_type_queryset=ContentType.objects.none(),
-        label=_('Object'),
-        selector=True,
-        hx_target_id='assignment',
+
+    if HAS_GENERIC_OBJECT_FIELD:
+        assigned_object = GenericObjectChoiceField(
+            content_type_queryset=ContentType.objects.none(),
+            label=_('Object'),
+            selector=True,
+            hx_target_id='assignment',
+        )
+    else:
+        assigned_object_type = forms.ModelChoiceField(
+            queryset=ContentType.objects.none(),
+            label=_('Object type'),
+        )
+        assigned_object_id = forms.IntegerField(
+            label=_('Object ID'),
+            help_text=_('Numeric ID of the object this credential belongs to.'),
+        )
+
+    _OBJECT_FIELDS = (
+        ('assigned_object',) if HAS_GENERIC_OBJECT_FIELD
+        else ('assigned_object_type', 'assigned_object_id')
     )
 
+    # `html_id` is 4.7-only, and it exists solely to give the HTMX re-render a
+    # target — so it is conditional on exactly the same thing the field is.
+    # There is nothing on 4.6 for it to address.
+    _ASSIGNMENT_FIELDSET_KWARGS = {'html_id': 'assignment'} if HAS_GENERIC_OBJECT_FIELD else {}
+
     fieldsets = (
-        FieldSet('credential', 'assigned_object', 'purpose', 'is_primary', 'description',
-                 name=_('Assignment'), html_id='assignment'),
+        FieldSet('credential', *_OBJECT_FIELDS, 'purpose', 'is_primary', 'description',
+                 name=_('Assignment'), **_ASSIGNMENT_FIELDSET_KWARGS),
         FieldSet('tags', name=_('Tags')),
     )
 
@@ -387,8 +479,44 @@ class CredentialAssignmentForm(GenericObjectFormMixin, NetBoxModelForm):
     def __init__(self, *args, **kwargs):
         # Evaluated per-instantiation so a change to `assignable_models` in
         # PLUGINS_CONFIG takes effect on restart without a code change.
-        self.base_fields['assigned_object'].content_type_queryset = assignable_content_types()
+        if HAS_GENERIC_OBJECT_FIELD:
+            self.base_fields['assigned_object'].content_type_queryset = assignable_content_types()
+        else:
+            self.base_fields['assigned_object_type'].queryset = assignable_content_types()
         super().__init__(*args, **kwargs)
+
+        if not HAS_GENERIC_OBJECT_FIELD and self.instance.pk:
+            self.fields['assigned_object_type'].initial = self.instance.assigned_object_type_id
+            self.fields['assigned_object_id'].initial = self.instance.assigned_object_id
+
+    def clean(self):
+        """Bind the two 4.6 halves onto the instance, and reject a dangling ID.
+
+        The type queryset already enforces `assignable_models`; what it cannot
+        check is that the *object* exists. Without this, a typo'd ID would
+        create an assignment pointing at nothing — which the reveal path would
+        later fail on, a long way from the form that accepted it.
+        """
+        cleaned = super().clean()
+        if HAS_GENERIC_OBJECT_FIELD:
+            return cleaned
+
+        object_type = cleaned.get('assigned_object_type')
+        object_id = cleaned.get('assigned_object_id')
+        if not object_type or object_id is None:
+            return cleaned
+
+        model = object_type.model_class()
+        if model is None or not model.objects.filter(pk=object_id).exists():
+            raise forms.ValidationError({
+                'assigned_object_id': _(
+                    'No %(model)s with ID %(pk)s exists.'
+                ) % {'model': object_type.name, 'pk': object_id},
+            })
+
+        self.instance.assigned_object_type = object_type
+        self.instance.assigned_object_id = object_id
+        return cleaned
 
 
 class CredentialAssignmentFilterForm(NetBoxModelFilterSetForm):

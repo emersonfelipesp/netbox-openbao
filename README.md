@@ -71,8 +71,10 @@ test in `netbox_openbao/tests/test_security.py`:
   prefetch, a link scanner, or a history replay.
 - **No auth material in the database.** RoleIDs and SecretIDs come from the
   process environment, or a file it points at.
-- **Per-tier AppRoles.** A NetBox-side permission bug still cannot read material
-  the tier's OpenBao policy does not grant.
+- **Per-tier AppRoles**, so a leaked SecretID reads only its own tier and a tier
+  whose SecretID was never delivered to an instance is unreadable from it. This
+  bounds blast radius; it does not re-authorize the NetBox user, and the
+  documentation is careful about the difference.
 - **Backend exceptions carry no server text.** An OpenBao 403 body can
   enumerate policy rules; it never reaches a log, a traceback, or a response.
 - **Every access is audited** — who, when, from where, and whether it
@@ -88,7 +90,7 @@ test in `netbox_openbao/tests/test_security.py`:
 | Redis | 6+ |
 | OpenBao | 2.6.x, KV v2 mount |
 | HashiCorp Vault | supported as an alternative backend — see below |
-| Broker mode | optional; needs [`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker) |
+| Broker mode | optional; needs [`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker) |
 
 NetBox 4.7 is required deliberately rather than incidentally: it replaced
 `ipam.Service`'s `protocol`/`ports` with `port_mappings` and moved the service's
@@ -138,7 +140,8 @@ NETBOX_BAO_PRIMARY_SECRET_ID_FILE=/run/secrets/bao-secret-id
 ```
 
 Full detail in [`docs/installation.md`](docs/installation.md) and
-[`docs/configuration.md`](docs/configuration.md).
+[`docs/configuration.md`](docs/configuration.md), or on the documentation site:
+<https://emersonfelipesp.github.io/netbox-openbao/>.
 
 ## Using it
 
@@ -171,7 +174,7 @@ is verified rather than claimed.
 ## Broker mode, and what it is honestly worth
 
 A third backend, `broker`, points an engine at
-[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker)
+[`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker)
 instead of at OpenBao. NetBox then holds a **client certificate** that lets it
 *ask*, and the broker holds the AppRole that can actually *read*.
 
@@ -206,7 +209,9 @@ The OpenBao path is UUID-derived and immutable
 (`<prefix>/credentials/<uuid>`). A path derived from the object graph would
 break the first time a credential is renamed or reassigned, and a broken path
 is an orphaned secret nobody can find. Discovery instead comes from KV v2
-`custom_metadata`, which also lets the health job spot orphans.
+`custom_metadata`, which carries the credential's NetBox identity, type,
+policy, and assignments, so tooling outside NetBox can list the mount and
+filter on them.
 
 ## Roadmap
 
@@ -217,7 +222,7 @@ the background jobs, and staged rotation (write, verify, promote — never break
 running access).
 
 Also shipped since: the
-[Ansible lookup plugin](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-ansible)
+[Ansible lookup plugin](https://github.com/emersonfelipesp/netbox-openbao-ansible)
 and [broker mode](#broker-mode-and-what-it-is-honestly-worth), whose earlier
 description here — "so a NetBox compromise is not a secret compromise" —
 claimed more than the design delivers and has been corrected above.
@@ -252,7 +257,17 @@ docker compose -f docker-compose.dev.yml up -d
 ```
 
 See [`docs/development.md`](docs/development.md) for running the suite against
-real NetBox 4.7 and a live OpenBao dev server.
+real NetBox 4.7 and a live OpenBao dev server, and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for what a change is expected to bring
+with it.
+
+The documentation site builds from the checkout with no package install and no
+NetBox — `mkdocstrings` reads the source statically:
+
+```bash
+pip install '.[docs]'
+mkdocs serve
+```
 
 ## License
 

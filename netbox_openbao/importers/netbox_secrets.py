@@ -184,14 +184,15 @@ def import_secrets(sources, engine, fallback_policy, *, dry_run=False, map_roles
     Copy `sources` into OpenBao, leaving `netbox-secrets` untouched.
 
     Args:
-        sources: Iterable of `SourceSecret`.
-        engine: `SecretEngine` to write to.
-        fallback_policy: `CredentialPolicy` everything lands on unless
+        sources (Iterable[SourceSecret]): The rows to copy.
+        engine (SecretEngine): The engine to write to.
+        fallback_policy (CredentialPolicy): The tier everything lands on unless
             `map_roles` is set.
-        dry_run: Report what would happen and write nothing — including the
+        dry_run (bool): Report what would happen and write nothing — including the
             inferred type per secret, which is what an operator most needs to
             check before committing.
-        map_roles: Create a policy per `netbox-secrets` role. See `_policy_for`.
+        map_roles (bool): Create a policy per `netbox-secrets` role. See
+            `_policy_for`.
     """
     result = ImportResult()
     policy_cache = {}

@@ -1,0 +1,96 @@
+---
+name: CI
+
+# Pull-request gate for GitHub.
+#
+# Deliberately the same checks as `.gitea/workflows/ci.yml`, which runs on a
+# self-hosted runner. Two files rather than one because the runner labels and
+# the availability of network-fetched actions differ; if you change a check in
+# one, change it in the other.
+#
+# Scope: static checks, packaging, and the documentation build. The functional
+# suite needs a full NetBox 4.7 install plus PostgreSQL 15+ (with ltree),
+# Redis 6+, and an OpenBao dev server — see `docs/development.md` for running
+# it against the real stack with `docker-compose.dev.yml`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: netbox-openbao-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Static checks and packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the tooling
+        run: python -m pip install --upgrade pip ruff build
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Compile all sources
+        run: python -m compileall -q netbox_openbao
+
+      - name: Build the distribution
+        run: python -m build
+
+      - name: Assert no model field can hold secret material
+        run: |
+          # The dependency-free restatement of the central claim in
+          # netbox_openbao/tests/test_security.py, for a runner that cannot
+          # stand up NetBox. The forbidden-token list lives in the script and
+          # is imported by that test, so the two cannot drift — an earlier
+          # inline copy here checked three of the five tokens and only plain
+          # assignments, so an annotated field or `secret_data` would have
+          # passed every check this workflow advertised.
+          python scripts/check_no_secret_fields.py
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the documentation dependencies
+        # The package itself is deliberately NOT installed. mkdocstrings reads
+        # the source statically through griffe and never imports the module, so
+        # the reference builds from the checkout alone — which also means the
+        # build does not need NetBox, and cannot start passing for the wrong
+        # reason because something happened to be importable.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'mkdocs-material>=9.5' 'mkdocstrings[python]>=0.26' \
+                                'mkdocs-gen-files>=0.5' 'mkdocs-literate-nav>=0.6'
+
+      - name: Build the site
+        run: mkdocs build --strict

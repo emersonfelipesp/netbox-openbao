@@ -87,6 +87,36 @@ python manage.py makemigrations netbox_openbao --check --dry-run   # CI gate
 ruff check .
 ```
 
+## Documentation
+
+The site is Material for MkDocs. It builds from the checkout with **no package
+install and no NetBox**: `mkdocstrings` reads the source through `griffe`,
+which parses it statically and never imports it.
+
+```bash
+pip install '.[docs]'
+mkdocs serve          # http://127.0.0.1:8000, live reload
+mkdocs build --strict # what CI runs; warnings are errors
+```
+
+`--strict` is not decoration. It is what catches a broken cross-reference, a
+nav entry pointing at a file that does not exist, and — because griffe warns on
+a documented parameter with no type anywhere — a docstring that has drifted
+from its signature.
+
+Two things are generated rather than written:
+
+- `docs/reference/**` — one page per module, produced by
+  `scripts/gen_ref_pages.py` walking the package. A new module appears in the
+  reference the moment it exists, and a deleted one disappears with it.
+  `migrations/` and `tests/` are excluded.
+- `docs/reference/SUMMARY.md` — the reference's own nav, consumed by
+  `mkdocs-literate-nav`. Its links are relative to `reference/`, so they must
+  **not** carry a `reference/` prefix.
+
+Everything else is listed explicitly in `mkdocs.yml`'s `nav`. A new page that is
+not listed there is built but unreachable.
+
 ## Layout
 
 ```
@@ -104,6 +134,12 @@ netbox_openbao/
 ├── navigation.py  search.py  signals.py  jobs.py  template_content.py
 └── tests/
 ```
+
+`tests/test_policy_gate.py` is worth knowing about specifically: it asserts each
+authorization gate on **every** surface separately — the REST actions, `PATCH`
+of `secret_data`, the full-page UI reveal, the HTMX reveal, and the UI
+promote/discard. Two real gaps hid in the difference between those surfaces, so
+a test that covers one of them is not evidence about the others.
 
 `services.py` is the chokepoint: everything that handles material goes through
 it, so there is exactly one file to audit for leaks. Views, serializers, and

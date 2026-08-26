@@ -4,7 +4,7 @@
 
 | Component | Version | Why |
 |---|---|---|
-| NetBox | **4.7.0+** | See [Why 4.7 only](#why-47-only) |
+| NetBox | **4.6.0 – 4.7.99** | See [NetBox 4.6 and 4.7](#netbox-46-and-47) |
 | Python | 3.12+ | NetBox 4.7 requires it |
 | PostgreSQL | 15+ **with `ltree`** | NetBox 4.7 backs hierarchical models with ltree |
 | Redis | 6+ | Job queue and the OpenBao token cache |
@@ -112,11 +112,11 @@ NETBOX_BAO_PRIMARY_SECRET_ID_FILE=/run/secrets/bao-secret-id
 
 Optional. Set a `SecretEngine`'s **backend** to `Broker (netbox-openbao-broker)`
 and point its **API URL** at a running
-[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker).
+[`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker).
 NetBox then presents a client certificate to the broker, and the broker holds
 the AppRole. Nothing above the backend abstraction changes.
 
-Read [the broker's threat model](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker#what-this-buys-stated-honestly)
+Read [the broker's threat model](https://github.com/emersonfelipesp/netbox-openbao-broker#what-this-buys-stated-honestly)
 before deploying it. In short: an attacker with code execution in NetBox can
 still *ask* the broker for material and be answered. What changes is that
 stealing the database or the configuration no longer yields vault credentials,
@@ -170,9 +170,10 @@ back as an authorization failure naming the instance's permissions.
 That also disables the rollback compensator. When a credential write succeeds in
 OpenBao and then the NetBox transaction fails, the plugin normally removes what
 it wrote; a broker that refuses the delete turns that into a logged
-`ORPHANED SECRET` for `CredentialVerifyJob` to report. Both postures are
-defensible — just choose deliberately rather than discovering it during a
-cleanup.
+`ORPHANED SECRET` — and nothing will find it afterwards, because
+`CredentialVerifyJob` scans existing rows and this residue has none. Both
+postures are defensible; if you choose `may_delete = false`, alert on that log
+line rather than expecting a job to reconcile it.
 
 ## Using HashiCorp Vault instead
 
@@ -225,16 +226,44 @@ A `healthy` status means the URL, TLS, and authentication all work. `unauthorize
 almost always means the environment variables are missing from the unit that is
 actually running — check the RQ worker as well as the web service.
 
-## Why 4.7 only
+## NetBox 4.6 and 4.7
 
-NetBox 4.7 is a hard floor, not a conservative default:
+Both are supported. This section used to say 4.7 was a hard floor and list four
+reasons; three of them turned out not to be true, and they are worth correcting
+rather than deleting, because the same mistake is easy to repeat.
 
-- `ipam.Service` replaced `protocol` and `ports` with a single `port_mappings`
-  array, and moved its parent to a generic foreign key.
-- Custom permission actions register through `register_model_actions`, which is
-  what gives `reveal` its own assignable, constrainable permission.
-- The declarative `netbox.ui` panel framework replaced hand-written detail
-  templates.
-- `GenericObjectChoiceField` handles the assignment form's generic relation.
+Each name the plugin uses was imported under both releases. **61 of 64 NetBox
+imports, and 29 of 30 `netbox.ui` attributes, are identical.**
 
-Supporting 4.6 would mean branching on every one of these.
+| Claimed 4.7-only | Actually |
+|---|---|
+| `ipam.Service` moved its parent to a generic foreign key | Already true in 4.6 |
+| `register_model_actions` for custom permissions | Present in 4.6 |
+| The declarative `netbox.ui` panel framework | Present in 4.6 |
+| `GenericObjectChoiceField` | **Genuinely 4.7-only** |
+
+So the real differences are four, all handled in `netbox_openbao/compat.py`:
+
+- **Service ports.** 4.7 uses a `port_mappings` array; 4.6 uses `protocol` +
+  `ports`. Quick-add writes whichever the model has.
+- **`Choice`.** 4.7 wraps choice entries in a class carrying a description;
+  4.6 uses plain tuples. Descriptions do not render on 4.6.
+- **`ArrayAttr`.** 4.7 renders list attributes as chips; on 4.6 they are joined
+  into text.
+- **`GenericObjectChoiceField`.** The assignment form uses one combined
+  selector on 4.7 and a separate type + ID pair on 4.6. Same assignment, but
+  the 4.6 object list does not narrow as you choose a type.
+
+Nothing about how secrets are stored, revealed, or audited differs between the
+two.
+
+### One wart, on 4.6 only
+
+`makemigrations --check` is not clean on 4.6. NetBox's own inherited `owner`
+field renders with `related_name='+'` on 4.7 and the default on 4.6, and the
+committed migration can only record one of them.
+
+It is state-only — `related_name` never touches the database, so the migration
+Django wants to generate would produce no SQL — and it does not affect
+`migrate`, which is what installs and upgrades run. Do not run
+`makemigrations` for this plugin on 4.6 and commit the result.

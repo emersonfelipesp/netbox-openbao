@@ -83,9 +83,52 @@ AppRole. Three independent layers must pass:
 2. The policy's group gate.
 3. The OpenBao policy reached through that tier's AppRole.
 
-Layer 3 is what makes layers 1 and 2 survivable. A NetBox-side permission bug
-on `prod-core` credentials still cannot read them, because OpenBao's own policy
-refuses the AppRole the request is carrying.
+**What layer 3 does and does not do.** OpenBao authenticates the *plugin*, not
+the person. The backend selects the AppRole from the credential's own policy,
+so if a NetBox authorization bug hands someone a `prod-core` credential, the
+read is made with the `prod-core` AppRole — the identity that is *supposed* to
+read that path — and OpenBao allows it.
+
+Per-tier AppRoles are therefore **not** a re-authorization of NetBox users, and
+they do not contain a NetBox permission or group-gate failure on a tier whose
+AppRole this instance holds. An earlier version of this page said they did.
+What they buy is blast radius, and that is worth having:
+
+- A leaked SecretID reads only what its tier's policy grants, not the estate.
+- A tier whose SecretID was never delivered to a given NetBox is unreadable
+  *from* that NetBox, whatever NetBox itself decides. That is a real
+  containment boundary, and it is the argument for keeping the most sensitive
+  tier off a shared instance.
+- OpenBao's audit device attributes each read to a specific tier rather than to
+  one estate-wide identity.
+- If tiers are given **separate mounts or path prefixes**, a bug that reaches
+  across them fails at OpenBao. With the single shared prefix documented here,
+  it does not — the paths are UUID-derived and every tier's policy covers all
+  of them.
+
+Layer 2 is enforced in `services.enforce_policy_access()`, which is the
+chokepoint **every** surface goes through — the REST actions, the full-page UI
+reveal, the HTMX reveal, the UI promote and discard, the edit form's material
+write, and `PATCH`/`PUT` of `secret_data`. A refusal is recorded in the access
+log.
+
+It also covers **every** update of an existing credential, not only those
+carrying material. `policy` is a writable field, so a user in one tier's groups
+could otherwise move a credential out of a tier they are not in and into one
+they are — an update with no `secret_data` — and then reveal it. Credential
+paths are UUID-derived under one shared prefix, so the receiving tier's AppRole
+reads the same secret; layers 2 and 3 both fall to one request that never
+touches material. The gate is on the update itself rather than on the `policy`
+field, because anything narrower is a denylist.
+
+That is worth stating precisely, because none of it was always true: the check
+lived in the REST viewset's authorization helper and nowhere else, so a user
+belonging to none of a tier's groups was refused over the API and served the
+same material by the credential page. `PATCH` of `secret_data` bypassed it in
+the other direction — routed by DRF's own `update()`, it never reached the
+helper at all, so the dedicated `rotate` action refused what the ordinary
+update route allowed. `tests/test_policy_gate.py` asserts the gate on each
+surface separately.
 
 A `Credential`'s engine is validated to match its policy's engine. Without
 that, a tier's AppRole could be scoped to one instance while the material sat
@@ -111,6 +154,14 @@ it succeeded. **Never the value.**
 
 - It is append-only and exposed read-only through the API. The same token that
   reveals a secret cannot erase the record of having done so.
+- Its viewset extends `NetBoxReadOnlyModelViewSet`, **not** DRF's
+  `ReadOnlyModelViewSet`. That distinction is load-bearing: NetBox applies
+  object permissions in `BaseViewSet.initial()`, which is the thing that calls
+  `queryset.restrict()`. A viewset outside that hierarchy is still gated on the
+  model-level permission, but silently ignores every *constraint* on the
+  granting ObjectPermission — so a role scoped to one tier was held to its
+  constraint by the UI list view and read the whole estate's log through the
+  API, including credential names, usernames, reveal reasons, and source IPs.
 - It survives deletion of the credential, via name and UUID snapshots.
 - Failures are audited too — a refused reveal is the entry you most want.
 - It is written **synchronously**. The original design deferred it to RQ for
@@ -130,10 +181,17 @@ is explicit: the backend write happens inside the atomic block, the written
 path is recorded, and the enclosing `except` deletes the orphaned path before
 re-raising.
 
-If the compensating delete itself fails, it is logged at ERROR and
-`CredentialVerifyJob` reports the residue as an orphan on its next pass. The
-`managed_by: netbox-openbao` custom metadata is what lets it recognise material
-under the plugin's prefix that NetBox no longer has a row for.
+If the compensating delete itself fails, it is logged at ERROR with the string
+`ORPHANED SECRET`, naming the engine and path. `CredentialVerifyJob` cannot find it. That job iterates **existing credential
+rows** and asks whether each one's material is still there — so it detects the
+opposite failure (a row whose secret is missing) and is blind to this one,
+where the secret is present and the row is not. Reconciling in that direction
+means listing the mount for `managed_by: netbox-openbao` material with no
+matching row, which the plugin does not do yet.
+
+The `managed_by: netbox-openbao` custom metadata is written on every credential
+precisely so that walk is possible; the job that would perform it is not
+written yet. Alert on the log line.
 
 Deleting a `Credential` destroys its material via a `pre_delete` signal, so
 removing a row never leaves a readable secret behind on the mount.
@@ -224,7 +282,7 @@ otherwise land in the back/forward cache and in any saved HTML or screenshot.
 ## Broker mode
 
 An engine set to the `broker` backend reaches OpenBao through
-[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker),
+[`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker),
 which holds the AppRole so this NetBox does not.
 
 **It does not make "NetBox compromise ≠ secret compromise" true.** An attacker

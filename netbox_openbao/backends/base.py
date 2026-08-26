@@ -26,8 +26,8 @@ class SecretBackend(ABC):
     def __init__(self, engine, env_prefix=None):
         """
         Args:
-            engine: The `SecretEngine` describing the instance and mount.
-            env_prefix: Overrides the engine's environment prefix, so a
+            engine (SecretEngine): Describes the instance and the KV mount.
+            env_prefix (str | None): Overrides the engine's environment prefix, so a
                 `CredentialPolicy` tier can authenticate with its own AppRole
                 rather than the engine-wide one.
         """

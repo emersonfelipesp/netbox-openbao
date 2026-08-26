@@ -8,10 +8,13 @@ name: CI
 # dev server, and the untrusted runner provides no services. That suite runs
 # against the real stack via docker-compose.dev.yml — see docs/development.md.
 #
-# Runner: `ci-untrusted-python312` is the estate's label for untrusted plugin
-# CI, served for this repository by the user-scoped `ci-untrusted-emersonfelipesp`
-# runner. It has no service containers and no network-fetched actions, which is
-# why this job uses `uv` from the image rather than `actions/setup-python`.
+# Runner: `ci-untrusted-python312` is a self-hosted label carrying Python 3.12
+# and `uv`. It runs with no service containers and fetches no actions from the
+# network, which is why this job builds its environment with `uv` from the
+# image rather than with `actions/setup-python`.
+#
+# The equivalent job for GitHub pull requests is `.github/workflows/ci.yml`,
+# which runs the same checks on GitHub-hosted runners.
 
 on:
   push:
@@ -68,27 +71,15 @@ jobs:
           set -euo pipefail
           .venv/bin/python -m build
 
-      - name: Assert no secret-bearing field crept onto the model
+      - name: Assert no model field can hold secret material
         shell: bash
         run: |
           set -euo pipefail
-          # A dependency-free restatement of the central claim in
-          # netbox_openbao/tests/test_security.py, so the invariant is still
-          # checked on a runner that cannot stand up NetBox.
-          .venv/bin/python - <<'PY'
-          import ast
-          import sys
-
-          tree = ast.parse(open('netbox_openbao/models/credentials.py').read())
-          forbidden = ('password', 'private', 'passphrase')
-          offenders = []
-          for node in ast.walk(tree):
-              if isinstance(node, ast.Assign):
-                  for target in node.targets:
-                      name = getattr(target, 'id', '')
-                      if any(token in name.lower() for token in forbidden):
-                          offenders.append(name)
-          if offenders:
-              sys.exit(f'Credential gained secret-bearing field(s): {offenders}')
-          print('Credential model carries no secret-bearing field.')
-          PY
+          # The dependency-free restatement of the central claim in
+          # netbox_openbao/tests/test_security.py, for a runner that cannot
+          # stand up NetBox. The forbidden-token list lives in the script and
+          # is imported by that test, so the two cannot drift — an earlier
+          # inline copy here checked three of the five tokens and only plain
+          # assignments, so an annotated field or `secret_data` would have
+          # passed every check this workflow advertised.
+          .venv/bin/python scripts/check_no_secret_fields.py

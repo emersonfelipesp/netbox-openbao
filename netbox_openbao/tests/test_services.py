@@ -244,8 +244,22 @@ class AuditTest(OpenBaoTestCase):
         self.assertEqual(entry.credential_name_snapshot, name)
 
     def test_deleting_a_credential_destroys_its_material(self):
+        """
+        Destruction is deferred to `transaction.on_commit`, so a rolled-back
+        deletion cannot destroy a secret it did not actually remove — see
+        `tests/test_policy_gate.DeletionOrderingTest` for that half.
+
+        `TestCase` wraps every test in an atomic block it never commits, so the
+        callback would otherwise never fire and this assertion would pass by
+        accident under a plugin that had stopped destroying anything at all.
+        `captureOnCommitCallbacks(execute=True)` runs them at the end of the
+        block, which is what makes this test still mean something.
+        """
         path = self.credential.path
-        self.credential.delete()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self.credential.delete()
+
         self.assertNotIn(path, FakeBackend.store)
 
 

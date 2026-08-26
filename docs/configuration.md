@@ -102,13 +102,23 @@ material is returned:
 1. **NetBox object permissions** — `netbox_openbao.reveal_credential`, with
    optional constraints (`{"policy__slug": "lab"}`).
 2. **The policy's group gate** — `CredentialPolicy.groups`, a coarse filter
-   applied in addition to, never instead of, object permissions.
+   applied in addition to, never instead of, object permissions. Enforced in
+   `services.enforce_policy_access()`, so it covers every surface that reaches
+   a credential rather than only the REST API, and a refusal is audited. An
+   empty group list means the tier does not use the gate.
 3. **The OpenBao policy itself** — reached through that tier's AppRole.
 
-The third layer is what makes the first two survivable. A NetBox-side
-permission bug on `prod-core` credentials still cannot read them, because the
-request is routed through the `prod-core` AppRole and OpenBao's own policy
-stops it.
+The third layer bounds **blast radius**, not authorization. OpenBao
+authenticates the plugin, not the person, and the backend picks the AppRole
+from the credential's own policy — so a NetBox bug that hands someone a
+`prod-core` credential makes the read with the `prod-core` AppRole, which is
+authorized for that path. Layer 3 does not re-check the user.
+
+What it does buy: a leaked SecretID reads only its own tier, a tier whose
+SecretID was never delivered to a NetBox is unreadable from it at all, and
+OpenBao's audit attributes each read to a specific tier. Give tiers separate
+mounts if you want path-level containment as well — see
+[the security model](security.md#7-per-tier-approles).
 
 Give each tier a genuinely separate AppRole and deliver its SecretID
 separately. Reusing one AppRole across tiers collapses layer 3 and leaves you

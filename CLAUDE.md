@@ -3,14 +3,29 @@
 A NetBox plugin that keeps **secret material in OpenBao** while **NetBox owns
 credential inventory and relationships**.
 
-Repository: `https://git.nmulti.cloud/emersonfelipesp/netbox-openbao` (Gitea
-only — this repo has no GitHub remote).
+Repository: <https://github.com/emersonfelipesp/netbox-openbao>.
 
 ## Hard constraints
 
-**NetBox 4.7 only** (`min_version = "4.7.0"`, `max_version = "4.7.99"`) and
-**OpenBao 2.6.x**. Do not add 4.6 compatibility shims — 4.7 is a deliberate
-floor, not an accident. See [Verified 4.7 facts](#verified-47-facts).
+**NetBox 4.6 and 4.7** (`min_version = "4.6.0"`,
+`max_version = "4.7.99"`) and **OpenBao 2.6.x**.
+
+This used to read "4.7 only — do not add 4.6 compatibility shims", on the
+stated grounds that `ipam.Service` had changed in two ways. Only one of them
+had. The parent GenericForeignKey was already present in 4.6; just the port
+representation differs. Checked by importing every name the plugin uses under
+both releases rather than by reading release notes: **61 of 64 NetBox imports
+and 29 of 30 `netbox.ui` attributes are identical**, including the whole
+declarative panel framework, `netbox.api.gfk_fields`, `netbox.jobs` and
+`netbox.forms`, all of which the old note assumed were 4.7-only.
+
+The floor matters operationally, which is why it was worth rechecking: the
+estate runs 4.6.5 and `netbox-nms` supports 4.5.8–4.6.99, so a 4.7 floor left
+no version where the two could be installed together.
+
+**Every 4.6/4.7 difference lives in `netbox_openbao/compat.py`** — read its
+docstring before adding a version check anywhere else, and add it there if you
+must add one. See [Verified 4.7 facts](#verified-47-facts).
 
 **Python 3.12+, PostgreSQL 15+ with `ltree`, Redis 6+.**
 
@@ -35,9 +50,11 @@ These were confirmed against the `v4.7.0-beta1` source. Several contradict
 what 4.5/4.6-era plugin documentation says — do not "correct" them back:
 
 1. **`ipam.Service`** replaced `protocol` + `ports` with a single
-   `port_mappings` `ArrayField` of `"tcp/22"` strings, and its parent is a
-   **GenericForeignKey** (`parent_object_type`/`parent_object_id`), not direct
-   Device/VM FKs.
+   `port_mappings` `ArrayField` of `"tcp/22"` strings. Its parent is a
+   **GenericForeignKey** (`parent_object_type`/`parent_object_id`) rather than
+   direct Device/VM FKs — but that half is **also true on 4.6**, contrary to
+   what this list said before. Only the ports differ, and `quickadd` handles
+   both by checking whether the model has `port_mappings`.
 2. **Custom permission actions** register via `Meta.permissions` on the model,
    which NetBox auto-registers through `register_model_actions(model, actions)`
    — note the plural, model-first signature. There is no
@@ -46,14 +63,18 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
    'change', 'delete')`.
 4. **Background jobs** use the `@system_job(interval_minutes)` decorator from
    `netbox.jobs`.
-5. **Detail views are declarative.** NetBox 4.7 replaced hand-written detail
-   templates with `netbox.ui` — `layout.SimpleLayout` plus `panels` and
-   `attrs`. Use `ui/panels.py`, not new templates.
+5. **Detail views are declarative.** `netbox.ui` — `layout.SimpleLayout`
+   plus `panels` and `attrs` — replaces hand-written detail templates. Use
+   `ui/panels.py`, not new templates. Present in 4.6 too; the only attribute
+   this plugin uses that 4.6 lacks is `ArrayAttr`, shimmed in `compat.py`.
 6. The **version gate compares `RELEASE.version`**, which is `"4.7.0"` on
    `4.7.0-beta1` (the `beta1` designation is a separate field), so
    `min_version = "4.7.0"` correctly loads on the current beta.
 7. `GenericObjectChoiceField` / `GenericObjectFormMixin` handle generic-FK
-   form fields.
+   form fields. **4.7 only** — `CredentialAssignmentForm` falls back to a
+   separate type + ID pair on 4.6, which loses the HTMX re-render but produces
+   the same assignment. `FieldSet(html_id=…)` is 4.7-only for the same reason
+   and is passed conditionally.
 8. GFK idiom: `to='contenttypes.ContentType'`, `on_delete=models.PROTECT`,
    `related_name='+'`.
 
@@ -139,6 +160,74 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   If that changes, two policy tiers on the same engine URL could send each
   other's tokens. Do not move auth onto the session.
 
+- **A plain DRF viewset never applies object-permission constraints.** NetBox
+  calls `queryset.restrict()` in `netbox.api.viewsets.BaseViewSet.initial()`, so
+  a viewset built on `rest_framework.viewsets.ReadOnlyModelViewSet` is still
+  gated on the model-level permission by `TokenPermissions` — which is exactly
+  why it looks fine — while every **constraint** on the granting
+  ObjectPermission is silently dropped. `CredentialAccessLogViewSet` was that
+  viewset. Use `NetBoxReadOnlyModelViewSet` for a read-only NetBox endpoint;
+  it composes only the retrieve and list mixins, so append-only survives, and
+  its `CustomFieldsMixin`/`ExportTemplatesMixin`/`ETagMixin` all probe with
+  `hasattr`/`getattr` and tolerate a plain Django model.
+- **DRF runs `initial()` before it resolves the handler**, so a permission
+  failure returns 403 and *masks* the 405 that would prove a route does not
+  exist. A test asserting "the audit log rejects POST" therefore passes for the
+  wrong reason if the user lacks the permission. Assert the absent handler on
+  the viewset structurally, or grant the permission first and then assert 405 —
+  `test_policy_gate` does both.
+- **`rotate` is a permission, and `PATCH` is a rotation.** `PUT`, `PATCH`, and
+  the bulk list endpoint all reach `perform_update()` under
+  `change_credential`; a `secret_data` key there writes a new version. Gating
+  only the dedicated `rotate` action leaves the same write reachable by a
+  different verb. `_require_rotate` resolves it through `restrict()` so
+  constraints apply.
+- **Destroying a secret is irreversible; a transaction is not.** So the destroy
+  goes *after* the commit — `post_delete` plus `transaction.on_commit`, never
+  `pre_delete`. `perform_bulk_destroy()` puts N deletions in one transaction,
+  so a `pre_delete` destroy meant one late failure wiped the material of every
+  credential before it while restoring all their rows. The residue that remains
+  in the other direction (row gone, secret present) is recoverable; that one is
+  not.
+- **`CredentialVerifyJob` cannot find an orphan.** It iterates existing
+  credential rows, so it detects a row whose material is missing and is blind
+  to material whose row is missing. Do not write that it reports orphans — the
+  `ORPHANED SECRET` log line is the only signal until a mount-walking
+  reconciler exists.
+- **NetBox's `BaseViewSet` passes `fields`/`omit` to the serializer** for
+  `?fields=`, `?omit=`, and `?brief=true`. A plain DRF `ModelSerializer` raises
+  `TypeError: Field.__init__() got an unexpected keyword argument 'fields'` —
+  a 500, not a 400. Use `netbox.api.serializers.BaseModelSerializer` even for a
+  non-NetBoxModel.
+- **Do not write that a per-tier AppRole stops a NetBox permission bug.** It
+  does not. `get_backend()` picks the AppRole from the credential's own policy,
+  so a bug that yields a `prod-core` credential reads it with the `prod-core`
+  AppRole — the identity authorized for that path. Per-tier AppRoles bound
+  blast radius: a leaked SecretID reaches only its tier, and a tier whose
+  SecretID was never delivered to an instance is unreadable from it. Claim
+  that, not more. This is the same mistake the broker-mode sentence was.
+- **NetBox mutates the instance before your view code runs.**
+  `ValidatedModelSerializer.validate()` `setattr()`s every validated attribute
+  onto `self.instance` so it can `full_clean()` it, and Django's
+  `ModelForm._post_clean()` calls `construct_instance()`. So by the time
+  `perform_update()` or `form.save()` runs, `instance.<field>` is the
+  **incoming** value, not the stored one. Any authorization decision that has
+  to be made against the *current* state must re-read the committed row —
+  `services.enforce_update_access` does. Getting this wrong is silent: the
+  check runs, passes, and compares the caller against the value they chose.
+- **An authorization check in a view is a check the other four surfaces do not
+  have.** The `CredentialPolicy` group gate lived in
+  `api/views.CredentialViewSet._authorize` and nowhere else, so the web UI
+  served material the API refused. Anything of that shape belongs in
+  `services.py`. Note also that `PATCH`/`PUT` are routed by DRF's own
+  `update()` and never reach a custom action's authorization helper, so a gate
+  applied only in that helper is bypassable by verb.
+- **`netbox_openbao/secrets/` had no `__init__.py`** and worked only as an
+  implicit namespace package. It now has one. A namespace portion inside a
+  regular package merges with any same-named directory another distribution
+  installs, and it is invisible to static tooling — which is how the
+  documentation build found it.
+
 ## Testing
 
 ```bash
@@ -156,7 +245,7 @@ python manage.py test netbox_openbao
 Full procedure in [`docs/development.md`](docs/development.md).
 
 Broker-mode tests need a running
-[`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker)
+[`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker)
 and skip cleanly without one:
 
 ```bash
@@ -250,7 +339,7 @@ live OpenBao 2.6.0, a live Vault, and a live broker. `ruff check` clean, `makemi
   `_KVIntegrationTests`. Never raise a vendor exception, never log material.
   A backend tested only against a different server proves nothing about it.
 - **`BrokerBackend` is a transport swap, not a different store.** It speaks to
-  [`netbox-openbao-broker`](https://git.nmulti.cloud/emersonfelipesp/netbox-openbao-broker),
+  [`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker),
   which holds the AppRole so NetBox does not, and it must stay
   indistinguishable from direct mode above `SecretBackend` — same exception
   types for the same conditions. Three traps:
@@ -273,11 +362,16 @@ live OpenBao 2.6.0, a live Vault, and a live broker. `ruff check` clean, `makemi
 - **Anything touching the reveal path** → re-read
   [`docs/security.md`](docs/security.md) first and make sure
   `tests/test_security.py` still fails when you break the invariant.
-- **A behaviour change** → update `docs/` and this file in the same change.
+- **A behaviour change** → update `docs/` and this file in the same change,
+  and rebuild the site: `pip install '.[docs]' && mkdocs build --strict`. The
+  nav in `mkdocs.yml` is explicit, so a new page that is not listed there is
+  built but unreachable — except under `docs/reference/`, which
+  `scripts/gen_ref_pages.py` generates from the package at build time.
 
-## Workspace policy
+## Contributing
 
-This repo follows the `personal-context` workspace rules: Gitea-first issues
-and PRs through `nms git`, a session journal for multi-window work, and the
-capped adversarial-review gate before merge. See
-[`/root/personal-context/CLAUDE.md`](/root/personal-context/CLAUDE.md).
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request. In
+short: every change that alters behaviour updates `docs/` and this file in the
+same commit, `ruff check .` and `makemigrations --check` must be clean, and a
+change to the reveal, write, or backend paths is expected to come with a test
+that fails when the invariant it protects is broken.

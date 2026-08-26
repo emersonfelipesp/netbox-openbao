@@ -11,7 +11,12 @@ what any view does. There is also no model field for it to fall back to.
 from django.core.exceptions import ValidationError as DjangoValidationError
 from netbox.api.fields import ChoiceField, ContentTypeField
 from netbox.api.gfk_fields import GFKSerializerField
-from netbox.api.serializers import NetBoxModelSerializer, OrganizationalModelSerializer, PrimaryModelSerializer
+from netbox.api.serializers import (
+    BaseModelSerializer,
+    NetBoxModelSerializer,
+    OrganizationalModelSerializer,
+    PrimaryModelSerializer,
+)
 from rest_framework import serializers
 
 from netbox_openbao.choices import (
@@ -185,8 +190,24 @@ class CredentialAssignmentSerializer(NetBoxModelSerializer):
         brief_fields = ('id', 'url', 'display', 'credential', 'purpose')
 
 
-class CredentialAccessLogSerializer(serializers.ModelSerializer):
-    """Read-only. The log is append-only evidence, not an editable object."""
+class CredentialAccessLogSerializer(BaseModelSerializer):
+    """
+    Read-only. The log is append-only evidence, not an editable object.
+
+    `BaseModelSerializer` rather than DRF's `ModelSerializer`, even though
+    `CredentialAccessLog` is a plain Django model with no NetBox features to
+    inherit. NetBox's `BaseViewSet.get_serializer()` passes `fields` and `omit`
+    keyword arguments down for `?fields=`, `?omit=`, and `?brief=true`, and a
+    serializer that does not accept them raises
+    `TypeError: Field.__init__() got an unexpected keyword argument 'fields'`
+    — a 500 on three ordinary query modes, of which only `brief` is obvious
+    enough to have been noticed.
+
+    That was invisible while the viewset was DRF's plain `ReadOnlyModelViewSet`,
+    because nothing was passing the arguments. Moving to
+    `NetBoxReadOnlyModelViewSet` to get object-permission constraints applied
+    is what started passing them.
+    """
 
     url = serializers.HyperlinkedIdentityField(
         view_name='plugins-api:netbox_openbao-api:credentialaccesslog-detail'
@@ -198,9 +219,9 @@ class CredentialAccessLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = CredentialAccessLog
         fields = (
-            'id', 'url', 'display', 'credential', 'credential_name_snapshot', 'credential_uuid_snapshot',
-            'user', 'username_snapshot', 'action', 'source_ip', 'reason', 'request_id', 'success',
-            'message', 'timestamp',
+            'id', 'url', 'display_url', 'display', 'credential', 'credential_name_snapshot',
+            'credential_uuid_snapshot', 'user', 'username_snapshot', 'action', 'source_ip', 'reason',
+            'request_id', 'success', 'message', 'timestamp',
         )
         brief_fields = ('id', 'url', 'display', 'action', 'timestamp')
         read_only_fields = fields

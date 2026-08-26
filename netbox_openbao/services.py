@@ -22,7 +22,7 @@ and internal callers just need `instance.save()`.
 
 import logging
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -37,6 +37,8 @@ __all__ = (
     'build_custom_metadata',
     'delete_material',
     'discard_staged',
+    'enforce_policy_access',
+    'enforce_update_access',
     'promote_staged',
     'stage_material',
     'log_access',
@@ -125,6 +127,86 @@ def log_access(credential, user, action, success=True, reason='', message='', re
 
 
 # ----------------------------------------------------------------------
+# Authorization
+# ----------------------------------------------------------------------
+
+def enforce_policy_access(credential, user, action=None, request=None):
+    """
+    Apply the policy tier's coarse group gate.
+
+    `CredentialPolicy.groups` is documented as authorization layer 2 — applied
+    in addition to object permissions, never instead of them. It lives here,
+    with the rest of the material path, rather than in a view, because there
+    are five surfaces that reach a credential: the REST actions, the full-page
+    UI reveal, the HTMX UI reveal, the UI promote/discard, and the edit form's
+    staged rotation. A gate implemented in one of them is a gate that is
+    missing from the other four.
+
+    It was. The check lived only in `api/views.CredentialViewSet._authorize`,
+    so a user in none of the tier's groups was refused by the API and served
+    by the web UI — which is the drift `CLAUDE.md` warns about, and a
+    disclosure bug rather than an inconsistency.
+
+    An empty group list means the tier does not use the gate, which is the
+    default. `user=None` is an internal caller — a management command, a
+    background job — and there is no group membership to consult.
+    """
+    if user is None or getattr(user, 'is_superuser', False):
+        return
+
+    permitted = list(credential.policy.groups.values_list('pk', flat=True))
+    if not permitted:
+        return
+
+    if user.groups.filter(pk__in=permitted).exists():
+        return
+
+    if action is not None:
+        log_access(
+            credential, user, action, success=False,
+            message='Policy group membership required.', request=request,
+        )
+    raise PermissionDenied(
+        'Your groups are not permitted to access credentials under this policy.'
+    )
+
+
+def enforce_update_access(credential, user, action=None, request=None):
+    """
+    Gate an update against the tier the credential is on **in the database**.
+
+    `enforce_policy_access` reads `credential.policy`, and by the time an
+    update reaches the service layer that attribute is already the *incoming*
+    tier rather than the one the caller has to satisfy. Both layers mutate the
+    instance in place before any of this runs:
+
+    * NetBox's `ValidatedModelSerializer.validate()` `setattr()`s every
+      validated attribute onto `self.instance` so it can `full_clean()` it.
+    * Django's `ModelForm._post_clean()` calls `construct_instance()`.
+
+    That is not a detail — it is the whole bug. `policy` is a writable field,
+    so a caller outside a tier's groups could move a credential to a tier they
+    *are* in and then reveal it, and the paths are UUID-derived under one
+    shared prefix, so the receiving tier's AppRole reads the very same secret.
+    Checking the mutated instance would compare the caller against the tier
+    they chose, which they always satisfy.
+
+    So the committed row is re-read. One indexed query, on an operation that is
+    already writing to two systems.
+    """
+    if credential is None or getattr(credential, 'pk', None) is None:
+        return
+
+    committed = type(credential).objects.filter(pk=credential.pk).select_related('policy').first()
+    if committed is None:
+        # Mid-rollback, or deleted concurrently. There is no tier left to
+        # satisfy, and the update is going to fail on its own.
+        return
+
+    enforce_policy_access(committed, user, action, request=request)
+
+
+# ----------------------------------------------------------------------
 # Metadata
 # ----------------------------------------------------------------------
 
@@ -205,16 +287,19 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
     Persist a credential row and its material as one unit.
 
     Args:
-        persist: Callable taking the extracted metadata dict and returning the
-            saved `Credential`. The REST API passes `serializer.save`; forms
-            and internal callers pass a closure over `instance.save()`.
-        subject: The Credential this operation concerns, used only to identify
-            the audit entry when `persist` itself fails and never returns one.
-        promote: Whether the new version becomes the one consumers are served.
+        persist (Callable[[dict], Credential]): Takes the extracted metadata
+            dict and returns the saved `Credential`. The REST API passes
+            `serializer.save`; forms and internal callers pass a closure over
+            `instance.save()`.
+        subject (Credential | None): The credential this operation concerns,
+            used only to identify the audit entry when `persist` itself fails
+            and never returns one.
+        promote (bool): Whether the new version becomes the one consumers are
+            served.
             False writes it alongside the live version instead — which is the
             whole point of staging, and the reason resolution has to consult
             `live_kv_version` rather than always taking latest.
-        cas: Check-and-set precondition. `0` requires the path not to exist,
+        cas (int | None): Check-and-set precondition. `0` requires the path not to exist,
             which is what stops a create silently overwriting an existing
             secret at a colliding path. Pass the current `kv_version` when
             updating.
@@ -285,9 +370,14 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
                         written_version, path,
                     )
             except OpenBaoError:
+                # Nothing will reconcile this. CredentialVerifyJob iterates
+                # existing credential rows and this residue may have none —
+                # on a failed create the row rolled back with the transaction.
+                # The log line is the only signal; alert on it.
                 logger.error(
-                    'ORPHANED SECRET: wrote version %s at %s but could not roll it back after a failed '
-                    'transaction. CredentialVerifyJob will report it.',
+                    'ORPHANED SECRET: wrote version %s at %s but could not roll it back after a '
+                    'failed transaction. No job will find it: CredentialVerifyJob scans from '
+                    'existing rows. Remove it by hand.',
                     written_version, path,
                 )
         # The transaction has unwound. A create leaves an in-memory object
@@ -348,6 +438,8 @@ def rotate_material(credential, payload, user=None, request=None):
     Uses the recorded `kv_version` as the check-and-set precondition so a
     rotation cannot clobber a concurrent write it never saw.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_ROTATE, request=request)
+
     return write_material(
         credential,
         payload,
@@ -371,6 +463,8 @@ def reveal_material(credential, user, request=None, reason='', version=None):
     of the credential rather than of the user: a policy-mandated reason, and
     the tier's reveal ceiling.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_REVEAL, request=request)
+
     policy = credential.policy
     if policy.require_reason and not (reason or '').strip():
         log_access(
@@ -409,6 +503,8 @@ def stage_material(credential, payload, user=None, request=None):
     that is deployed to hundreds of hosts by flipping it in one write leaves no
     verification step and no way back except reading an old version by number.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_STAGE, request=request)
+
     if credential.has_staged_version:
         raise ValidationError({
             'status': _('This credential already has a staged version. Promote or discard it first.'),
@@ -441,6 +537,8 @@ def promote_staged(credential, user=None, request=None, verified=False, note='')
     Promotion is purely the NetBox-side decision about which version consumers
     are handed, which is why it cannot fail halfway and needs no compensator.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_PROMOTE, request=request)
+
     if not credential.has_staged_version:
         raise ValidationError({'status': _('This credential has no staged version to promote.')})
 
@@ -478,8 +576,9 @@ def promote_staged(credential, user=None, request=None, verified=False, note='')
     credential.save(update_fields=['live_kv_version', 'staged_kv_version', 'status', 'last_rotated'])
 
     # `verified` records that a human or a job confirmed the new material works
-    # before it went live. Actually testing it against a device belongs to
-    # netbox-rpc; this is the place that remembers someone did.
+    # before it went live. Actually testing it against the device belongs to
+    # whatever drives your devices; this is the place that remembers someone
+    # did, so the access log can answer "was this rotation checked?" later.
     reason = note or ''
     if verified:
         reason = f'verified: {reason}'.strip().rstrip(':')
@@ -501,6 +600,8 @@ def discard_staged(credential, user=None, request=None):
     "is something staged?" needs its own field rather than being inferred from
     a comparison of the two.
     """
+    enforce_policy_access(credential, user, AccessActionChoices.ACTION_DISCARD, request=request)
+
     if not credential.has_staged_version:
         raise ValidationError({'status': _('This credential has no staged version to discard.')})
 
@@ -530,16 +631,29 @@ def delete_material(credential, user=None, request=None):
     """
     Destroy a credential's material and every version of it.
 
-    Called from the pre-delete signal so removing a `Credential` row never
-    leaves its secret behind on the mount.
+    Called after the row's deletion has **committed**, so removing a
+    `Credential` never leaves its secret behind on the mount — and, equally
+    important, never destroys the secret for a deletion that then rolls back.
+    Destroying it before the commit made the irreversible half of the operation
+    happen first: a later failure in the same transaction restored the row and
+    left it pointing at material that no longer existed. Bulk deletion, where
+    N rows share one transaction, made that a routine rather than an exotic
+    failure.
+
+    `link` is resolved rather than assumed. By the time this runs the row is
+    normally gone, so a foreign key to it would raise a deferred violation at
+    commit — losing the audit record for the deletion it exists to record.
     """
     backend = get_backend(credential.engine, credential.policy)
+    link = _row_exists(credential)
     try:
         backend.delete(credential.path)
     except OpenBaoError as exc:
         log_access(
             credential, user, AccessActionChoices.ACTION_DELETE, success=False,
-            message=str(exc), request=request,
+            message=str(exc), request=request, link=link,
         )
         raise
-    log_access(credential, user, AccessActionChoices.ACTION_DELETE, success=True, request=request)
+    log_access(
+        credential, user, AccessActionChoices.ACTION_DELETE, success=True, request=request, link=link,
+    )

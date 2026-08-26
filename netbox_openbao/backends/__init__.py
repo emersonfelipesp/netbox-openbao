@@ -41,10 +41,16 @@ def get_backend(engine, policy=None):
     """
     Return a backend for `engine`, authenticated as `policy`'s tier when given.
 
-    Routing through the policy's AppRole rather than an engine-wide one is what
-    makes the OpenBao policy an independent authorization layer: a NetBox-side
-    permission bug on a tier's credentials still cannot read them unless the
-    request also carries that tier's AppRole.
+    Routing through the policy's AppRole rather than an engine-wide one bounds
+    blast radius: a leaked SecretID reaches only its own tier, and a tier whose
+    SecretID was never delivered to this instance cannot be read from it.
+
+    Note what it is *not*. The AppRole is chosen from the credential's own
+    policy, so a NetBox-side permission bug that yields a `prod-core`
+    credential produces a read carrying the `prod-core` AppRole — the identity
+    authorized for that path. OpenBao does not re-check the NetBox user and
+    will allow it. Do not describe this as a layer that contains a NetBox
+    authorization failure; `docs/security.md` states the honest version.
     """
     # Fall back rather than raise on an unknown value: an engine row written by
     # a newer version of the plugin should degrade to the compatible default,

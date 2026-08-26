@@ -1,5 +1,7 @@
 from django.utils.translation import gettext_lazy as _
-from utilities.choices import Choice, ChoiceSet
+from utilities.choices import ChoiceSet
+
+from netbox_openbao.compat import Choice
 
 
 class BackendChoices(ChoiceSet):
