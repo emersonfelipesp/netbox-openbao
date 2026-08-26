@@ -22,12 +22,20 @@ class NetBoxOpenBaoConfig(PluginConfig):
     author = 'Emerson Felipe'
     author_email = 'emerson@netdevopsbr.com'
 
-    # NetBox 4.7 only. 4.7 replaced ipam.Service's protocol/ports with
-    # port_mappings and moved its parent to a GenericForeignKey; supporting 4.6
-    # would mean branching on both. The version gate compares RELEASE.version,
-    # which is "4.7.0" on 4.7.0-beta1 (the beta designation is a separate
-    # field), so this correctly loads on the current beta.
-    min_version = '4.7.0'
+    # 4.6 and 4.7. The earlier 4.7-only pin was based on ipam.Service having
+    # changed in two ways; only one of them turned out to be true. The parent
+    # GenericForeignKey is already present in 4.6 — it is just the ports that
+    # differ, `protocol` + `ports` there against `port_mappings` in 4.7 — and
+    # `quickadd` now handles both, detecting which from the model's own field
+    # set. Every other NetBox API this plugin imports exists in both releases.
+    #
+    # The floor matters operationally: the estate runs 4.6.5, and netbox-nms
+    # supports 4.5.8-4.6.99, so a 4.7 floor left no version where the two could
+    # be installed together and made netbox-nms#213 permanently dormant.
+    #
+    # The gate compares RELEASE.version, which is "4.7.0" on 4.7.0-beta1 (the
+    # beta designation is a separate field), so this still loads on the beta.
+    min_version = '4.6.0'
     max_version = '4.7.99'
 
     required_settings = []

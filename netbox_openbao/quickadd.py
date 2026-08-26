@@ -41,19 +41,74 @@ def _services_are_assignable():
     return 'ipam.service' in assignable_model_labels()
 
 
+def _service_uses_port_mappings():
+    """Whether this NetBox represents a service's ports as `port_mappings`.
+
+    4.7 replaced `protocol` + `ports` with a single `port_mappings` array of
+    `"tcp/22"` strings. Detected from the model's own field set rather than
+    from a version string, because the field is the thing actually being used —
+    a version comparison would be a second, weaker statement of the same fact,
+    and would need editing again at 4.8.
+    """
+    Service = _service_model()
+    return any(field.name == 'port_mappings' for field in Service._meta.get_fields())
+
+
+def _service_port_kwargs(port):
+    """Model kwargs describing "TCP on `port`", in whichever shape this NetBox uses."""
+    if _service_uses_port_mappings():
+        return {'port_mappings': [f'tcp/{port}']}
+
+    from ipam.choices import ServiceProtocolChoices
+
+    return {'protocol': ServiceProtocolChoices.PROTOCOL_TCP, 'ports': [port]}
+
+
+def _service_has_port(service, port):
+    if _service_uses_port_mappings():
+        return f'tcp/{port}' in service.port_mappings
+    from ipam.choices import ServiceProtocolChoices
+
+    return service.protocol == ServiceProtocolChoices.PROTOCOL_TCP and port in service.ports
+
+
+def _add_port_to_service(service, port):
+    """Widen an existing service to also cover `port`.
+
+    On 4.6 a service carries one protocol and a list of ports, so a service
+    that is not already TCP cannot be widened to a TCP port by appending — the
+    protocol itself would have to change, silently altering what the existing
+    service means. That is left alone and reported, rather than repurposed.
+    """
+    if _service_uses_port_mappings():
+        service.port_mappings = [*service.port_mappings, f'tcp/{port}']
+        return True
+
+    from ipam.choices import ServiceProtocolChoices
+
+    if service.protocol != ServiceProtocolChoices.PROTOCOL_TCP:
+        logger.warning(
+            'Service %s on %s is %s, not TCP; leaving it alone rather than '
+            'changing the protocol of an existing service.',
+            service.name, service.parent, service.protocol,
+        )
+        return False
+
+    service.ports = [*service.ports, port]
+    return True
+
+
 def _get_or_create_service(target, port, ip_addresses=None):
     """
     Find or create the SSH service on `target`.
 
-    NetBox 4.7 changed both halves of this. A service's protocol and port are
-    now a single `port_mappings` array of `"tcp/22"` strings, and it binds to
-    its parent through a GenericForeignKey rather than a device or VM foreign
-    key. Code written against 4.6 fails on both counts.
+    Supports both port representations. NetBox 4.7 replaced `protocol` +
+    `ports` with a single `port_mappings` array; the parent GenericForeignKey
+    is common to 4.6 and 4.7, so only the ports differ.
     """
     from django.contrib.contenttypes.models import ContentType
 
     Service = _service_model()
-    mapping = f'tcp/{port}'
     parent_type = ContentType.objects.get_for_model(target)
 
     existing = Service.objects.filter(
@@ -62,8 +117,7 @@ def _get_or_create_service(target, port, ip_addresses=None):
         name=SSH_SERVICE_NAME,
     ).first()
     if existing is not None:
-        if mapping not in existing.port_mappings:
-            existing.port_mappings = [*existing.port_mappings, mapping]
+        if not _service_has_port(existing, port) and _add_port_to_service(existing, port):
             existing.full_clean()
             existing.save()
         return existing, False
@@ -72,7 +126,7 @@ def _get_or_create_service(target, port, ip_addresses=None):
         parent_object_type=parent_type,
         parent_object_id=target.pk,
         name=SSH_SERVICE_NAME,
-        port_mappings=[mapping],
+        **_service_port_kwargs(port),
     )
     service.full_clean()
     service.save()

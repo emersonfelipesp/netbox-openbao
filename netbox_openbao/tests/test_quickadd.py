@@ -58,10 +58,31 @@ class _QuickAddBase(ModelViewTestCase):
 
 class QuickAddServiceTest(_QuickAddBase):
     """
-    NetBox 4.7 reshaped `ipam.Service`: `port_mappings` replaced protocol/ports
-    and the parent became a generic FK. Code written against 4.6 fails on both,
-    so the shape of what gets created is asserted directly.
+    The created service is asserted in whichever shape the running NetBox uses.
+
+    4.7 represents ports as a `port_mappings` array of `"tcp/22"` strings; 4.6
+    uses `protocol` plus a `ports` list. The generic-FK parent is common to
+    both, contrary to what this docstring claimed before.
+
+    `_assert_tcp_ports` reads the shape rather than the version so the suite
+    checks the branch that actually ran. Asserting only 4.7's shape made these
+    tests error on 4.6 while the code under test was working correctly — the
+    test was the thing that was version-specific.
     """
+
+    def _assert_tcp_ports(self, service, ports):
+        """Assert `service` exposes exactly `ports` over TCP, either shape."""
+        from netbox_openbao.quickadd import _service_uses_port_mappings
+
+        if _service_uses_port_mappings():
+            self.assertEqual(sorted(service.port_mappings),
+                             sorted(f'tcp/{p}' for p in ports))
+            return
+
+        from ipam.choices import ServiceProtocolChoices
+
+        self.assertEqual(service.protocol, ServiceProtocolChoices.PROTOCOL_TCP)
+        self.assertEqual(sorted(service.ports), sorted(ports))
 
     def test_creates_a_wellformed_service(self):
         _credential, service, _pub = quick_add_ssh(
@@ -70,7 +91,7 @@ class QuickAddServiceTest(_QuickAddBase):
 
         self.assertIsNotNone(service)
         self.assertEqual(service.name, 'ssh')
-        self.assertEqual(service.port_mappings, ['tcp/22'])
+        self._assert_tcp_ports(service, [22])
         self.assertEqual(service.parent, self.device)
         self.assertEqual(
             service.parent_object_type, ContentType.objects.get_for_model(Device)
@@ -88,7 +109,7 @@ class QuickAddServiceTest(_QuickAddBase):
             self.device, self.policy, username='admin', generate=True, port=2222, name='alt',
         )
 
-        self.assertEqual(sorted(service.port_mappings), ['tcp/22', 'tcp/2222'])
+        self._assert_tcp_ports(service, [22, 2222])
 
     def test_works_on_a_virtual_machine(self):
         _credential, service, _pub = quick_add_ssh(

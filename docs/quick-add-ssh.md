@@ -32,9 +32,9 @@ Generation happens in the NetBox process, never in browser JavaScript and never
 through OpenBao's SSH secrets engine. Both alternatives would put the private
 key somewhere this plugin does not control at the moment it exists.
 
-## NetBox 4.7 specifics
+## Services on 4.6 and 4.7
 
-The service this creates is shaped for 4.7, which changed both halves of it:
+The service this creates is shaped for whichever release is running:
 
 - Protocol and port are a single `port_mappings` array of `"tcp/22"` strings,
   not separate `protocol` and `ports` fields.
