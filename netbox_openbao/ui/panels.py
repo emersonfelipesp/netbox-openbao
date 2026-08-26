@@ -13,6 +13,8 @@ its own permission.
 from django.utils.translation import gettext_lazy as _
 from netbox.ui import actions, attrs, panels
 
+from netbox_openbao.compat import ArrayAttr
+
 __all__ = (
     'AccessLogDetailPanel',
     'AccessLogPanel',
@@ -252,7 +254,7 @@ class CredentialTypeSchemaPanel(panels.ObjectAttributesPanel):
     name = attrs.TextAttr('name')
     slug = attrs.TextAttr('slug', style='font-monospace')
     extractor = attrs.TextAttr('extractor', style='font-monospace')
-    secret_fields = attrs.ArrayAttr('secret_fields', label=_('Secret fields'))
+    secret_fields = ArrayAttr('secret_fields', label=_('Secret fields'))
     description = attrs.TextAttr('description')
 
 

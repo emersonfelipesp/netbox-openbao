@@ -20,10 +20,14 @@ from netbox.context import current_request
 from netbox.forms import NetBoxModelFilterSetForm, NetBoxModelForm, OrganizationalModelForm, PrimaryModelForm
 from users.models import Group
 from utilities.exceptions import AbortRequest
-from utilities.forms import GenericObjectFormMixin
 from utilities.forms.fields import CommentField, DynamicModelChoiceField, DynamicModelMultipleChoiceField, SlugField
-from utilities.forms.fields.generic import GenericObjectChoiceField
 from utilities.forms.rendering import FieldSet
+
+from netbox_openbao.compat import (
+    HAS_GENERIC_OBJECT_FIELD,
+    GenericObjectChoiceField,
+    GenericObjectFormMixin,
+)
 
 from .backends.exceptions import OpenBaoError
 from .choices import (
@@ -422,22 +426,49 @@ class CredentialAssignmentForm(GenericObjectFormMixin, NetBoxModelForm):
     """
     Assign a credential to an object.
 
-    Uses 4.7's `GenericObjectChoiceField`, which renders the content-type
-    selector and the API-backed object selector as one field and re-renders
-    the object selector over HTMX when the type changes.
+    On 4.7 this is one field: `GenericObjectChoiceField` renders the
+    content-type selector and the API-backed object selector together and
+    re-renders the object half over HTMX when the type changes.
+
+    4.6 has no such field, so it declares the two halves separately and binds
+    them in `clean()`. The result is the same assignment; what is lost is the
+    HTMX re-render, so the object selector on 4.6 lists every object of the
+    chosen type rather than narrowing as you pick. That is a worse form, not a
+    different outcome, and it is confined to this class.
     """
 
     credential = DynamicModelChoiceField(queryset=Credential.objects.all())
-    assigned_object = GenericObjectChoiceField(
-        content_type_queryset=ContentType.objects.none(),
-        label=_('Object'),
-        selector=True,
-        hx_target_id='assignment',
+
+    if HAS_GENERIC_OBJECT_FIELD:
+        assigned_object = GenericObjectChoiceField(
+            content_type_queryset=ContentType.objects.none(),
+            label=_('Object'),
+            selector=True,
+            hx_target_id='assignment',
+        )
+    else:
+        assigned_object_type = forms.ModelChoiceField(
+            queryset=ContentType.objects.none(),
+            label=_('Object type'),
+        )
+        assigned_object_id = forms.IntegerField(
+            label=_('Object ID'),
+            help_text=_('Numeric ID of the object this credential belongs to.'),
+        )
+
+    _OBJECT_FIELDS = (
+        ('assigned_object',) if HAS_GENERIC_OBJECT_FIELD
+        else ('assigned_object_type', 'assigned_object_id')
     )
 
+    # `html_id` is 4.7-only, and it exists solely to give the HTMX re-render a
+    # target — so it is conditional on exactly the same thing the field is.
+    # There is nothing on 4.6 for it to address.
+    _ASSIGNMENT_FIELDSET_KWARGS = {'html_id': 'assignment'} if HAS_GENERIC_OBJECT_FIELD else {}
+
     fieldsets = (
-        FieldSet('credential', 'assigned_object', 'purpose', 'is_primary', 'description',
-                 name=_('Assignment'), html_id='assignment'),
+        FieldSet('credential', *_OBJECT_FIELDS, 'purpose', 'is_primary', 'description',
+                 name=_('Assignment'), **_ASSIGNMENT_FIELDSET_KWARGS),
         FieldSet('tags', name=_('Tags')),
     )
 
@@ -448,8 +479,44 @@ class CredentialAssignmentForm(GenericObjectFormMixin, NetBoxModelForm):
     def __init__(self, *args, **kwargs):
         # Evaluated per-instantiation so a change to `assignable_models` in
         # PLUGINS_CONFIG takes effect on restart without a code change.
-        self.base_fields['assigned_object'].content_type_queryset = assignable_content_types()
+        if HAS_GENERIC_OBJECT_FIELD:
+            self.base_fields['assigned_object'].content_type_queryset = assignable_content_types()
+        else:
+            self.base_fields['assigned_object_type'].queryset = assignable_content_types()
         super().__init__(*args, **kwargs)
+
+        if not HAS_GENERIC_OBJECT_FIELD and self.instance.pk:
+            self.fields['assigned_object_type'].initial = self.instance.assigned_object_type_id
+            self.fields['assigned_object_id'].initial = self.instance.assigned_object_id
+
+    def clean(self):
+        """Bind the two 4.6 halves onto the instance, and reject a dangling ID.
+
+        The type queryset already enforces `assignable_models`; what it cannot
+        check is that the *object* exists. Without this, a typo'd ID would
+        create an assignment pointing at nothing — which the reveal path would
+        later fail on, a long way from the form that accepted it.
+        """
+        cleaned = super().clean()
+        if HAS_GENERIC_OBJECT_FIELD:
+            return cleaned
+
+        object_type = cleaned.get('assigned_object_type')
+        object_id = cleaned.get('assigned_object_id')
+        if not object_type or object_id is None:
+            return cleaned
+
+        model = object_type.model_class()
+        if model is None or not model.objects.filter(pk=object_id).exists():
+            raise forms.ValidationError({
+                'assigned_object_id': _(
+                    'No %(model)s with ID %(pk)s exists.'
+                ) % {'model': object_type.name, 'pk': object_id},
+            })
+
+        self.instance.assigned_object_type = object_type
+        self.instance.assigned_object_id = object_id
+        return cleaned
 
 
 class CredentialAssignmentFilterForm(NetBoxModelFilterSetForm):

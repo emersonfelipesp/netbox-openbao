@@ -17,7 +17,17 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('contenttypes', '0002_remove_content_type_name'),
-        ('extras', '0143_event_rule_action_registry'),
+        # The oldest `extras` node that satisfies what these models actually
+        # need, which is `Tag` and `TaggedItem` for `TaggableManager`. It was
+        # `0143_event_rule_action_registry` - the 4.7 tip at the time of
+        # writing - which does not exist on 4.6 and made the whole migration
+        # graph unloadable there, not merely this app's part of it.
+        #
+        # 0138 is 4.6's tip and is in 4.7's history (4.7 added 0139-0143 on top
+        # of it), so it resolves on both. Depending on the current tip of
+        # another app pins you to that release for no benefit; depend on the
+        # thing you use.
+        ('extras', '0138_customfieldchoiceset_choice_colors'),
         ('users', '0016_default_ordering_indexes'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]

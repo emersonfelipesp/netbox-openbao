@@ -10,9 +10,25 @@ Repository: <https://github.com/emersonfelipesp/netbox-openbao>.
 
 ## Hard constraints
 
-**NetBox 4.7 only** (`min_version = "4.7.0"`, `max_version = "4.7.99"`) and
-**OpenBao 2.6.x**. Do not add 4.6 compatibility shims — 4.7 is a deliberate
-floor, not an accident. See [Verified 4.7 facts](#verified-47-facts).
+**NetBox 4.6 and 4.7** (`min_version = "4.6.0"`,
+`max_version = "4.7.99"`) and **OpenBao 2.6.x**.
+
+This used to read "4.7 only — do not add 4.6 compatibility shims", on the
+stated grounds that `ipam.Service` had changed in two ways. Only one of them
+had. The parent GenericForeignKey was already present in 4.6; just the port
+representation differs. Checked by importing every name the plugin uses under
+both releases rather than by reading release notes: **61 of 64 NetBox imports
+and 29 of 30 `netbox.ui` attributes are identical**, including the whole
+declarative panel framework, `netbox.api.gfk_fields`, `netbox.jobs` and
+`netbox.forms`, all of which the old note assumed were 4.7-only.
+
+The floor matters operationally, which is why it was worth rechecking: the
+estate runs 4.6.5 and `netbox-nms` supports 4.5.8–4.6.99, so a 4.7 floor left
+no version where the two could be installed together.
+
+**Every 4.6/4.7 difference lives in `netbox_openbao/compat.py`** — read its
+docstring before adding a version check anywhere else, and add it there if you
+must add one. See [Verified 4.7 facts](#verified-47-facts).
 
 **Python 3.12+, PostgreSQL 15+ with `ltree`, Redis 6+.**
 
@@ -37,9 +53,11 @@ These were confirmed against the `v4.7.0-beta1` source. Several contradict
 what 4.5/4.6-era plugin documentation says — do not "correct" them back:
 
 1. **`ipam.Service`** replaced `protocol` + `ports` with a single
-   `port_mappings` `ArrayField` of `"tcp/22"` strings, and its parent is a
-   **GenericForeignKey** (`parent_object_type`/`parent_object_id`), not direct
-   Device/VM FKs.
+   `port_mappings` `ArrayField` of `"tcp/22"` strings. Its parent is a
+   **GenericForeignKey** (`parent_object_type`/`parent_object_id`) rather than
+   direct Device/VM FKs — but that half is **also true on 4.6**, contrary to
+   what this list said before. Only the ports differ, and `quickadd` handles
+   both by checking whether the model has `port_mappings`.
 2. **Custom permission actions** register via `Meta.permissions` on the model,
    which NetBox auto-registers through `register_model_actions(model, actions)`
    — note the plural, model-first signature. There is no
@@ -48,14 +66,18 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
    'change', 'delete')`.
 4. **Background jobs** use the `@system_job(interval_minutes)` decorator from
    `netbox.jobs`.
-5. **Detail views are declarative.** NetBox 4.7 replaced hand-written detail
-   templates with `netbox.ui` — `layout.SimpleLayout` plus `panels` and
-   `attrs`. Use `ui/panels.py`, not new templates.
+5. **Detail views are declarative.** `netbox.ui` — `layout.SimpleLayout`
+   plus `panels` and `attrs` — replaces hand-written detail templates. Use
+   `ui/panels.py`, not new templates. Present in 4.6 too; the only attribute
+   this plugin uses that 4.6 lacks is `ArrayAttr`, shimmed in `compat.py`.
 6. The **version gate compares `RELEASE.version`**, which is `"4.7.0"` on
    `4.7.0-beta1` (the `beta1` designation is a separate field), so
    `min_version = "4.7.0"` correctly loads on the current beta.
 7. `GenericObjectChoiceField` / `GenericObjectFormMixin` handle generic-FK
-   form fields.
+   form fields. **4.7 only** — `CredentialAssignmentForm` falls back to a
+   separate type + ID pair on 4.6, which loses the HTMX re-render but produces
+   the same assignment. `FieldSet(html_id=…)` is 4.7-only for the same reason
+   and is passed conditionally.
 8. GFK idiom: `to='contenttypes.ContentType'`, `on_delete=models.PROTECT`,
    `related_name='+'`.
 

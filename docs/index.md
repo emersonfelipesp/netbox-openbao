@@ -21,7 +21,7 @@ That third line is the gap this plugin exists to close.
 !!! warning "Status: early alpha"
 
     The data model, REST API, and security invariants are implemented and
-    tested against NetBox 4.7 and OpenBao 2.6. Dynamic secrets — database and
+    tested against NetBox 4.6 and 4.7, and OpenBao 2.6. Dynamic secrets — database and
     cloud credential engines — are deliberately not here yet; they are a
     different lifecycle rather than a bigger version of this one.
 
@@ -116,7 +116,7 @@ each view calling a backend for itself.
 
 | | |
 |---|---|
-| NetBox | **4.7** (4.7.0 or later — [why](installation.md#why-47-only)) |
+| NetBox | **4.6 or 4.7** (4.6.0–4.7.99 — [why](installation.md#netbox-46-and-47)) |
 | Python | 3.12+ |
 | PostgreSQL | 15+ with the `ltree` extension |
 | Redis | 6+ |
