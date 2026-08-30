@@ -83,3 +83,7 @@ jobs:
           # assignments, so an annotated field or `secret_data` would have
           # passed every check this workflow advertised.
           .venv/bin/python scripts/check_no_secret_fields.py
+
+      - name: Assert the NetBox compatibility contract
+        shell: bash
+        run: .venv/bin/python scripts/check_compatibility_contract.py

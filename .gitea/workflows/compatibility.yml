@@ -1,0 +1,178 @@
+---
+name: NetBox compatibility
+
+# Full NetBox/Django execution needs PostgreSQL and Redis, which the
+# unprivileged pull-request container does not expose. This workflow therefore
+# runs on `trusted-exact` — the host executor on the dedicated
+# credentials-free CI VM, which provides both — after trusted pushes to the
+# protected branch, or on an explicit dispatch by the repository owner. Never
+# add a pull-request trigger here; `ci.yml` remains the untrusted pre-merge
+# gate.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: netbox-openbao-compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test-netbox-source:
+    name: NetBox ${{ matrix.netbox_version }} compatibility
+    if: ${{ github.event_name == 'push' || github.actor == 'emersonfelipesp' }}
+    runs-on: trusted-exact
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - netbox_version: "4.6.5"
+            db_suffix: n465
+            redis_db: "2"
+            redis_cache_db: "3"
+            netbox_sha: ebee3578b90901ba69ea646815f9b0662f627726
+          - netbox_version: "4.7.0-beta2"
+            db_suffix: n470b2
+            redis_db: "4"
+            redis_cache_db: "5"
+            netbox_sha: aa1d49d0f5021a28e6efc2d0364b84c5bcec7137
+    env:
+      HOME: ${{ github.workspace }}
+      NETBOX_SHA: ${{ matrix.netbox_sha }}
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: netbox_openbao_compat_${{ github.run_id }}_${{ github.run_attempt }}_${{ matrix.db_suffix }}
+      DB_TEST_NAME: test_netbox_openbao_compat_${{ github.run_id }}_${{ github.run_attempt }}_${{ matrix.db_suffix }}
+      DB_USER: netbox_openbao_ci
+      DB_PASSWORD: netbox_openbao_ci
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+      REDIS_DATABASE: ${{ matrix.redis_db }}
+      REDIS_CACHE_DATABASE: ${{ matrix.redis_cache_db }}
+    steps:
+      - name: Checkout
+        uses: https://git.nmulti.cloud/actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Provision isolated compatibility databases
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v sudo >/dev/null 2>&1
+          id postgres >/dev/null 2>&1
+          [[ "$DB_NAME" =~ ^netbox_openbao_compat_[0-9]+_[0-9]+_[0-9a-z]+$ ]]
+          [[ "$DB_TEST_NAME" = "test_$DB_NAME" ]]
+          sudo -n -u postgres psql -d postgres -tc \
+            "SELECT 1 FROM pg_roles WHERE rolname='netbox_openbao_ci'" | grep -q 1 || \
+            sudo -n -u postgres psql -d postgres -c \
+              "CREATE ROLE netbox_openbao_ci LOGIN PASSWORD 'netbox_openbao_ci' CREATEDB" || \
+            sudo -n -u postgres psql -d postgres -tc \
+              "SELECT 1 FROM pg_roles WHERE rolname='netbox_openbao_ci'" | grep -q 1
+          # Per-leg names: the host executor starts matrix legs concurrently
+          # even with max-parallel: 1, and a shared name makes the legs migrate
+          # the same database.
+          for db in "$DB_NAME" "$DB_TEST_NAME"; do
+            sudo -n -u postgres psql -d postgres -c "DROP DATABASE IF EXISTS ${db} WITH (FORCE)"
+            sudo -n -u postgres psql -d postgres -c \
+              "CREATE DATABASE ${db} OWNER netbox_openbao_ci TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'"
+          done
+
+      - name: Prepare isolated toolchain root
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RUNNER_TEMP"
+          toolchain_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-toolchain.XXXXXX")"
+          toolchain_root="$(realpath -e "$toolchain_root")"
+          chmod 0700 "$toolchain_root"
+          for directory in tool-cache uv-cache uv-python uv-tools uv-tool-bin; do
+            install -d -m 0700 "$toolchain_root/$directory"
+          done
+          echo "root=$toolchain_root" >> "$GITHUB_OUTPUT"
+          echo "tool_cache=$toolchain_root/tool-cache" >> "$GITHUB_OUTPUT"
+          echo "uv_cache=$toolchain_root/uv-cache" >> "$GITHUB_OUTPUT"
+          echo "uv_python=$toolchain_root/uv-python" >> "$GITHUB_OUTPUT"
+          echo "uv_tools=$toolchain_root/uv-tools" >> "$GITHUB_OUTPUT"
+          echo "uv_tool_bin=$toolchain_root/uv-tool-bin" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned uv
+        uses: https://github.com/astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        env:
+          RUNNER_TOOL_CACHE: ${{ steps.toolchain.outputs.tool_cache }}
+          UV_CACHE_DIR: ${{ steps.toolchain.outputs.uv_cache }}
+          UV_PYTHON_INSTALL_DIR: ${{ steps.toolchain.outputs.uv_python }}
+          UV_TOOL_DIR: ${{ steps.toolchain.outputs.uv_tools }}
+          UV_TOOL_BIN_DIR: ${{ steps.toolchain.outputs.uv_tool_bin }}
+        with:
+          version: "0.11.28"
+          checksum: "e490a6464492183c5d4534a5527fb4440f7f2bb2f228162ad7e4afe076dc0224"
+          github-token: ""
+          download-from-astral-mirror: false
+          enable-cache: false
+          cache-local-path: ${{ steps.toolchain.outputs.uv_cache }}
+          tool-dir: ${{ steps.toolchain.outputs.uv_tools }}
+          tool-bin-dir: ${{ steps.toolchain.outputs.uv_tool_bin }}
+
+      - name: Install pinned CPython 3.12
+        id: interpreter
+        shell: bash
+        env:
+          UV_CACHE_DIR: ${{ steps.toolchain.outputs.uv_cache }}
+          UV_PYTHON_INSTALL_DIR: ${{ steps.toolchain.outputs.uv_python }}
+          UV_TOOL_DIR: ${{ steps.toolchain.outputs.uv_tools }}
+          UV_TOOL_BIN_DIR: ${{ steps.toolchain.outputs.uv_tool_bin }}
+        run: |
+          set -euo pipefail
+          # The runner host ships only the distribution's Python 3.13, which has
+          # no ensurepip, so the harness cannot build its virtual environment
+          # from it.
+          uv python install 3.12.11
+          python_bin="$(realpath -e "$(uv python find --managed-python 3.12.11)")"
+          case "$python_bin" in
+            "$(realpath -e "$UV_PYTHON_INSTALL_DIR")"/*) ;;
+            *) echo "Python executable escaped isolated install root: $python_bin" >&2; exit 1 ;;
+          esac
+          "$python_bin" -c 'import sys; assert sys.version_info[:3] == (3, 12, 11)'
+          echo "python_bin=$python_bin" >> "$GITHUB_OUTPUT"
+
+      - name: Run exact-source compatibility suite
+        shell: bash
+        env:
+          PYTHON_BIN: ${{ steps.interpreter.outputs.python_bin }}
+          UV_CACHE_DIR: ${{ steps.toolchain.outputs.uv_cache }}
+          UV_PYTHON_INSTALL_DIR: ${{ steps.toolchain.outputs.uv_python }}
+        run: bash .github/ci/netbox-source-test.sh
+
+      - name: Remove compatibility databases
+        if: always()
+        shell: bash
+        run: |
+          [[ "$DB_NAME" =~ ^netbox_openbao_compat_[0-9]+_[0-9]+_[0-9a-z]+$ ]] || exit 0
+          for db in "$DB_TEST_NAME" "$DB_NAME"; do
+            sudo -n -u postgres psql -d postgres -c "DROP DATABASE IF EXISTS ${db} WITH (FORCE)" || true
+          done
+
+      - name: Remove isolated toolchain root
+        if: ${{ always() }}
+        shell: bash
+        env:
+          TOOLCHAIN_ROOT: ${{ steps.toolchain.outputs.root }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TOOLCHAIN_ROOT:-}" || ! -e "$TOOLCHAIN_ROOT" ]]; then
+            exit 0
+          fi
+          toolchain_real="$(realpath -e "$TOOLCHAIN_ROOT")"
+          runner_temp_real="$(realpath -e "$RUNNER_TEMP")"
+          case "$toolchain_real" in
+            "$runner_temp_real"/netbox-openbao-toolchain.*) ;;
+            *) echo "Refusing unsafe toolchain cleanup: $toolchain_real" >&2; exit 1 ;;
+          esac
+          find "$toolchain_real" -depth -delete

@@ -19,7 +19,7 @@ psql -h 127.0.0.1 -p 15432 -U netbox -d netbox -c 'CREATE EXTENSION IF NOT EXIST
 ## NetBox checkout
 
 ```bash
-git clone --depth 1 --branch v4.7.0 https://github.com/netbox-community/netbox.git
+git clone --depth 1 --branch v4.7.0-beta2 https://github.com/netbox-community/netbox.git
 python3.12 -m venv .venv
 .venv/bin/pip install -r netbox/requirements.txt
 .venv/bin/pip install -e /path/to/netbox-openbao
@@ -37,18 +37,27 @@ REDIS = {
     'tasks':   {'HOST': '127.0.0.1', 'PORT': 16379, 'DATABASE': 0, 'SSL': False},
     'caching': {'HOST': '127.0.0.1', 'PORT': 16379, 'DATABASE': 1, 'SSL': False},
 }
-SECRET_KEY = 'development-only-key'
+ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+SECRET_KEY = 'development-only-key-that-is-at-least-fifty-characters-long'
 
 # NetBox 4.7 requires both of these, and fails in non-obvious ways without them:
 EMAIL = {'SERVER': 'localhost', 'PORT': 25, 'FROM_EMAIL': 'netbox@example.net'}
-API_TOKEN_PEPPERS = {1: 'ZGV2ZWxvcG1lbnQtcGVwcGVy'}   # v2 API tokens
+API_TOKEN_PEPPERS = {
+    1: 'development-only-api-token-pepper-at-least-fifty-characters-long',
+}   # v2 API tokens
 
 DEVELOPER = True          # required for makemigrations
 PLUGINS = ['netbox_openbao']
 PLUGINS_CONFIG = {'netbox_openbao': {}}
 ```
 
-Without `API_TOKEN_PEPPERS`, `Token.objects.create()` raises
+The checkout above is the exact NetBox 4.7 beta certification target. The
+hosted compatibility gate also runs this suite on NetBox 4.6.5 so work on the
+beta cannot silently drop the supported floor.
+
+NetBox validates `SECRET_KEY` and each `API_TOKEN_PEPPERS` value at startup;
+both examples deliberately exceed the 50-character minimum. Without
+`API_TOKEN_PEPPERS`, `Token.objects.create()` raises
 `ValueError: API_TOKEN_PEPPERS is not defined` — which surfaces as every API
 test erroring in `setUp`, not as a configuration message.
 

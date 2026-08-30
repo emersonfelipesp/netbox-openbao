@@ -33,7 +33,7 @@ class NetBoxOpenBaoConfig(PluginConfig):
     # supports 4.5.8-4.6.99, so a 4.7 floor left no version where the two could
     # be installed together and made netbox-nms#213 permanently dormant.
     #
-    # The gate compares RELEASE.version, which is "4.7.0" on 4.7.0-beta1 (the
+    # The gate compares RELEASE.version, which is "4.7.0" on 4.7.0-beta2 (the
     # beta designation is a separate field), so this still loads on the beta.
     min_version = '4.6.0'
     max_version = '4.7.99'

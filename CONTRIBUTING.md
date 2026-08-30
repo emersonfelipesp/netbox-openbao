@@ -84,11 +84,11 @@ Schema attached.
 
 ## Scope
 
-NetBox **4.7 only** (`min_version = "4.7.0"`, `max_version = "4.7.99"`).
-Please do not send 4.6 compatibility shims: 4.7 changed `ipam.Service`, the
-permission-action registration, and the detail-view framework, and supporting
-both would mean branching on all three. The reasoning is in
-[`docs/installation.md`](docs/installation.md#why-47-only).
+NetBox **4.6 and 4.7** (`min_version = "4.6.0"`,
+`max_version = "4.7.99"`). Keep capability differences centralized in
+`netbox_openbao/compat.py`; do not scatter version checks through feature code.
+The exact supported surface and why the 4.6 floor matters are documented in
+[`docs/installation.md`](docs/installation.md#netbox-46-and-47).
 
 `CLAUDE.md` carries a list of traps that each cost a debugging cycle. It is
 worth ten minutes before your first change.

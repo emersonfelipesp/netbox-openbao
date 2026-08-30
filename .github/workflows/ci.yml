@@ -66,6 +66,9 @@ jobs:
           # passed every check this workflow advertised.
           python scripts/check_no_secret_fields.py
 
+      - name: Assert the NetBox compatibility contract
+        run: python scripts/check_compatibility_contract.py
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest

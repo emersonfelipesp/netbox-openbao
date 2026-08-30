@@ -84,7 +84,7 @@ test in `netbox_openbao/tests/test_security.py`:
 
 | | |
 |---|---|
-| NetBox | **4.7** (4.7.0 or later; 4.6 and earlier are not supported) |
+| NetBox | **4.6 or 4.7** (4.6.0–4.7.99; exact 4.7 beta2 evidence below) |
 | Python | 3.12+ |
 | PostgreSQL | 15+ with the `ltree` extension (a NetBox 4.7 requirement) |
 | Redis | 6+ |
@@ -92,11 +92,13 @@ test in `netbox_openbao/tests/test_security.py`:
 | HashiCorp Vault | supported as an alternative backend — see below |
 | Broker mode | optional; needs [`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker) |
 
-NetBox 4.7 is required deliberately rather than incidentally: it replaced
-`ipam.Service`'s `protocol`/`ports` with `port_mappings` and moved the service's
-parent to a generic foreign key, and it introduced the declarative UI panel
-framework and `register_model_actions` that this plugin builds on. Supporting
-4.6 would mean branching on all of it.
+NetBox 4.6 and 4.7 are both supported. The releases differ in four capabilities
+used here (notably `ipam.Service` port storage), and those differences are
+isolated in `netbox_openbao/compat.py`. The full suite currently passes on exact
+NetBox `v4.7.0-beta2`; the compatibility gate also retains NetBox 4.6.5 as the
+backward-regression target. See
+[`docs/installation.md`](docs/installation.md#netbox-46-and-47) for the exact
+boundary.
 
 ## Install
 

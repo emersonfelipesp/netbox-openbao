@@ -129,6 +129,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The package version is single-sourced from `netbox_openbao.__version__`
   instead of being duplicated in `pyproject.toml`.
+- Compatibility is now certified on exact NetBox `v4.7.0-beta2` while the
+  NetBox 4.6 floor remains a required regression target. Development setup
+  examples now include beta2's validated host and secret configuration.
 
 ## [0.1.0]
 

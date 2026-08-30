@@ -23,8 +23,9 @@ declarative panel framework, `netbox.api.gfk_fields`, `netbox.jobs` and
 `netbox.forms`, all of which the old note assumed were 4.7-only.
 
 The floor matters operationally, which is why it was worth rechecking: the
-estate runs 4.6.5 and `netbox-nms` supports 4.5.8–4.6.99, so a 4.7 floor left
-no version where the two could be installed together.
+estate still runs 4.6.5 while `netbox-nms` supports 4.5.8–4.7.99. Keeping the
+4.6 floor preserves a common installable version today without preventing the
+exact 4.7 beta source gate.
 
 **Every 4.6/4.7 difference lives in `netbox_openbao/compat.py`** — read its
 docstring before adding a version check anywhere else, and add it there if you
@@ -49,7 +50,7 @@ one chokepoint is what makes the plugin auditable.
 
 ## Verified 4.7 facts
 
-These were confirmed against the `v4.7.0-beta1` source. Several contradict
+These were reconfirmed against the exact `v4.7.0-beta2` source. Several contradict
 what 4.5/4.6-era plugin documentation says — do not "correct" them back:
 
 1. **`ipam.Service`** replaced `protocol` + `ports` with a single
@@ -71,8 +72,8 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
    `ui/panels.py`, not new templates. Present in 4.6 too; the only attribute
    this plugin uses that 4.6 lacks is `ArrayAttr`, shimmed in `compat.py`.
 6. The **version gate compares `RELEASE.version`**, which is `"4.7.0"` on
-   `4.7.0-beta1` (the `beta1` designation is a separate field), so
-   `min_version = "4.7.0"` correctly loads on the current beta.
+   `4.7.0-beta2` (the `beta2` designation is a separate field), so the current
+   beta remains within the declared `4.6.0`–`4.7.99` range.
 7. `GenericObjectChoiceField` / `GenericObjectFormMixin` handle generic-FK
    form fields. **4.7 only** — `CredentialAssignmentForm` falls back to a
    separate type + ID pair on 4.6, which loses the HTMX re-render but produces
@@ -321,8 +322,11 @@ that last one broke credential creation against every real server while 200+
 tests stayed green (#17). A fake only fails in ways its author already thought
 of. Run against a real server before believing a green suite.
 
-Current state: **256 tests**, all passing against real NetBox 4.7.0-beta1, a
-live OpenBao 2.6.0, a live Vault, and a live broker. `ruff check` clean, `makemigrations --check` clean.
+Current beta2 state: **308 tests** pass against exact NetBox 4.7.0-beta2 with a
+live OpenBao 2.6 development server (`18` optional live-backend tests skip when
+their endpoints are not configured). `ruff check` and
+`makemigrations --check` are clean. The hosted compatibility matrix also keeps
+NetBox 4.6.5 as the backward-regression target.
 
 ## When changing things
 
