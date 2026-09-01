@@ -592,6 +592,7 @@ class QuickAddSSHView(ObjectPermissionRequiredMixin, View):
         if form.is_valid():
             data = form.cleaned_data
             source = data['source']
+            auth_method = data.get('auth_method') or 'keypair'
             try:
                 credential, service, public_key = quick_add_ssh(
                     target,
@@ -601,7 +602,9 @@ class QuickAddSSHView(ObjectPermissionRequiredMixin, View):
                     existing_credential=data.get('existing_credential') if source == 'reuse' else None,
                     private_key=data.get('private_key') if source == 'paste' else None,
                     passphrase=data.get('passphrase') if source == 'paste' else None,
-                    generate=(source == 'generate'),
+                    password=data.get('password') if auth_method == 'password' else None,
+                    auth_method=auth_method,
+                    generate=(source == 'generate' and auth_method == 'keypair'),
                     key_type=data.get('key_type'),
                     port=data['port'],
                     create_service=data['create_service'],

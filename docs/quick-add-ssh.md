@@ -10,17 +10,30 @@ most common thing anyone does with this plugin.
 
 1. An `ipam.Service` named `ssh` on the object, with a `tcp/22` port mapping —
    or the existing one, with the port added if it is not already there.
-2. A `Credential` of type `ssh-keypair`, with the private half written to
-   OpenBao and the public key, fingerprint, and key type extracted into NetBox.
+2. A `Credential` written to OpenBao — either `ssh-password` (login password)
+   or `ssh-keypair` (private key + optional passphrase), with public metadata
+   extracted into NetBox for keypairs.
 3. A `CredentialAssignment` binding the credential to the service, and a second
    binding it to the object itself.
+
+When `netbox-nms` is installed, password quick-add also creates a matching
+`DeviceCredential` (OpenBao-backed via `openbao_write_policy`) and an SSH
+`DeviceService` on the linked `dcim.Device`, so RPC and NMS automation resolve
+the same secret without a second manual step.
 
 All of it inside one `transaction.atomic()`, and the material goes through the
 same `store_credential()` every other write uses — so the rollback compensator
 covers it. A backend failure leaves no service, no credential, and no
 assignment.
 
-## Three ways to supply the key
+## Authentication methods
+
+| | |
+|---|---|
+| **Username and password** | Stores an `ssh-password` credential in OpenBao. This is the SSH **login** password, not a key passphrase. When netbox-nms is present, the same password is mirrored into a `DeviceCredential` + SSH `DeviceService` for RPC/NMS consumers. |
+| **SSH keypair** | See the three key-supply options below. |
+
+## Three ways to supply a keypair
 
 | | |
 |---|---|

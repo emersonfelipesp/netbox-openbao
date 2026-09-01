@@ -117,6 +117,19 @@ class QuickAddServiceTest(_QuickAddBase):
         )
         self.assertEqual(service.parent, self.vm)
 
+    def test_password_auth_stores_openbao_ssh_password(self):
+        credential, service, public_key = quick_add_ssh(
+            self.device,
+            self.policy,
+            username='root',
+            password='login-secret',
+            auth_method='password',
+        )
+        self.assertEqual(credential.credential_type, CredentialTypeChoices.TYPE_SSH_PASSWORD)
+        self.assertEqual(credential.username, 'root')
+        self.assertEqual(public_key, '')
+        self.assertIsNotNone(service)
+
     @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'assignable_models': ['dcim.device']}})
     def test_service_creation_is_skipped_when_services_are_not_assignable(self):
         """

@@ -79,6 +79,17 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
 8. GFK idiom: `to='contenttypes.ContentType'`, `on_delete=models.PROTECT`,
    `related_name='+'`.
 
+
+## Quick-add SSH password auth
+
+The **Add SSH access** action (`netbox_openbao/quickadd.py`; UI in `views.py` and
+`forms.py`) accepts **username and password** (`auth_method=password`) as well as
+SSH keypairs. Password auth writes an `ssh-password` credential through
+`store_credential()` with payload key `password` (the SSH **login** password, not a
+key passphrase). When `netbox-nms` is installed, `sync_ssh_password_to_nms` mirrors
+the same login into a `DeviceCredential` and SSH `DeviceService`, using the
+netbox-nms `openbao_write_policy` slug for OpenBao placement. See `docs/quick-add-ssh.md`.
+
 ## Traps already paid for
 
 Each of these cost a debugging cycle. They are load-bearing, not stylistic.

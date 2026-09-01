@@ -20,6 +20,7 @@ from django.utils.translation import gettext_lazy as _
 from netbox_openbao.choices import CredentialTypeChoices, PurposeChoices, SSHKeyTypeChoices
 from netbox_openbao.config import assignable_model_labels, get_config
 from netbox_openbao.models import Credential, CredentialAssignment
+from netbox_openbao.nms_bridge import sync_ssh_password_to_nms
 from netbox_openbao.secrets.generators import generate_ssh_keypair
 from netbox_openbao.services import store_credential
 
@@ -144,6 +145,8 @@ def quick_add_ssh(
     existing_credential=None,
     private_key=None,
     passphrase=None,
+    password=None,
+    auth_method='keypair',
     generate=False,
     key_type=None,
     port=DEFAULT_SSH_PORT,
@@ -152,23 +155,28 @@ def quick_add_ssh(
     purpose=PurposeChoices.PURPOSE_LOGIN,
     user=None,
     request=None,
+    sync_nms=True,
 ):
     """
     Give `target` SSH access, in one transaction.
 
-    Exactly one of `existing_credential`, `private_key`, or `generate` decides
-    where the material comes from.
+    Password auth stores ``TYPE_SSH_PASSWORD`` in OpenBao. Keypair auth uses
+    exactly one of ``existing_credential``, ``private_key``, or ``generate``.
 
-    Returns `(credential, service, public_key)`. `public_key` is only populated
-    when a key was generated here — it is returned so the operator can paste it
-    straight into `authorized_keys`, and it is the *only* half of a generated
-    pair that ever leaves this function.
+    Returns ``(credential, service, public_key)``. ``public_key`` is only
+    populated when a key was generated here.
     """
-    sources = [bool(existing_credential), bool(private_key), bool(generate)]
-    if sum(sources) != 1:
-        raise ValidationError(
-            _('Choose exactly one of: reuse an existing credential, paste a private key, or generate one.')
-        )
+    auth_method = auth_method or 'keypair'
+    if auth_method == 'password':
+        if not password:
+            raise ValidationError(_('An SSH login password is required.'))
+        sources = [False, False, False]
+    else:
+        sources = [bool(existing_credential), bool(private_key), bool(generate)]
+        if sum(sources) != 1:
+            raise ValidationError(
+                _('Choose exactly one of: reuse an existing credential, paste a private key, or generate one.')
+            )
 
     generated_public_key = ''
 
@@ -185,6 +193,32 @@ def quick_add_ssh(
 
         if existing_credential is not None:
             credential = existing_credential
+        elif auth_method == 'password':
+            credential = Credential(
+                name=name or f'{target} ssh',
+                credential_type=CredentialTypeChoices.TYPE_SSH_PASSWORD,
+                policy=policy,
+                engine=policy.engine,
+                username=username,
+            )
+            payload = {'password': password}
+
+            def persist(metadata, credential=credential):
+                for field, value in metadata.items():
+                    setattr(credential, field, value)
+                credential.full_clean()
+                credential.save()
+                return credential
+
+            credential, _version = store_credential(
+                persist,
+                CredentialTypeChoices.TYPE_SSH_PASSWORD,
+                payload,
+                cas=0,
+                user=user,
+                request=request,
+                subject=credential,
+            )
         else:
             if generate:
                 # Falling through to generate_ssh_keypair's own default is not
@@ -234,6 +268,17 @@ def quick_add_ssh(
 
         if service is not None and _is_assignable(target):
             _assign(credential, target, purpose)
+
+        if auth_method == 'password' and sync_nms:
+            sync_ssh_password_to_nms(
+                target,
+                username=username,
+                password=password,
+                name=name or f'{target} ssh',
+                port=port,
+                user=user,
+                request=request,
+            )
 
     return credential, service, generated_public_key
 

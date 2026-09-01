@@ -606,6 +606,21 @@ class QuickAddSSHForm(forms.Form):
             ('reuse', _('Reuse an existing credential')),
         ),
         initial='generate',
+        required=False,
+    )
+    auth_method = forms.ChoiceField(
+        label=_('Authentication'),
+        choices=(
+            ('password', _('Username and password')),
+            ('keypair', _('SSH keypair')),
+        ),
+        initial='password',
+    )
+    password = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(render_value=False, attrs={'autocomplete': 'new-password'}),
+        label=_('SSH login password'),
+        help_text=_('Stored in OpenBao. This is the password used to log in, not a key passphrase.'),
     )
     key_type = forms.ChoiceField(choices=SSHKeyTypeChoices, required=False, label=_('Generated key type'))
     private_key = forms.CharField(
@@ -628,6 +643,7 @@ class QuickAddSSHForm(forms.Form):
     fieldsets = (
         FieldSet('name', 'username', 'policy', name=_('Credential')),
         FieldSet('create_service', 'port', name=_('Service')),
+        FieldSet('auth_method', 'password', name=_('Authentication')),
         FieldSet('source', 'key_type', 'private_key', 'passphrase', 'existing_credential',
                  name=_('Key material')),
     )
@@ -647,6 +663,11 @@ class QuickAddSSHForm(forms.Form):
             cleaned = self.cleaned_data
 
         source = cleaned.get('source')
+        auth_method = cleaned.get('auth_method') or 'keypair'
+        if auth_method == 'password':
+            if not cleaned.get('password'):
+                raise forms.ValidationError({'password': _('Enter the SSH login password.')})
+            return cleaned
         if source == 'paste' and not cleaned.get('private_key'):
             raise forms.ValidationError({'private_key': _('Paste a private key, or choose another source.')})
         if source == 'reuse' and not cleaned.get('existing_credential'):
