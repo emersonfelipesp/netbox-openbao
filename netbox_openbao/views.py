@@ -32,9 +32,11 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoProcedureRun,
     SecretEngine,
 )
 from .quickadd import quick_add_ssh
+from .rpc import dispatch_openbao_procedure
 from .services import discard_staged, promote_staged, reveal_material
 from .ui import panels as openbao_panels
 
@@ -63,9 +65,13 @@ __all__ = (
     'CredentialTypeSchemaView',
     'CredentialRevealView',
     'CredentialView',
+    'OpenBaoProcedureRunListView',
+    'OpenBaoProcedureRunView',
+    'SecretEngineBulkDeleteView',
     'SecretEngineDeleteView',
     'SecretEngineEditView',
     'SecretEngineListView',
+    'SecretEngineRunProcedureView',
     'SecretEngineView',
 )
 
@@ -97,8 +103,60 @@ class SecretEngineView(generic.ObjectView):
         ],
         bottom_panels=[
             openbao_panels.EnginePolicyPanel(),
+            openbao_panels.EngineProcedureRunPanel(),
         ],
     )
+
+
+@register_model_view(SecretEngine, 'bulk_delete', path='delete', detail=False)
+class SecretEngineBulkDeleteView(generic.BulkDeleteView):
+    queryset = SecretEngine.objects.all()
+    filterset = filtersets.SecretEngineFilterSet
+    table = tables.SecretEngineTable
+
+
+@register_model_view(SecretEngine, 'run-procedure')
+class SecretEngineRunProcedureView(ObjectPermissionRequiredMixin, View):
+    queryset = SecretEngine.objects.all()
+    template_name = 'netbox_openbao/secretengine_run_procedure.html'
+
+    def get_required_permission(self):
+        return 'netbox_openbao.change_secretengine'
+
+    def get(self, request, pk):
+        engine = get_object_or_404(self.queryset.restrict(request.user, 'change'), pk=pk)
+        return render(request, self.template_name, {
+            'object': engine,
+            'form': forms.RunProcedureForm(),
+            'return_url': engine.get_absolute_url(),
+        })
+
+    def post(self, request, pk):
+        engine = get_object_or_404(self.queryset.restrict(request.user, 'change'), pk=pk)
+        form = forms.RunProcedureForm(request.POST)
+        if form.is_valid():
+            try:
+                _execution, run = dispatch_openbao_procedure(
+                    engine=engine,
+                    procedure_name=form.cleaned_data['procedure_name'],
+                    user=request.user,
+                    request=request,
+                    params={
+                        'restart_netbox': form.cleaned_data.get('restart_netbox', True),
+                    },
+                )
+            except DjangoValidationError as exc:
+                form.add_error(None, '; '.join(exc.messages))
+            except PermissionDenied as exc:
+                form.add_error(None, str(exc))
+            else:
+                messages.success(request, _('Queued {procedure}.').format(procedure=run.procedure_name))
+                return redirect(run.get_absolute_url())
+        return render(request, self.template_name, {
+            'object': engine,
+            'form': form,
+            'return_url': engine.get_absolute_url(),
+        })
 
 
 @register_model_view(SecretEngine, 'add', detail=False)
@@ -572,3 +630,31 @@ class QuickAddSSHView(ObjectPermissionRequiredMixin, View):
             'form': form,
             'return_url': target.get_absolute_url(),
         })
+
+
+#
+# OpenBao procedure runs
+#
+
+@register_model_view(OpenBaoProcedureRun, 'list', path='', detail=False)
+class OpenBaoProcedureRunListView(generic.ObjectListView):
+    queryset = OpenBaoProcedureRun.objects.select_related('engine', 'initiated_by', 'rpc_execution')
+    table = tables.OpenBaoProcedureRunTable
+    filterset = filtersets.OpenBaoProcedureRunFilterSet
+    filterset_form = forms.OpenBaoProcedureRunFilterForm
+
+
+@register_model_view(OpenBaoProcedureRun)
+class OpenBaoProcedureRunView(generic.ObjectView):
+    queryset = OpenBaoProcedureRun.objects.select_related('engine', 'initiated_by', 'rpc_execution')
+    layout = layout.SimpleLayout(
+        left_panels=[
+            openbao_panels.OpenBaoProcedureRunPanel(),
+            CustomFieldsPanel(),
+            TagsPanel(),
+        ],
+        right_panels=[
+            openbao_panels.OpenBaoProcedureRunResultPanel(),
+            CommentsPanel(),
+        ],
+    )

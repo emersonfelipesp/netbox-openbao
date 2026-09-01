@@ -41,6 +41,7 @@ from .choices import (
 )
 from .config import get_config
 from .models import Credential, CredentialAssignment, CredentialPolicy, CredentialTypeSchema, SecretEngine
+from .rpc import OPENBAO_READ_PROCEDURES, OPENBAO_WRITE_PROCEDURES
 from .secrets.generators import generate_ssh_keypair
 from .secrets.registry import credential_type_choices, get_schema
 from .services import enforce_update_access, stage_material, store_credential
@@ -57,6 +58,8 @@ __all__ = (
     'CredentialTypeSchemaForm',
     'SecretEngineFilterForm',
     'SecretEngineForm',
+    'RunProcedureForm',
+    'OpenBaoProcedureRunFilterForm',
 )
 
 # Every payload key any built-in credential type accepts. The form offers all
@@ -76,9 +79,21 @@ SENSITIVE_INPUT_FIELDS = frozenset({
 class SecretEngineForm(PrimaryModelForm):
     slug = SlugField()
     comments = CommentField()
+    host_device = DynamicModelChoiceField(
+        queryset=None,
+        required=False,
+        label=_('OpenBao host'),
+        help_text=_('Device where OpenBao runs. Required for netbox-rpc host operations.'),
+    )
+
+    def __init__(self, *args, **kwargs):
+        from dcim.models import Device
+
+        super().__init__(*args, **kwargs)
+        self.fields['host_device'].queryset = Device.objects.all()
 
     fieldsets = (
-        FieldSet('name', 'slug', 'backend', 'api_url', 'namespace', 'is_default', 'description',
+        FieldSet('name', 'slug', 'backend', 'api_url', 'namespace', 'host_device', 'is_default', 'description',
                  name=_('Engine')),
         FieldSet('kv_mount', 'kv_version', name=_('Key/value mount')),
         FieldSet('auth_method', 'tls_verify', 'ca_cert_path', name=_('Authentication')),
@@ -88,8 +103,8 @@ class SecretEngineForm(PrimaryModelForm):
     class Meta:
         model = SecretEngine
         fields = (
-            'name', 'slug', 'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method', 'tls_verify',
-            'ca_cert_path', 'is_default', 'description', 'comments', 'tags',
+            'name', 'slug', 'backend', 'api_url', 'namespace', 'host_device', 'kv_mount', 'kv_version', 'auth_method',
+            'tls_verify', 'ca_cert_path', 'is_default', 'description', 'comments', 'tags',
         )
         help_texts = {
             'tls_verify': _(
@@ -103,6 +118,34 @@ class SecretEngineFilterForm(NetBoxModelFilterSetForm):
     model = SecretEngine
     auth_method = forms.MultipleChoiceField(choices=AuthMethodChoices, required=False)
     status = forms.MultipleChoiceField(choices=EngineStatusChoices, required=False)
+
+
+class RunProcedureForm(forms.Form):
+    procedure_name = forms.ChoiceField(
+        label=_('Procedure'),
+        choices=[
+            (name, name.removeprefix('service.openbao.1.'))
+            for name in sorted(OPENBAO_READ_PROCEDURES | OPENBAO_WRITE_PROCEDURES)
+        ],
+    )
+    restart_netbox = forms.BooleanField(
+        label=_('Restart NetBox services after provisioning'),
+        required=False,
+        initial=True,
+        help_text=_(
+            'AppRole provisioning writes new credentials; running NetBox processes need a restart to load them.'
+        ),
+    )
+
+
+class OpenBaoProcedureRunFilterForm(NetBoxModelFilterSetForm):
+    model = None
+
+    def __init__(self, *args, **kwargs):
+        from .models import OpenBaoProcedureRun
+
+        kwargs.setdefault('model', OpenBaoProcedureRun)
+        super().__init__(*args, **kwargs)
     tls_verify = forms.NullBooleanField(required=False)
     is_default = forms.NullBooleanField(required=False)
 

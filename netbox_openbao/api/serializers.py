@@ -32,8 +32,10 @@ from netbox_openbao.models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoProcedureRun,
     SecretEngine,
 )
+from netbox_openbao.rpc import ENGINE_BOUND_PARAM_KEYS, OPENBAO_READ_PROCEDURES, OPENBAO_WRITE_PROCEDURES
 from netbox_openbao.secrets.registry import validate_payload
 from netbox_openbao.utils import assignable_content_types
 
@@ -46,6 +48,8 @@ __all__ = (
     'CredentialTypeSchemaSerializer',
     'RevealResponseSerializer',
     'RevealRequestSerializer',
+    'RunProcedureSerializer',
+    'OpenBaoProcedureRunSerializer',
     'SecretEngineSerializer',
 )
 
@@ -55,17 +59,28 @@ class SecretEngineSerializer(PrimaryModelSerializer):
     auth_method = ChoiceField(choices=AuthMethodChoices, required=False)
     status = ChoiceField(choices=EngineStatusChoices, read_only=True)
     credential_count = serializers.IntegerField(read_only=True)
+    host_device = serializers.PrimaryKeyRelatedField(
+        queryset=None,
+        allow_null=True,
+        required=False,
+    )
 
     class Meta:
         model = SecretEngine
         fields = (
-            'id', 'url', 'display_url', 'display', 'name', 'slug', 'backend', 'api_url', 'namespace', 'kv_mount',
-            'kv_version', 'auth_method', 'tls_verify', 'ca_cert_path', 'is_default', 'status',
+            'id', 'url', 'display_url', 'display', 'name', 'slug', 'backend', 'api_url', 'namespace', 'host_device',
+            'kv_mount', 'kv_version', 'auth_method', 'tls_verify', 'ca_cert_path', 'is_default', 'status',
             'status_message', 'last_checked', 'env_prefix', 'credential_count', 'description', 'owner',
             'comments', 'tags', 'custom_fields', 'created', 'last_updated',
         )
         brief_fields = ('id', 'url', 'display', 'name', 'slug', 'description')
         read_only_fields = ('status', 'status_message', 'last_checked')
+
+    def __init__(self, *args, **kwargs):
+        from dcim.models import Device
+
+        super().__init__(*args, **kwargs)
+        self.fields['host_device'].queryset = Device.objects.all()
 
 
 class CredentialPolicySerializer(OrganizationalModelSerializer):
@@ -250,3 +265,52 @@ class RevealResponseSerializer(serializers.Serializer):
     kv_version = serializers.IntegerField(read_only=True, allow_null=True)
     ttl = serializers.IntegerField(read_only=True)
     secret_data = serializers.DictField(read_only=True)
+
+
+class RunProcedureSerializer(serializers.Serializer):
+    """Dispatch a seeded OpenBao RPC procedure against the engine host device."""
+
+    procedure_name = serializers.ChoiceField(
+        choices=[
+            (name, name.removeprefix('service.openbao.1.'))
+            for name in sorted(OPENBAO_READ_PROCEDURES | OPENBAO_WRITE_PROCEDURES)
+        ],
+    )
+    params = serializers.DictField(required=False, default=dict)
+
+    def validate(self, attrs):
+        params = attrs.get('params') or {}
+        if bound := ENGINE_BOUND_PARAM_KEYS & params.keys():
+            raise serializers.ValidationError({
+                'params': (
+                    'The following parameters are derived from the selected engine and cannot be overridden: '
+                    + ', '.join(sorted(bound))
+                ),
+            })
+        return attrs
+
+
+class OpenBaoProcedureRunSerializer(NetBoxModelSerializer):
+    url = serializers.HyperlinkedIdentityField(
+        view_name='plugins-api:netbox_openbao-api:openbaoprocedurerun-detail',
+    )
+    engine = SecretEngineSerializer(nested=True, read_only=True)
+    rpc_execution_id = serializers.PrimaryKeyRelatedField(
+        source='rpc_execution',
+        read_only=True,
+    )
+    status = serializers.CharField(source='rpc_execution.status', read_only=True)
+    result = serializers.JSONField(source='rpc_execution.result', read_only=True)
+    error_message = serializers.CharField(source='rpc_execution.error_message', read_only=True)
+
+    class Meta:
+        model = OpenBaoProcedureRun
+        fields = (
+            'id', 'url', 'display_url', 'display', 'engine', 'procedure_name', 'initiated_by',
+            'rpc_execution_id', 'status', 'result', 'error_message', 'comments', 'tags', 'custom_fields',
+            'created', 'last_updated',
+        )
+        brief_fields = ('id', 'url', 'display', 'procedure_name', 'status')
+        read_only_fields = (
+            'engine', 'procedure_name', 'initiated_by', 'rpc_execution_id', 'status', 'result', 'error_message',
+        )

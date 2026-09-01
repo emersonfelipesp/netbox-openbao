@@ -17,6 +17,7 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoProcedureRun,
     SecretEngine,
 )
 
@@ -26,6 +27,7 @@ __all__ = (
     'CredentialFilterSet',
     'CredentialPolicyFilterSet',
     'CredentialTypeSchemaFilterSet',
+    'OpenBaoProcedureRunFilterSet',
     'SecretEngineFilterSet',
 )
 
@@ -37,7 +39,7 @@ class SecretEngineFilterSet(NetBoxModelFilterSet):
     class Meta:
         model = SecretEngine
         fields = ('id', 'name', 'slug', 'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'tls_verify',
-                  'is_default', 'description')
+                  'is_default', 'host_device_id', 'description')
 
     def search(self, queryset, name, value):
         if not value.strip():
@@ -219,4 +221,25 @@ class CredentialTypeSchemaFilterSet(NetBoxModelFilterSet):
             return queryset
         return queryset.filter(
             Q(name__icontains=value) | Q(slug__icontains=value) | Q(description__icontains=value)
+        )
+
+
+class OpenBaoProcedureRunFilterSet(NetBoxModelFilterSet):
+    engine_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=SecretEngine.objects.all(),
+        label=_('Engine (ID)'),
+    )
+    procedure_name = MultiValueCharFilter(field_name='procedure_name', lookup_expr='iexact')
+
+    class Meta:
+        model = OpenBaoProcedureRun
+        fields = ('id', 'engine_id', 'procedure_name', 'initiated_by_id')
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(
+            Q(procedure_name__icontains=value)
+            | Q(engine__name__icontains=value)
+            | Q(engine__slug__icontains=value)
         )

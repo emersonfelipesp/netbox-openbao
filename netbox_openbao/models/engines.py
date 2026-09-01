@@ -81,6 +81,15 @@ class SecretEngine(PrimaryModel):
         default=False,
         help_text=_('Used by credentials that do not name an engine. At most one engine may be the default.'),
     )
+    host_device = models.ForeignKey(
+        to='dcim.Device',
+        on_delete=models.PROTECT,
+        related_name='openbao_secret_engines',
+        null=True,
+        blank=True,
+        verbose_name=_('OpenBao host'),
+        help_text=_('Device where OpenBao runs. Required for netbox-rpc host operations.'),
+    )
 
     # Observed state. Written by EngineHealthJob; not user-editable.
     status = models.CharField(
@@ -106,7 +115,7 @@ class SecretEngine(PrimaryModel):
 
     clone_fields = (
         'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method', 'tls_verify',
-        'ca_cert_path',
+        'ca_cert_path', 'host_device',
     )
 
     class Meta:

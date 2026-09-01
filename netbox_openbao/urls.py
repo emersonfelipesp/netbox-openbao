@@ -31,4 +31,7 @@ urlpatterns = (
 
     path('access-logs/', include(get_model_urls('netbox_openbao', 'credentialaccesslog', detail=False))),
     path('access-logs/<int:pk>/', include(get_model_urls('netbox_openbao', 'credentialaccesslog'))),
+
+    path('procedure-runs/', include(get_model_urls('netbox_openbao', 'openbaoprocedurerun', detail=False))),
+    path('procedure-runs/<int:pk>/', include(get_model_urls('netbox_openbao', 'openbaoprocedurerun'))),
 )

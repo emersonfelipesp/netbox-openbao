@@ -81,8 +81,8 @@ EMAIL = {"SERVER": "localhost", "PORT": 25, "FROM_EMAIL": "netbox@example.net"}
 DEFAULT_PERMISSIONS = {}
 RQ = {"COMMIT_MODE": "auto"}
 DEVELOPER = True
-PLUGINS = ["netbox_openbao"]
-PLUGINS_CONFIG = {"netbox_openbao": {}}
+PLUGINS = ["netbox_rpc", "netbox_openbao"]
+PLUGINS_CONFIG = {"netbox_openbao": {}, "netbox_rpc": {}}
 PY
 
 export NETBOX_CONFIGURATION=netbox.configuration

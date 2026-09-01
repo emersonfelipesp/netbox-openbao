@@ -10,6 +10,7 @@ that can display material — revealing is a separate POST-only view guarded by
 its own permission.
 """
 
+from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from netbox.ui import actions, attrs, panels
 
@@ -30,6 +31,9 @@ __all__ = (
     'CredentialTypeSchemaDefinitionPanel',
     'CredentialTypeSchemaPanel',
     'EnginePolicyPanel',
+    'EngineProcedureRunPanel',
+    'OpenBaoProcedureRunPanel',
+    'OpenBaoProcedureRunResultPanel',
     'PolicyCredentialPanel',
     'SecretEnginePanel',
     'SecretEngineStatusPanel',
@@ -45,6 +49,7 @@ class SecretEnginePanel(panels.ObjectAttributesPanel):
     kv_mount = attrs.TextAttr('kv_mount', label=_('KV mount'), style='font-monospace')
     kv_version = attrs.NumericAttr('kv_version', label=_('KV version'))
     auth_method = attrs.ChoiceAttr('auth_method', label=_('Auth method'))
+    host_device = attrs.RelatedObjectAttr('host_device', linkify=True, label=_('OpenBao host'))
     is_default = attrs.BooleanAttr('is_default', label=_('Default engine'))
     description = attrs.TextAttr('description')
 
@@ -194,6 +199,57 @@ class EnginePolicyPanel(panels.ObjectsTablePanel):
             ),
         ])
         super().__init__('netbox_openbao.CredentialPolicy', **kwargs)
+
+
+class EngineProcedureRunPanel(panels.ObjectsTablePanel):
+    """Recent audited RPC operations against this engine's host device."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault('title', _('Host operations'))
+        kwargs.setdefault('filters', {'engine_id': lambda ctx: ctx['object'].pk})
+        kwargs.setdefault('exclude_columns', ['engine'])
+        kwargs.setdefault('actions', [
+            RunProcedureLinkAction(),
+        ])
+        super().__init__('netbox_openbao.OpenBaoProcedureRun', **kwargs)
+
+
+class RunProcedureLinkAction(actions.LinkAction):
+    """Jump to the engine-scoped RPC dispatch form."""
+
+    def __init__(self, **kwargs):
+        super().__init__(
+            view_name='plugins:netbox_openbao:secretengine_run-procedure',
+            label=_('Run procedure'),
+            button_icon='console-line',
+            permissions=[
+                'netbox_openbao.change_secretengine',
+                'netbox_rpc.execute_rpcprocedure',
+            ],
+            **kwargs,
+        )
+
+    def get_url(self, context):
+        return reverse(
+            'plugins:netbox_openbao:secretengine_run-procedure',
+            kwargs={'pk': context['object'].pk},
+        )
+
+
+class OpenBaoProcedureRunPanel(panels.ObjectAttributesPanel):
+    engine = attrs.RelatedObjectAttr('engine', linkify=True)
+    procedure_name = attrs.TextAttr('procedure_name', label=_('Procedure'), style='font-monospace')
+    initiated_by = attrs.RelatedObjectAttr('initiated_by', linkify=True, label=_('Initiated by'))
+    rpc_execution = attrs.RelatedObjectAttr('rpc_execution', linkify=True, label=_('RPC execution'))
+
+
+class OpenBaoProcedureRunResultPanel(panels.ObjectAttributesPanel):
+    title = _('Execution')
+
+    status = attrs.TextAttr('rpc_execution.status', label=_('Status'))
+    error_message = attrs.TextAttr('rpc_execution.error_message', label=_('Error'))
+    started_at = attrs.DateTimeAttr('rpc_execution.started_at', label=_('Started'))
+    finished_at = attrs.DateTimeAttr('rpc_execution.finished_at', label=_('Finished'))
 
 
 class PolicyCredentialPanel(panels.ObjectsTablePanel):

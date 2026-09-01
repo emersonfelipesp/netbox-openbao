@@ -234,6 +234,12 @@ Deliberately not yet here:
 - Dynamic secrets (database and cloud credential engines), which are a
   different lifecycle rather than a bigger version of this one
 
+**Host operations via netbox-rpc** are implemented on `SecretEngine`: bind an
+OpenBao host `dcim.Device`, then dispatch the seeded `service.openbao.1.*`
+read/write procedures through `POST …/engines/{id}/run-procedure/` (UI mirror:
+the engine detail page). Each dispatch creates an audited `OpenBaoProcedureRun`
+row linked to `netbox_rpc.RPCExecution`.
+
 ## Giving a device SSH access
 
 There is an **Add SSH access** button on every Device and VM page. One form

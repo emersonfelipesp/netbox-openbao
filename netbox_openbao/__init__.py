@@ -38,6 +38,8 @@ class NetBoxOpenBaoConfig(PluginConfig):
     min_version = '4.6.0'
     max_version = '4.7.99'
 
+    required_plugins = ['netbox_rpc']
+
     required_settings = []
     default_settings = {
         # Path prefix beneath the KV mount. Full logical path for a credential

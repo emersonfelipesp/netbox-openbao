@@ -369,6 +369,11 @@ NetBox 4.6.5 as the backward-regression target.
 - **Anything touching the reveal path** → re-read
   [`docs/security.md`](docs/security.md) first and make sure
   `tests/test_security.py` still fails when you break the invariant.
+- **OpenBao host operations** → `netbox_openbao/rpc.py` and
+  `dispatch_openbao_procedure()` only. Never shell out to `bao`, SSH, or call
+  netbox-rpc-backend HTTP from this plugin. Bind `SecretEngine.host_device` to
+  the OpenBao `dcim.Device`; UI and API `run-procedure` must stay mirrored and
+  create `OpenBaoProcedureRun` audit rows.
 - **A behaviour change** → update `docs/` and this file in the same change,
   and rebuild the site: `pip install '.[docs]' && mkdocs build --strict`. The
   nav in `mkdocs.yml` is explicit, so a new page that is not listed there is

@@ -8,6 +8,7 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoProcedureRun,
     SecretEngine,
 )
 
@@ -17,12 +18,14 @@ __all__ = (
     'CredentialPolicyTable',
     'CredentialTable',
     'CredentialTypeSchemaTable',
+    'OpenBaoProcedureRunTable',
     'SecretEngineTable',
 )
 
 
 class SecretEngineTable(NetBoxTable):
     name = tables.Column(linkify=True)
+    host_device = tables.Column(linkify=True, verbose_name=_('OpenBao host'))
     status = columns.ChoiceFieldColumn()
     tls_verify = columns.BooleanColumn(verbose_name=_('Verify TLS'))
     is_default = columns.BooleanColumn(verbose_name=_('Default'))
@@ -36,12 +39,12 @@ class SecretEngineTable(NetBoxTable):
     class Meta(NetBoxTable.Meta):
         model = SecretEngine
         fields = (
-            'pk', 'id', 'name', 'slug', 'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method',
-            'tls_verify', 'is_default', 'status', 'status_message', 'last_checked', 'credential_count',
+            'pk', 'id', 'name', 'slug', 'backend', 'api_url', 'namespace', 'host_device', 'kv_mount', 'kv_version',
+            'auth_method', 'tls_verify', 'is_default', 'status', 'status_message', 'last_checked', 'credential_count',
             'description', 'comments', 'tags', 'created', 'last_updated',
         )
         default_columns = (
-            'name', 'api_url', 'kv_mount', 'auth_method', 'status', 'is_default', 'credential_count',
+            'name', 'host_device', 'api_url', 'kv_mount', 'auth_method', 'status', 'is_default', 'credential_count',
         )
 
 
@@ -149,3 +152,20 @@ class CredentialTypeSchemaTable(NetBoxTable):
             'tags', 'created', 'last_updated',
         )
         default_columns = ('name', 'slug', 'extractor', 'secret_fields', 'description')
+
+
+class OpenBaoProcedureRunTable(NetBoxTable):
+    engine = tables.Column(linkify=True)
+    procedure_name = tables.Column(verbose_name=_('Procedure'))
+    initiated_by = tables.Column(linkify=True)
+    rpc_execution = tables.Column(linkify=True, verbose_name=_('RPC execution'))
+    status = columns.ChoiceFieldColumn(accessor='rpc_execution__status', verbose_name=_('Status'))
+    tags = columns.TagColumn(url_name='plugins:netbox_openbao:openbaoprocedurerun_list')
+
+    class Meta(NetBoxTable.Meta):
+        model = OpenBaoProcedureRun
+        fields = (
+            'pk', 'id', 'engine', 'procedure_name', 'initiated_by', 'rpc_execution', 'status',
+            'tags', 'created', 'last_updated',
+        )
+        default_columns = ('created', 'engine', 'procedure_name', 'status', 'initiated_by', 'rpc_execution')

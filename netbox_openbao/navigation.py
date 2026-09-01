@@ -76,12 +76,18 @@ access_logs = PluginMenuItem(
     permissions=['netbox_openbao.view_credentialaccesslog'],
 )
 
+procedure_runs = PluginMenuItem(
+    link='plugins:netbox_openbao:openbaoprocedurerun_list',
+    link_text='Procedure runs',
+    permissions=['netbox_openbao.view_openbaoprocedurerun'],
+)
+
 menu = PluginMenu(
     label='OpenBao',
     groups=(
         ('Credentials', (credentials, assignments)),
         ('Configuration', (policies, engines, type_schemas)),
-        ('Audit', (access_logs,)),
+        ('Audit', (access_logs, procedure_runs)),
     ),
     icon_class='mdi mdi-shield-key',
 )

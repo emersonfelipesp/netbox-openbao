@@ -46,8 +46,10 @@ from netbox_openbao.models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoProcedureRun,
     SecretEngine,
 )
+from netbox_openbao.rpc import dispatch_openbao_procedure
 from netbox_openbao.services import (
     discard_staged,
     enforce_policy_access,
@@ -66,8 +68,10 @@ from .serializers import (
     CredentialPolicySerializer,
     CredentialSerializer,
     CredentialTypeSchemaSerializer,
+    OpenBaoProcedureRunSerializer,
     PromoteRequestSerializer,
     RevealRequestSerializer,
+    RunProcedureSerializer,
     SecretEngineSerializer,
 )
 from .throttling import RevealRateThrottle
@@ -78,6 +82,7 @@ __all__ = (
     'CredentialPolicyViewSet',
     'CredentialTypeSchemaViewSet',
     'CredentialViewSet',
+    'OpenBaoProcedureRunViewSet',
     'SecretEngineViewSet',
 )
 
@@ -127,6 +132,34 @@ class SecretEngineViewSet(NetBoxModelViewSet):
             'checked': timezone.now(),
         })
 
+    @action(detail=True, methods=['post'], url_path='run-procedure')
+    def run_procedure(self, request, pk=None):
+        """Dispatch an audited OpenBao RPC procedure against the engine host device."""
+        engine = get_object_or_404(self.queryset.restrict(request.user, 'change'), pk=pk)
+        serializer = RunProcedureSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            execution, run = dispatch_openbao_procedure(
+                engine=engine,
+                procedure_name=serializer.validated_data['procedure_name'],
+                user=request.user,
+                request=request,
+                params=serializer.validated_data.get('params') or {},
+            )
+        except DjangoValidationError as exc:
+            raise _as_drf_validation_error(exc) from exc
+        return Response(
+            OpenBaoProcedureRunSerializer(run, context={'request': request}).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class OpenBaoProcedureRunViewSet(NetBoxReadOnlyModelViewSet):
+    queryset = OpenBaoProcedureRun.objects.select_related(
+        'engine', 'initiated_by', 'rpc_execution', 'rpc_execution__procedure',
+    )
+    serializer_class = OpenBaoProcedureRunSerializer
+    filterset_class = filtersets.OpenBaoProcedureRunFilterSet
 
 class CredentialPolicyViewSet(NetBoxModelViewSet):
     queryset = CredentialPolicy.objects.select_related('engine').annotate(
