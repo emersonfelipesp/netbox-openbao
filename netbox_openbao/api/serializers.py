@@ -8,6 +8,7 @@ browsable API form, an export template, or an OpenAPI example, regardless of
 what any view does. There is also no model field for it to fall back to.
 """
 
+from dcim.models import Device
 from django.core.exceptions import ValidationError as DjangoValidationError
 from netbox.api.fields import ChoiceField, ContentTypeField
 from netbox.api.gfk_fields import GFKSerializerField
@@ -60,7 +61,7 @@ class SecretEngineSerializer(PrimaryModelSerializer):
     status = ChoiceField(choices=EngineStatusChoices, read_only=True)
     credential_count = serializers.IntegerField(read_only=True)
     host_device = serializers.PrimaryKeyRelatedField(
-        queryset=None,
+        queryset=Device.objects.all(),
         allow_null=True,
         required=False,
     )
@@ -75,12 +76,6 @@ class SecretEngineSerializer(PrimaryModelSerializer):
         )
         brief_fields = ('id', 'url', 'display', 'name', 'slug', 'description')
         read_only_fields = ('status', 'status_message', 'last_checked')
-
-    def __init__(self, *args, **kwargs):
-        from dcim.models import Device
-
-        super().__init__(*args, **kwargs)
-        self.fields['host_device'].queryset = Device.objects.all()
 
 
 class CredentialPolicySerializer(OrganizationalModelSerializer):

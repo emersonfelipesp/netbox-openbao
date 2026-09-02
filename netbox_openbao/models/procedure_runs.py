@@ -1,4 +1,4 @@
-from django.contrib.auth.models import User
+from django.conf import settings
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from netbox.models import NetBoxModel
@@ -24,7 +24,7 @@ class OpenBaoProcedureRun(NetBoxModel):
         max_length=100,
     )
     initiated_by = models.ForeignKey(
-        to=User,
+        to=settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name='+',
     )

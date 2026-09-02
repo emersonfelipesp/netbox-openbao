@@ -11,6 +11,7 @@ is collected into a payload dict in `clean()` and handed to the service layer,
 which passes it to the backend and drops it.
 """
 
+from dcim.models import Device
 from django import forms
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
@@ -80,17 +81,11 @@ class SecretEngineForm(PrimaryModelForm):
     slug = SlugField()
     comments = CommentField()
     host_device = DynamicModelChoiceField(
-        queryset=None,
+        queryset=Device.objects.all(),
         required=False,
         label=_('OpenBao host'),
         help_text=_('Device where OpenBao runs. Required for netbox-rpc host operations.'),
     )
-
-    def __init__(self, *args, **kwargs):
-        from dcim.models import Device
-
-        super().__init__(*args, **kwargs)
-        self.fields['host_device'].queryset = Device.objects.all()
 
     fieldsets = (
         FieldSet('name', 'slug', 'backend', 'api_url', 'namespace', 'host_device', 'is_default', 'description',
