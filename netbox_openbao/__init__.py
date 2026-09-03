@@ -120,7 +120,7 @@ class NetBoxOpenBaoConfig(PluginConfig):
         # views:    ESSENTIAL — @register_model_view decorators live there, and
         #           urls.py resolves them through get_model_urls() at URLconf
         #           load. Drop this import and every plugin URL 404s.
-        from . import jobs, search, signals, views  # noqa: F401
+        from . import checks, jobs, search, signals, views  # noqa: F401
 
 
 config = NetBoxOpenBaoConfig

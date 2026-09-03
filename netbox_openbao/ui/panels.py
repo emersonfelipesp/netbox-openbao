@@ -320,3 +320,32 @@ class CredentialTypeSchemaDefinitionPanel(panels.JSONPanel):
     def __init__(self, **kwargs):
         kwargs.setdefault('title', _('JSON Schema'))
         super().__init__('schema', **kwargs)
+
+
+class OpenBaoSettingsPanel(panels.ObjectAttributesPanel):
+    """The settings an operator changes, grouped as they are on the form."""
+
+    path_prefix = attrs.TextAttr('path_prefix', label=_('Path prefix'), style='font-monospace')
+    store_public_material = attrs.BooleanAttr('store_public_material', label=_('Store public material'))
+    reveal_rate_limit = attrs.TextAttr('reveal_rate_limit', label=_('Reveal rate limit'), style='font-monospace')
+    reveal_ttl = attrs.NumericAttr('reveal_ttl', label=_('Reveal TTL (seconds)'))
+    token_cache_ttl = attrs.NumericAttr('token_cache_ttl', label=_('Token cache TTL (seconds)'))
+    allow_generation = attrs.BooleanAttr('allow_generation', label=_('Allow generation'))
+    default_ssh_key_type = attrs.ChoiceAttr('default_ssh_key_type', label=_('Default SSH key type'))
+    audit_retention_days = attrs.NumericAttr('audit_retention_days', label=_('Audit retention (days)'))
+
+
+class OpenBaoSettingsSourcePanel(panels.ObjectAttributesPanel):
+    """
+    Where configuration is actually coming from, and what is being ignored.
+
+    The second part is the reason this panel exists. Once a settings row is
+    saved it becomes authoritative, and a key still present in `PLUGINS_CONFIG`
+    is silently ignored — which is how an operator spends an afternoon on a
+    value they can see in a file, have edited, and that does nothing. The same
+    information is logged at startup; this puts it where they are already
+    looking.
+    """
+
+    superseded_keys = attrs.TextAttr('superseded_plugins_config_keys', label=_('Ignored PLUGINS_CONFIG keys'))
+    static_intervals = attrs.TextAttr('static_interval_summary', label=_('Restart-required settings'))

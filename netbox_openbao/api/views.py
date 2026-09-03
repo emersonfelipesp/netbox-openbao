@@ -35,6 +35,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
+from utilities.exceptions import AbortRequest
 
 from netbox_openbao import filtersets
 from netbox_openbao.backends import get_backend
@@ -174,13 +175,15 @@ class OpenBaoSettingsViewSet(NetBoxModelViewSet):
 
     def perform_create(self, serializer):
         # The serializer's exists() check provides a useful early error, but it
-        # cannot serialize two concurrent POSTs. The unique singleton key is
-        # the authority. NetBox's implementation already saves atomically and
-        # enforces constrained object permissions; retain both, and translate
-        # the losing transaction instead of leaking a 500.
+        # cannot serialize two concurrent POSTs. The model re-checks under the
+        # singleton advisory lock and refuses with AbortRequest, which is what
+        # keeps the HTML form off an uncaught IntegrityError; IntegrityError is
+        # still translated here because the constraint remains the last
+        # authority if that lock is ever bypassed. Both become the same
+        # structured 400 rather than a 500 or an unexplained detail string.
         try:
             super().perform_create(serializer)
-        except IntegrityError as exc:
+        except (AbortRequest, IntegrityError) as exc:
             raise DRFValidationError({
                 'non_field_errors': ['The OpenBao settings row already exists.'],
             }) from exc

@@ -416,6 +416,26 @@ NetBox 4.6.5 as the backward-regression target.
   migration — do not wire the decorators to them until that work lands, because
   a value that appears live and reverts at the next worker restart is worse than
   one that is honestly restart-required.
+- **The settings audit lives on a signal, not in the edit view.**
+  `ObjectEditView` builds its form directly and calls `form.save()` inside its
+  own transaction — it never routes through `get_form()` or `form_valid()`, so
+  overriding either does nothing, and reimplementing `post()` is the mistake
+  recorded above. A `post_save` receiver also covers the REST API and management
+  commands, which matters because `change_openbaosettings` can widen
+  `reveal_rate_limit` — the control bounding a leaked token — and an audit that
+  saw only the UI would be the wrong audit. The actor comes from
+  `netbox.context.current_request`; a save with no request records no user,
+  which is accurate rather than convenient. **Field names only, never values.**
+- **Startup diagnostics that need the database are Django system checks, not
+  `ready()` hooks.** Querying during app initialisation earns Django's own
+  `Accessing the database during app initialization is discouraged` warning, and
+  on a fresh install the table does not exist. `checks.py` holds them; they run
+  on `manage.py check`, `runserver`, and `migrate`, which is when an operator can
+  act on what they say.
+- **A constant in a model class body trips `check_no_secret_fields.py`.** That
+  script parses class-body assignments looking for fields, so a helper constant
+  there is noise in the one signal it exists to keep clean. Put it at module
+  scope — `NOT_AUDITED` in `models/settings.py` is there for that reason.
 - **`OpenBaoSettings` holds configuration, never material.** No AppRole, no
   SecretID, no token — the same rule as `Credential`, and an easier place to
   talk yourself into breaking it. `scripts/check_no_secret_fields.py` guards

@@ -82,11 +82,31 @@ procedure_runs = PluginMenuItem(
     permissions=['netbox_openbao.view_openbaoprocedurerun'],
 )
 
+settings_item = PluginMenuItem(
+    link='plugins:netbox_openbao:openbaosettings_list',
+    link_text='Settings',
+    permissions=['netbox_openbao.view_openbaosettings'],
+    buttons=(
+        # The seeding migration deliberately leaves the row absent on a
+        # deployment running the defaults, so a fresh install lands on an empty
+        # list with no discoverable way in. The permission gate is not enough on
+        # its own — the form also refuses a second row, because reaching this
+        # page on a configured install would otherwise hit the unique
+        # constraint and surface as a server error rather than a message.
+        PluginMenuButton(
+            link='plugins:netbox_openbao:openbaosettings_add',
+            title='Configure',
+            icon_class='mdi mdi-plus-thick',
+            permissions=['netbox_openbao.add_openbaosettings'],
+        ),
+    ),
+)
+
 menu = PluginMenu(
     label='OpenBao',
     groups=(
         ('Credentials', (credentials, assignments)),
-        ('Configuration', (policies, engines, type_schemas)),
+        ('Configuration', (policies, engines, type_schemas, settings_item)),
         ('Audit', (access_logs, procedure_runs)),
     ),
     icon_class='mdi mdi-shield-key',

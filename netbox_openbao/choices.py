@@ -143,6 +143,11 @@ class AccessActionChoices(ChoiceSet):
     ACTION_PROMOTE = 'promote'
     ACTION_DISCARD = 'discard'
     ACTION_DELETE = 'delete'
+    # Not a credential access. Recorded here anyway because an operator
+    # reconstructing an incident wants "the reveal rate limit was lowered at
+    # 03:00" in the same timeline as the reveals it permitted, not in a separate
+    # changelog they would have to think to open.
+    ACTION_CONFIGURE = 'configure'
 
     CHOICES = [
         Choice(ACTION_REVEAL, _('Reveal'), color='orange'),
@@ -152,6 +157,7 @@ class AccessActionChoices(ChoiceSet):
         Choice(ACTION_PROMOTE, _('Promote'), color='green'),
         Choice(ACTION_DISCARD, _('Discard'), color='gray'),
         Choice(ACTION_DELETE, _('Delete'), color='red'),
+        Choice(ACTION_CONFIGURE, _('Configure'), color='purple'),
     ]
 
 

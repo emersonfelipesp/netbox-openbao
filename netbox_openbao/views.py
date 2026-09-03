@@ -18,6 +18,7 @@ from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import View
 from extras.ui.panels import CustomFieldsPanel, TagsPanel
+from netbox.object_actions import AddObject
 from netbox.ui import layout
 from netbox.ui.panels import CommentsPanel
 from netbox.views import generic
@@ -33,6 +34,7 @@ from .models import (
     CredentialPolicy,
     CredentialTypeSchema,
     OpenBaoProcedureRun,
+    OpenBaoSettings,
     SecretEngine,
 )
 from .quickadd import quick_add_ssh
@@ -661,3 +663,83 @@ class OpenBaoProcedureRunView(generic.ObjectView):
             CommentsPanel(),
         ],
     )
+
+
+# ----------------------------------------------------------------------
+# Settings
+# ----------------------------------------------------------------------
+
+
+@register_model_view(OpenBaoSettings, 'list', path='', detail=False)
+class OpenBaoSettingsListView(generic.ObjectListView):
+    """
+    A one-row list, because NetBox routes every model through a list view.
+
+    The row links to the detail page; `get_solo()` is not called here. A read
+    must never create the settings row — that is what keeps `PLUGINS_CONFIG`
+    reachable as the fallback, and what keeps the plugin's own test suite able
+    to configure itself with `override_settings`.
+    """
+
+    queryset = OpenBaoSettings.objects.all()
+    table = tables.OpenBaoSettingsTable
+    # `ObjectListView` offers bulk import, export, edit, rename, and delete by
+    # default, and every one of them resolves to nothing here: only list, add,
+    # edit, detail, and delete routes are registered, and bulk operations on a
+    # singleton are meaningless anyway. Left at the default they render as
+    # controls that fail rather than as controls that are absent — the same
+    # failure as the missing list route, in the other direction.
+    actions = (AddObject,)
+
+
+@register_model_view(OpenBaoSettings)
+class OpenBaoSettingsView(generic.ObjectView):
+    queryset = OpenBaoSettings.objects.all()
+    layout = layout.SimpleLayout(
+        left_panels=[
+            openbao_panels.OpenBaoSettingsPanel(),
+            CustomFieldsPanel(),
+            TagsPanel(),
+        ],
+        right_panels=[
+            openbao_panels.OpenBaoSettingsSourcePanel(),
+        ],
+    )
+
+
+@register_model_view(OpenBaoSettings, 'add', detail=False)
+@register_model_view(OpenBaoSettings, 'edit')
+class OpenBaoSettingsEditView(generic.ObjectEditView):
+    """
+    Edit the settings row, recording the change where reveals are recorded.
+
+    `change_openbaosettings` is a security-sensitive permission rather than an
+    administrative convenience: it can widen `reveal_rate_limit`, which is the
+    control bounding how fast a leaked API token drains the store, and it can
+    turn off `store_public_material` or repoint `path_prefix`. NetBox's
+    changelog records *what* changed; this also records it in
+    `CredentialAccessLog`, so an operator reconstructing an incident sees the
+    change in the same timeline as the reveals it governed.
+
+    `form.save()` is hooked rather than `post()` reimplemented — the generic
+    view already wraps it in a transaction and supplies `restrict_form_fields()`,
+    changelog snapshots, and `alter_object()`, all of which an earlier revision
+    of this plugin lost by overriding `post()`.
+    """
+
+    queryset = OpenBaoSettings.objects.all()
+    form = forms.OpenBaoSettingsForm
+
+
+@register_model_view(OpenBaoSettings, 'delete')
+class OpenBaoSettingsDeleteView(generic.ObjectDeleteView):
+    """
+    Deletion is refused by the model while credentials exist.
+
+    That refusal lives on the model rather than here, so the API and a direct
+    ORM delete are held to it too — deleting the row makes configuration fall
+    back to `PLUGINS_CONFIG`, and a different prefix there reproduces exactly
+    the outage the change guard exists to prevent.
+    """
+
+    queryset = OpenBaoSettings.objects.all()

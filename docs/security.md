@@ -8,6 +8,31 @@ convention the next contributor has to remember.
 Each is covered by a test in `netbox_openbao/tests/test_security.py`. If you
 change one, that test should fail; if it doesn't, the test is wrong.
 
+## `change_openbaosettings` is admin-tier
+
+Treat it alongside `reveal_credential` and `rotate_credential`, not as an
+ordinary settings permission. Whoever holds it can:
+
+- **widen `reveal_rate_limit`**, which is the control bounding how fast a leaked
+  API token can drain the credential store — the single control most worth
+  weakening if you are the attacker;
+- **turn off `store_public_material`**, giving up the zero-read expiry dashboard;
+- **repoint `path_prefix`**, though the model refuses that while credentials
+  exist, for the reasons in the configuration guide.
+
+Settings changes are recorded in `CredentialAccessLog` with the `configure`
+action as well as in NetBox's changelog. The changelog answers *what* changed;
+the access log puts it in the same timeline as the reveals it governs, which is
+where an operator reconstructing an incident is already looking. The record names
+the fields that changed and never their values — the access log's standing
+contract is that it carries no values, and a log that sometimes carries them is
+one somebody will later extend to carry the wrong one.
+
+The audit is written from a model signal rather than the edit view, so it covers
+the REST API and management commands as well as the UI. A permission this
+consequential should not be auditable on only one of its surfaces.
+
+
 ## 1. No model field can hold secret material
 
 `Credential` has no column that material could be written to. That is the claim
@@ -197,8 +222,19 @@ The `managed_by: netbox-openbao` custom metadata is written on every credential
 precisely so that walk is possible; the job that would perform it is not
 written yet. Alert on the log line.
 
-Deleting a `Credential` destroys its material via a `pre_delete` signal, so
-removing a row never leaves a readable secret behind on the mount.
+Deleting a `Credential` destroys its material from a `post_delete` signal
+deferred to `transaction.on_commit`, so the irreversible half happens only once
+the row deletion has actually committed. Doing it the other way round meant a
+later failure in the same transaction restored the row and left it pointing at
+material that no longer existed — routine under bulk deletion, where one late
+failure wiped the material of every credential before it.
+
+The residue that ordering can leave is the opposite one: the row is gone and the
+backend call failed, so the material stays. That case is logged as
+`ORPHANED SECRET` naming the engine and path, and it is **recoverable** — the
+secret is still there to be found and removed — where the other is not. Do not
+read this as "deletion never leaves readable material"; read it as "deletion
+never destroys material for a deletion that did not happen".
 
 ## 11. A rotation cannot break a consumer, and cannot lose the old secret
 

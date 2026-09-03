@@ -9,6 +9,7 @@ from .models import (
     CredentialPolicy,
     CredentialTypeSchema,
     OpenBaoProcedureRun,
+    OpenBaoSettings,
     SecretEngine,
 )
 
@@ -169,3 +170,28 @@ class OpenBaoProcedureRunTable(NetBoxTable):
             'tags', 'created', 'last_updated',
         )
         default_columns = ('created', 'engine', 'procedure_name', 'status', 'initiated_by', 'rpc_execution')
+
+
+class OpenBaoSettingsTable(NetBoxTable):
+    """
+    The singleton, rendered as a one-row list because NetBox routes every model
+    through a list view. The interesting columns are the ones an operator would
+    check before opening the form.
+    """
+
+    path_prefix = tables.Column(linkify=True, verbose_name=_('Path prefix'))
+    reveal_rate_limit = tables.Column(verbose_name=_('Reveal rate limit'))
+    store_public_material = columns.BooleanColumn(verbose_name=_('Store public material'))
+    allow_generation = columns.BooleanColumn(verbose_name=_('Allow generation'))
+
+    class Meta(NetBoxTable.Meta):
+        model = OpenBaoSettings
+        fields = (
+            'pk', 'id', 'path_prefix', 'reveal_rate_limit', 'reveal_ttl',
+            'store_public_material', 'allow_generation', 'audit_retention_days',
+            'last_updated',
+        )
+        default_columns = (
+            'path_prefix', 'reveal_rate_limit', 'store_public_material',
+            'allow_generation', 'last_updated',
+        )

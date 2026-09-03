@@ -34,4 +34,7 @@ urlpatterns = (
 
     path('procedure-runs/', include(get_model_urls('netbox_openbao', 'openbaoprocedurerun', detail=False))),
     path('procedure-runs/<int:pk>/', include(get_model_urls('netbox_openbao', 'openbaoprocedurerun'))),
+
+    path('settings/', include(get_model_urls('netbox_openbao', 'openbaosettings', detail=False))),
+    path('settings/<int:pk>/', include(get_model_urls('netbox_openbao', 'openbaosettings'))),
 )

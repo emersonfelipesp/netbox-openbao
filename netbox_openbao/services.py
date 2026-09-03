@@ -126,6 +126,49 @@ def log_access(credential, user, action, success=True, reason='', message='', re
         return None
 
 
+def log_settings_change(user, request=None, changed_fields=None, success=True, message=None):
+    """
+    Record a settings change alongside the credential accesses it governs.
+
+    NetBox's own changelog already records *what* changed on the row. This
+    records it where an operator investigating a leak is already looking: the
+    same table as the reveals. A lowered `reveal_rate_limit` is the control that
+    bounds how fast a stolen token drains the store, so "who widened it, from
+    where, and when" belongs in the timeline next to the reveals it permitted —
+    not in a second place they would have to think to open.
+
+    `credential` is null and the snapshot names the settings row instead. The
+    column is already nullable for the rolled-back-write case, so this needs no
+    schema change.
+
+    **Field names only, never values.** The access log's standing contract is
+    that it carries no configuration or secret values, and a rate limit is not
+    secret but the contract is worth more than the convenience of recording it.
+    """
+    from netbox_openbao.models import CredentialAccessLog
+
+    context = _request_context(request)
+    names = ', '.join(sorted(changed_fields or [])) or 'settings'
+    summary = message or f'Changed: {names}'
+    try:
+        with transaction.atomic():
+            return CredentialAccessLog.objects.create(
+                credential=None,
+                credential_name_snapshot='OpenBao settings',
+                credential_uuid_snapshot=None,
+                user=user if (user is not None and getattr(user, 'is_authenticated', False)) else None,
+                username_snapshot=(getattr(user, 'username', '') or '')[:150],
+                action=AccessActionChoices.ACTION_CONFIGURE,
+                success=success,
+                reason='',
+                message=summary[:500],
+                **context,
+            )
+    except Exception:
+        logger.exception('Failed to write settings-change audit record')
+        return None
+
+
 # ----------------------------------------------------------------------
 # Authorization
 # ----------------------------------------------------------------------

@@ -11,10 +11,36 @@ from django.utils.translation import gettext_lazy as _
 from netbox.models import NetBoxModel
 from rest_framework.throttling import SimpleRateThrottle
 from utilities.exceptions import AbortRequest
+from utilities.querysets import RestrictedQuerySet
 
 from netbox_openbao.choices import SSHKeyTypeChoices
 
-__all__ = ('OpenBaoSettings', 'validate_path_prefix', 'validate_reveal_rate')
+__all__ = (
+    'STATIC_INTERVAL_SETTINGS',
+    'OpenBaoSettings',
+    'validate_path_prefix',
+    'validate_reveal_rate',
+)
+
+#: Stored on the model, still read from PLUGINS_CONFIG at import by the
+#: @system_job decorators. Declared once so the form, the panel, and the startup
+#: warning cannot disagree about which settings are not yet live.
+STATIC_INTERVAL_SETTINGS = (
+    'engine_health_interval',
+    'expiry_scan_interval',
+    'credential_verify_interval',
+    'rotation_due_interval',
+    'access_log_prune_interval',
+)
+
+#: Excluded from the change audit: the intervals, which are stored but not yet
+#: acted on, and the housekeeping columns NetBox contributes. Module scope
+#: rather than a class attribute, because `check_no_secret_fields.py` parses
+#: class-body assignments looking for fields and a constant there is noise in
+#: exactly the signal that script exists to keep clean.
+NOT_AUDITED = frozenset(STATIC_INTERVAL_SETTINGS) | {
+    'id', 'singleton_key', 'created', 'last_updated', 'custom_field_data', 'tags',
+}
 
 _UNSET = object()
 
@@ -70,6 +96,31 @@ def validate_path_prefix(prefix):
                 'segments, or whitespace.'
             ),
         })
+
+
+class OpenBaoSettingsQuerySet(RestrictedQuerySet):
+    """
+    Audit a refused bulk deletion once its own transaction has unwound.
+
+    `QuerySet.delete()` never calls `Model.delete()`, so the guard reaches it
+    through a `pre_delete` receiver — which fires inside the atomic block
+    `QuerySet.delete()` opens, where an audit row cannot survive the refusal
+    that follows it. Catching here is the first point outside that block.
+
+    One limit is worth stating rather than discovering: a caller that wraps the
+    deletion in a transaction of its own — DRF's bulk destroy does — rolls this
+    record back too. The guard, not the record, is the enforcement, and the
+    refusal is logged either way.
+    """
+
+    def delete(self, *args, **kwargs):
+        instances = list(self)
+        try:
+            return super().delete(*args, **kwargs)
+        except AbortRequest:
+            for instance in instances:
+                instance._audit_refusal('delete', 'credentials exist')
+            raise
 
 
 class OpenBaoSettings(NetBoxModel):
@@ -178,6 +229,8 @@ class OpenBaoSettings(NetBoxModel):
         help_text=_('Access-log pruning interval in minutes.'),
     )
 
+    objects = OpenBaoSettingsQuerySet.as_manager()
+
     class Meta:
         verbose_name = _('OpenBao settings')
         verbose_name_plural = _('OpenBao settings')
@@ -190,6 +243,45 @@ class OpenBaoSettings(NetBoxModel):
         prefix = self.path_prefix or ''
         validate_path_prefix(prefix)
         self._validate_prefix_change(prefix)
+
+    @staticmethod
+    def _audit_refusal(field, detail):
+        """
+        Record a refused configuration change.
+
+        A refusal is worth more to an operator reconstructing an incident than a
+        successful change: it is evidence that somebody tried to widen a control
+        and was stopped. This lives on the model rather than in a view or a
+        serializer so every surface — UI, REST API, management command — is
+        covered by one implementation instead of three that can disagree.
+
+        Best-effort, and bounded in one way worth knowing. Django offers no
+        rollback hook, so this must be called from outside any transaction the
+        refusal will roll back — `delete()` and the queryset's `delete()` both
+        catch `AbortRequest` and record it afterwards, and validation refusals
+        run before the write transaction opens at all. What remains outside
+        reach is a caller that wraps the whole operation in a transaction of its
+        own, such as DRF's bulk destroy. The guard itself — not this record — is
+        the enforcement.
+        """
+        try:
+            from netbox.context import current_request
+
+            from netbox_openbao.services import log_settings_change
+
+            request = current_request.get()
+            log_settings_change(
+                getattr(request, 'user', None),
+                request=request,
+                success=False,
+                message=f'Refused change to {field}: {detail}',
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger('netbox.plugins.netbox_openbao').exception(
+                'Could not audit a refused settings change to %s', field,
+            )
 
     def _validate_prefix_change(self, prefix, *, previous=_UNSET, using=None):
         """
@@ -214,6 +306,7 @@ class OpenBaoSettings(NetBoxModel):
                 for credential in credentials.only('path', 'uuid').iterator()
             )
             if mismatched:
+                self._audit_refusal('path_prefix', 'existing credentials are stamped under a different prefix')
                 raise ValidationError({
                     'path_prefix': _(
                         "Path prefix cannot be set to '{prefix}' because existing Credential "
@@ -229,6 +322,7 @@ class OpenBaoSettings(NetBoxModel):
         if not credentials.exists():
             return
 
+        self._audit_refusal('path_prefix', 'credentials exist')
         raise ValidationError({
             'path_prefix': _(
                 "Path prefix cannot be changed while credentials exist. The AppRole's OpenBao "
@@ -257,13 +351,77 @@ class OpenBaoSettings(NetBoxModel):
             .first()
         )
 
+    def _changed_field_names(self, committed=None, update_fields=None):
+        """
+        Field names differing from the committed row, for the audit record.
+
+        Names only — the access log's contract is that it carries no values, and
+        a rate limit is not secret but a log that sometimes carries values is one
+        somebody will later extend to carry the wrong one.
+        """
+        if self.pk is None:
+            return []
+        if committed is None:
+            committed = type(self).objects.filter(pk=self.pk).first()
+        if committed is None:
+            return []
+        candidates = self.audited_fields()
+        if update_fields is not None:
+            # `save(update_fields=...)` persists only these, so reporting a diff
+            # on anything else would name a change that was never written.
+            persisted = set(update_fields)
+            candidates = tuple(name for name in candidates if name in persisted)
+
+        return [
+            name for name in candidates
+            if getattr(self, name, None) != getattr(committed, name, None)
+        ]
+
+    @classmethod
+    def audited_fields(cls):
+        """
+        Concrete fields whose change is worth an audit record.
+
+        Derived from the model rather than imported from
+        `config.MODEL_BACKED_SETTINGS`: that module imports this one lazily to
+        break a cycle, and importing it back at class-definition time would
+        reinstate it.
+        """
+        return tuple(
+            field.name for field in cls._meta.concrete_fields
+            if field.name not in NOT_AUDITED
+        )
+
     def save(self, *args, **kwargs):
-        """Force the singleton key and re-check prefix safety under a row lock."""
+        """
+        Force the singleton key and re-check prefix safety under a row lock.
+
+        A refusal raised below is audited from out here, after the transaction
+        has unwound. Recording it inside would put the row into exactly the
+        transaction the refusal discards.
+        """
         self.singleton_key = 'default'
         using = kwargs.get('using') or router.db_for_write(type(self), instance=self)
         kwargs['using'] = using
+        try:
+            return self._save_locked(*args, **kwargs)
+        except AbortRequest:
+            self._audit_refusal('singleton_key', 'settings already exist')
+            raise
+
+    def _save_locked(self, *args, **kwargs):
+        """The write itself, under the singleton row lock."""
+        using = kwargs['using']
         with transaction.atomic(using=using):
             locked = type(self)._lock_for_prefix_write(using)
+            # Diffed against the LOCKED row, not against whatever was committed
+            # when this instance was loaded. Two administrators editing the same
+            # settings concurrently would otherwise each report a diff against
+            # their own stale snapshot, and the audit would describe a change
+            # that never happened.
+            self._openbao_changed_fields = self._changed_field_names(
+                locked, update_fields=kwargs.get('update_fields'),
+            )
             if self._state.adding:
                 if locked is None:
                     self._validate_prefix_change(
@@ -271,8 +429,23 @@ class OpenBaoSettings(NetBoxModel):
                         previous=None,
                         using=using,
                     )
-                # An existing singleton is left to the unique constraint so the
-                # API can translate the losing create into its structured 400.
+                elif locked is not None:
+                    # Two concurrent creates both pass form and serializer
+                    # validation, because `exists()` there runs before either
+                    # inserts. The loser would otherwise reach PostgreSQL's
+                    # unique constraint as an `IntegrityError`, which
+                    # `ObjectEditView` does not catch — a 500 on a page whose
+                    # only fault was losing a race. The advisory lock taken
+                    # above serialises the two, so re-checking here is decisive
+                    # rather than another hopeful `exists()`. The refusal is
+                    # audited by the caller below, once this transaction has
+                    # unwound and a row can actually commit.
+                    raise AbortRequest(
+                        _(
+                            'OpenBao settings already exist. Edit the existing configuration '
+                            'instead of creating a second one.'
+                        )
+                    )
                 return super().save(*args, **kwargs)
 
             if locked is None or locked.pk != self.pk:
@@ -295,20 +468,32 @@ class OpenBaoSettings(NetBoxModel):
             return super().save(*args, **kwargs)
 
     def delete(self, using=None, keep_parents=False):
-        """Keep the authoritative prefix in place while credentials exist."""
+        """
+        Keep the authoritative prefix in place while credentials exist.
+
+        The refusal is audited **after** the transaction below has unwound, not
+        from inside the guard. A row written inside a transaction that then
+        raises is rolled back with it, so the audit recorded the refusal into
+        exactly the transaction that discarded it — the one record an operator
+        reconstructing an incident most wants, reliably absent.
+        """
         using = using or router.db_for_write(type(self), instance=self)
-        with transaction.atomic(using=using):
-            locked = type(self)._lock_for_prefix_write(using)
-            if locked is not None:
-                locked._ensure_deletable(using)
-            # QuerySet.delete() does not call this method, so a pre_delete
-            # receiver invokes the same model guard for that path. Mark the
-            # instance to avoid running its existence query twice here.
-            self._settings_delete_guard_checked = True
-            try:
-                return super().delete(using=using, keep_parents=keep_parents)
-            finally:
-                del self._settings_delete_guard_checked
+        try:
+            with transaction.atomic(using=using):
+                locked = type(self)._lock_for_prefix_write(using)
+                if locked is not None:
+                    locked._ensure_deletable(using)
+                # QuerySet.delete() does not call this method, so a pre_delete
+                # receiver invokes the same model guard for that path. Mark the
+                # instance to avoid running its existence query twice here.
+                self._settings_delete_guard_checked = True
+                try:
+                    return super().delete(using=using, keep_parents=keep_parents)
+                finally:
+                    del self._settings_delete_guard_checked
+        except AbortRequest:
+            self._audit_refusal('delete', 'credentials exist')
+            raise
 
     def _ensure_deletable(self, using):
         """Raise an HTTP/UI-safe refusal while any credential remains."""
@@ -341,14 +526,51 @@ class OpenBaoSettings(NetBoxModel):
 
     @classmethod
     def _lock_for_write(cls, using):
-        """Lock the singleton row shared by prefix changes and credential creates."""
+        """
+        Lock the singleton row shared by prefix changes and credential creates.
+
+        Loads the whole row rather than deferring to `path_prefix`. The audit
+        diff reads every audited field off this instance, and a deferred field
+        costs a refresh query *each* — turning one row read into roughly one
+        query per setting on every save. Selecting the columns once is cheaper
+        than being clever about which of them will be touched.
+        """
         return (
             cls.objects.using(using)
             .select_for_update()
             .filter(singleton_key='default')
-            .only('path_prefix')
             .first()
         )
+
+    @property
+    def superseded_plugins_config_keys(self):
+        """
+        Keys still set in `PLUGINS_CONFIG` that this row now overrides.
+
+        Once a row exists it is authoritative, so a key left in the settings
+        file is silently ignored. That is the single most likely support
+        question this change creates — an operator edits a value they can see
+        and nothing happens — so it is surfaced on the object page and warned
+        about at startup rather than left to be discovered.
+
+        Interval keys are excluded: they are genuinely still read from the file,
+        so listing them here would be wrong.
+        """
+        from django.conf import settings as django_settings
+
+        from netbox_openbao.config import MODEL_BACKED_SETTINGS
+
+        configured = (django_settings.PLUGINS_CONFIG or {}).get('netbox_openbao') or {}
+        live = set(MODEL_BACKED_SETTINGS) - set(STATIC_INTERVAL_SETTINGS)
+        superseded = sorted(key for key in live if key in configured)
+        return ', '.join(superseded) or _('None')
+
+    @property
+    def static_interval_summary(self):
+        """Name the settings this row stores but does not yet govern."""
+        return _('%(keys)s (read from PLUGINS_CONFIG at worker start)') % {
+            'keys': ', '.join(STATIC_INTERVAL_SETTINGS),
+        }
 
     @classmethod
     def get_solo(cls):

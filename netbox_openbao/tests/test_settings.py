@@ -19,7 +19,6 @@ from dcim.models import Site
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist
 from django.db import close_old_connections, transaction
-from django.db.utils import IntegrityError
 from django.test import RequestFactory, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -346,10 +345,19 @@ class RateLimitValidationTest(SettingsTestCase):
 
 class ModelShapeTest(SettingsTestCase):
 
-    def test_database_enforces_the_singleton(self):
+    def test_a_second_row_is_refused_before_the_constraint(self):
+        """
+        The unique key is still the last authority, but it is no longer the
+        first thing a second create meets. Reaching PostgreSQL produced an
+        `IntegrityError`, which `ObjectEditView` does not catch — a 500 on the
+        add page of an already-configured install. The model re-checks under
+        the advisory lock it already holds and refuses with `AbortRequest`,
+        which both the HTML view and the API translate.
+        """
         OpenBaoSettings.objects.create()
-        with self.assertRaises(IntegrityError):
+        with self.assertRaises(AbortRequest):
             OpenBaoSettings.objects.create()
+        self.assertEqual(OpenBaoSettings.objects.count(), 1)
 
     def test_model_backed_defaults_match_plugin_defaults(self):
         from netbox_openbao import NetBoxOpenBaoConfig

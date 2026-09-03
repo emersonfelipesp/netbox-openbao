@@ -41,7 +41,15 @@ from .choices import (
     SSHKeyTypeChoices,
 )
 from .config import get_config
-from .models import Credential, CredentialAssignment, CredentialPolicy, CredentialTypeSchema, SecretEngine
+from .models import (
+    Credential,
+    CredentialAssignment,
+    CredentialPolicy,
+    CredentialTypeSchema,
+    OpenBaoSettings,
+    SecretEngine,
+)
+from .models.settings import STATIC_INTERVAL_SETTINGS
 from .rpc import OPENBAO_READ_PROCEDURES, OPENBAO_WRITE_PROCEDURES
 from .secrets.generators import generate_ssh_keypair
 from .secrets.registry import credential_type_choices, get_schema
@@ -709,3 +717,89 @@ class CredentialTypeSchemaForm(NetBoxModelForm):
             label=_('Extractor'),
             help_text=_('Chosen from a fixed list. This is a name, never a path to code.'),
         )
+
+
+class OpenBaoSettingsForm(NetBoxModelForm):
+    """
+    The plugin's runtime configuration, grouped as decisions rather than fields.
+
+    `path_prefix` is rendered read-only once any credential exists. The model
+    refuses the change anyway — that guard is what actually enforces it, and it
+    covers the API and direct ORM writes too — but presenting an editable box
+    that will be rejected on save is a worse experience than saying why up
+    front. See `OpenBaoSettings._validate_prefix_change`.
+
+    The five interval fields are shown disabled with an explanatory help text.
+    They are stored on the model so the rescheduling work needs no second
+    migration, but the decorators still read `PLUGINS_CONFIG` at import, so an
+    edit here would appear to apply and then revert at the next worker restart.
+    An honestly disabled field beats a field that lies.
+    """
+
+    fieldsets = (
+        FieldSet('path_prefix', 'store_public_material', name=_('Storage')),
+        FieldSet('reveal_rate_limit', 'reveal_ttl', 'token_cache_ttl', name=_('Reveal controls')),
+        FieldSet('allow_generation', 'default_ssh_key_type', name=_('Generation')),
+        FieldSet('assignable_models', 'assignable_models_deny', name=_('Assignable object types')),
+        FieldSet('audit_retention_days', 'expiry_warning_days', name=_('Audit and expiry')),
+        FieldSet(
+            'engine_health_interval', 'expiry_scan_interval', 'credential_verify_interval',
+            'rotation_due_interval', 'access_log_prune_interval',
+            name=_('Background jobs (restart required)'),
+        ),
+    )
+
+    class Meta:
+        model = OpenBaoSettings
+        fields = (
+            'path_prefix', 'store_public_material', 'reveal_rate_limit', 'reveal_ttl',
+            'token_cache_ttl', 'allow_generation', 'default_ssh_key_type',
+            'assignable_models', 'assignable_models_deny', 'audit_retention_days',
+            'expiry_warning_days', 'engine_health_interval', 'expiry_scan_interval',
+            'credential_verify_interval', 'rotation_due_interval', 'access_log_prune_interval',
+        )
+
+    def clean(self):
+        """
+        Refuse a second settings row in the form, not in the database.
+
+        `singleton_key` is `editable=False` and absent from `Meta.fields`, so
+        Django's own uniqueness validation never sees it and the collision
+        reaches PostgreSQL. `ObjectEditView` catches `AbortRequest` and
+        `PermissionsViolation`, not `IntegrityError`, so without this an
+        operator who reaches the add page on a configured install gets a 500
+        rather than being told the row already exists.
+        """
+        cleaned = super().clean() or self.cleaned_data
+
+        if self.instance.pk is None and OpenBaoSettings.objects.exists():
+            raise DjangoValidationError(
+                _('OpenBao settings already exist. Edit the existing configuration instead.'),
+                code='singleton',
+            )
+        return cleaned
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        from netbox_openbao.models.credentials import Credential
+
+        for name in STATIC_INTERVAL_SETTINGS:
+            field = self.fields.get(name)
+            if field is None:
+                continue
+            field.disabled = True
+            field.help_text = _(
+                'Read from PLUGINS_CONFIG at startup and applied when the worker starts. '
+                'Editing it here would not take effect, so it is shown for reference only.'
+            )
+
+        prefix_field = self.fields.get('path_prefix')
+        if prefix_field is not None and Credential.objects.exists():
+            prefix_field.disabled = True
+            prefix_field.help_text = _(
+                "Locked while credentials exist. The AppRole's OpenBao policy is scoped to this "
+                'prefix, so changing it would make OpenBao refuse every new credential write with '
+                'a permission error that looks like a vault outage, while existing credentials '
+                'keep working.'
+            )

@@ -116,7 +116,11 @@ APPROVED_FIELDS_BY_MODEL = {
 }
 
 # Names assigned in the class body that are not fields and need no review.
-NON_FIELD_ASSIGNMENTS = frozenset({'Meta'})
+# `objects` is a manager, not a column, so it can hold no material. Listing it
+# here rather than teaching the scan to recognise manager expressions keeps the
+# check deliberately broad: anything else new in a class body still has to be
+# reviewed, including a field added through a custom descriptor.
+NON_FIELD_ASSIGNMENTS = frozenset({'Meta', 'objects'})
 
 
 def _assigned_names(node):

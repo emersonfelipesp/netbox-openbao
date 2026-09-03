@@ -22,6 +22,68 @@ def prevent_settings_delete(instance, using, **kwargs):
         instance._ensure_deletable(using)
 
 
+@receiver(post_save, sender=OpenBaoSettings)
+def audit_settings_change(instance, created, **kwargs):
+    """
+    Record a settings change where the reveals it governs are recorded.
+
+    On the **signal**, not in the edit view, and deliberately. `ObjectEditView`
+    builds its form directly and calls `form.save()` inside its own transaction
+    — it never routes through `get_form()` or `form_valid()`, and reimplementing
+    `post()` is what an earlier revision of this plugin did before silently
+    losing `restrict_form_fields()` and changelog snapshots. More importantly a
+    signal covers **every** write: the UI, the REST API, and a management
+    command alike. `change_openbaosettings` can widen the reveal rate limit,
+    which bounds how fast a leaked token drains the store, so an audit that only
+    saw one of those surfaces would be the wrong audit.
+
+    The actor comes from NetBox's request context, which `forms.py` already
+    relies on. A save with no request — a migration, a shell — records no user,
+    which is accurate rather than convenient.
+    """
+    from netbox.context import current_request
+
+    from .choices import AccessActionChoices  # noqa: F401  (documents the action used)
+    from .services import log_settings_change
+
+    request = current_request.get()
+    changed = sorted(getattr(instance, '_openbao_changed_fields', ()) or ())
+
+    if not created and not changed:
+        # A save that altered nothing is not a configuration change. Recording
+        # it would dilute the log this exists to make readable.
+        return
+
+    log_settings_change(
+        getattr(request, 'user', None),
+        request=request,
+        changed_fields=changed or ['created'],
+    )
+
+
+@receiver(post_delete, sender=OpenBaoSettings)
+def audit_settings_deletion(instance, **kwargs):
+    """
+    Deleting the row is a configuration change, not an absence of one.
+
+    Configuration falls back to `PLUGINS_CONFIG` and then the built-in defaults,
+    which can mean a different path prefix and weaker values such as generation
+    being permitted again. That is exactly the kind of change the log exists to
+    show, so it is recorded rather than leaving a gap where a settings row used
+    to be.
+    """
+    from netbox.context import current_request
+
+    from .services import log_settings_change
+
+    request = current_request.get()
+    log_settings_change(
+        getattr(request, 'user', None),
+        request=request,
+        message='Settings row deleted; configuration falls back to PLUGINS_CONFIG',
+    )
+
+
 @receiver([post_save, post_delete], sender=OpenBaoSettings)
 def clear_settings_memo(using, **kwargs):
     """Make the next read observe a saved row or the restored fallback."""

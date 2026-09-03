@@ -8,6 +8,64 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A settings page, with the fields grouped as decisions.** Storage, reveal
+  controls, generation, assignable object types, audit and expiry, and the
+  background-job intervals. Reachable from the plugin menu under Configuration.
+
+  `path_prefix` renders read-only once any credential exists. The model refuses
+  the change regardless — that guard is the enforcement and it covers the API
+  and direct ORM writes too — but offering an editable box that will be rejected
+  on save is a worse experience than saying why up front.
+
+  The five interval fields are shown disabled with the reason. They are stored
+  but not yet acted on, so an edit would appear to apply and revert at the next
+  worker restart; a field that says so beats a field that lies.
+
+- **Refused changes are audited where the record can survive.** A refusal
+  raised inside a transaction takes its audit row down with it when that
+  transaction rolls back, so the guard was writing the record into exactly the
+  transaction that discarded it — the one entry an operator reconstructing an
+  incident most wants, reliably absent. Deletion and bulk deletion now record
+  the refusal after their own transaction has unwound. A caller that wraps the
+  whole operation in a transaction of its own, such as DRF's bulk destroy, is
+  still outside reach; the guard, not the record, is the enforcement.
+
+- **A second settings row is refused before it reaches the constraint.** Two
+  concurrent creates both pass form and serializer validation, because the
+  `exists()` check there runs before either inserts. The loser reached
+  PostgreSQL's unique key as an `IntegrityError`, which `ObjectEditView` does
+  not catch — a 500 on the add page of an already-configured install. The model
+  re-checks under the singleton advisory lock it already holds, which
+  serialises the two, and the API translates the refusal into the same
+  structured 400 it returned before.
+
+- **The settings list offers only the actions that exist.** `ObjectListView`
+  provides bulk import, export, edit, rename, and delete by default, and none
+  of them has a route here — bulk operations on a singleton are meaningless.
+  Left at the default they rendered as controls that fail rather than as
+  controls that are absent, which is the same defect as the missing list route
+  in the other direction.
+
+- **A system check reporting `PLUGINS_CONFIG` keys the settings row supersedes.**
+  Once a row exists it is authoritative and a key left in `configuration.py` is
+  silently ignored — an operator edits a value they can see and observes nothing.
+  The check names them, and the settings page shows the same list. Interval keys
+  are excluded because they genuinely are still read from the file.
+
+  Run as a Django system check rather than from `AppConfig.ready()`: querying the
+  database during app initialisation earns Django's own warning about it, and on
+  a fresh install the table does not exist yet.
+
+- **Settings changes are audited.** `change_openbaosettings` can widen the reveal
+  rate limit, which bounds how fast a leaked token drains the store, so the
+  change is recorded in `CredentialAccessLog` with a new `configure` action as
+  well as in NetBox's changelog — putting it in the same timeline as the reveals
+  it governs. Written from a model signal, so it covers the REST API and
+  management commands and not only the UI. Field names only, never values.
+
+
+### Added
+
 - **Configuration is now stored in the database and editable through the REST
   API and the CLI.** A singleton `OpenBaoSettings` row holds every runtime
   setting, exposed at `/api/plugins/openbao/settings/` — which is all `nbx`

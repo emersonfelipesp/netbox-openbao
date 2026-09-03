@@ -146,8 +146,11 @@ Discovery instead comes from KV v2 `custom_metadata`, which carries the
 credential's ID, UUID, type, policy, assignments, and a `managed_by:
 netbox-openbao` marker. Tooling outside NetBox can list the mount and filter on
 those keys, and [`CredentialVerifyJob`](background-jobs.md#credentialverifyjob)
-uses the marker to spot material under the plugin's prefix that NetBox no longer
-has a row for.
+uses the marker to confirm that each existing credential's material is still
+present. It cannot find the reverse — material whose credential row is gone —
+because it iterates rows. Locating that residue means walking the mount from
+outside NetBox and filtering on the marker; the `ORPHANED SECRET` log line is
+the only signal the plugin itself emits.
 
 !!! note "Why `credential_type` has no Django `choices`"
 
