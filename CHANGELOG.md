@@ -6,6 +6,85 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — action required for third-party backends
+
+- **`SecretBackend` now requires `read_metadata`.** It is declared
+  `@abstractmethod`, so **any `SecretBackend` subclass outside this repository
+  that does not implement it will raise `TypeError` on instantiation after this
+  upgrade** — at startup, or at the first backend construction. Every backend
+  shipped here already implements it and is unaffected.
+
+  To adapt an external backend, add:
+
+  ```python
+  def read_metadata(self, path):
+      """Return the KV metadata for `path`. Never a secret value."""
+      # Must carry at least `current_version` and `custom_metadata`,
+      # and raise OpenBaoNotFound when the path does not exist.
+  ```
+
+  This is a deliberate correction rather than a new demand.
+  `CredentialVerifyJob` has always called `read_metadata`; the ABC simply failed
+  to say so, which meant a conforming third-party backend imported cleanly,
+  instantiated cleanly, passed every abstract-method check, and then failed
+  inside a background job — detached from the change that caused it. Failing at
+  instantiation, with the method named, is the better half of that trade.
+
+  A new test derives the required method set by scanning the package for calls
+  made on a backend, rather than from a transcribed list, so the ABC cannot fall
+  behind its call sites again.
+
+### Added
+
+- **Plugins can register their own assignable object types.**
+  `netbox_openbao.registry.register_assignable_models(...)`, called from an
+  integrating plugin's `AppConfig.ready()`, adds that plugin's models to the
+  allowlist `CredentialAssignment` enforces. Until now the only way to widen
+  that list was to hand-edit `PLUGINS_CONFIG`, so every integration was
+  silently inert until an operator read the right paragraph — and the failure
+  it produced was a validation error about a settings file they had never been
+  pointed at.
+
+  The resolved allowlist is `assignable_models` unioned with the registry, minus
+  a new `assignable_models_deny` setting, which lets an operator refuse a model
+  an integration registered without patching a plugin they did not write. Deny
+  beats both configuration and registration.
+
+  To be clear about what this allowlist is: it bounds *accident* — a mistyped
+  content type, a bulk import pointed at the wrong model — and it is **not** a
+  boundary against an installed plugin, which runs in-process with full ORM
+  access and could reach every credential regardless. The documentation says so
+  where an operator will read it.
+
+  A bad registration is rejected, logged at ERROR naming the value, and
+  retrievable from `registry.rejected_assignable_models()`. It is checked for
+  shape *and* against the app registry, because `dcim.rakc` is a well-formed
+  label that names nothing and accepting it would leave a broken integration
+  indistinguishable from one nobody configured. It does not raise, because this
+  runs in `AppConfig.ready()` where an exception takes the whole instance down
+  rather than failing one integration.
+
+  The list is also sorted now, because `CredentialAssignment.clean()` renders it
+  into its rejection message and that message is the only way to discover what a
+  running instance actually permits.
+
+### Fixed
+
+- **The credentials panel no longer depends on the order of `PLUGINS`.** It was
+  registered against a snapshot of the assignable-model list taken when
+  `template_content` was imported. NetBox reads a template extension's `models`
+  attribute exactly once, during the owning plugin's `ready()`, so a model that
+  an integrating plugin registered from its own `ready()` was permitted to hold
+  assignments and got no panel whenever `netbox_openbao` came first in
+  `PLUGINS`. Same configuration, different UI, no error anywhere. The panel is
+  now registered globally and filters on the live allowlist at render time.
+
+  That filter resolves the object's label through
+  `ContentType.objects.get_for_model()` rather than from `obj._meta`, which also
+  fixes a **proxy model** losing its panel: the content type resolves a proxy to
+  its concrete model, so assignments were stored under one label and the render
+  gate compared another.
+
 ### Security
 
 - **The audit log's REST endpoint now honours ObjectPermission constraints.**

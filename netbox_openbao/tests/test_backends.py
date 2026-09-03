@@ -13,12 +13,15 @@ Vault backend tested only against OpenBao would prove exactly nothing about
 Vault.
 """
 
+import ast
 import os
 import unittest
+from pathlib import Path
 
 from django.test import TestCase
 
-from netbox_openbao.backends import BACKENDS, get_backend
+import netbox_openbao
+from netbox_openbao.backends import BACKENDS, SecretBackend, get_backend
 from netbox_openbao.backends.exceptions import (
     OpenBaoAuthError,
     OpenBaoConflict,
@@ -120,6 +123,201 @@ class BackendSelectionTest(TestCase):
         """
         engine = self._engine('something-newer')
         self.assertIsInstance(get_backend(engine), OpenBaoBackend)
+
+
+class _BackendCallScanner(ast.NodeVisitor):
+    """
+    Collects every attribute called on something that is a backend.
+
+    A backend is recognised two ways, and both are needed:
+
+    * a local name bound from `get_backend(...)`, whatever it is called;
+    * a name literally spelled `backend`, which covers parameters and
+      attributes the assignment scan cannot see.
+
+    The first is what makes the guard survive a rename. Scanning only for the
+    literal name `backend` meant `store = get_backend(...)` followed by
+    `store.read_metadata(...)` was invisible — so a routine variable rename
+    would have quietly disarmed the contract check while every test still
+    passed.
+
+    It is deliberately syntactic and its limits are honest ones: a backend
+    reached through `getattr`, stored on an object and called through a long
+    attribute chain, or passed through a collection is not seen. None of those
+    patterns exists in this package, and `BackendContractTest` fails if the
+    scanner stops finding the call sites that do.
+    """
+
+    def __init__(self):
+        self.aliases = {'backend'}
+        self.methods = set()
+
+    def visit_Assign(self, node):
+        if self._is_get_backend(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.aliases.add(target.id)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node):
+        if node.value is not None and self._is_get_backend(node.value):
+            if isinstance(node.target, ast.Name):
+                self.aliases.add(node.target.id)
+        self.generic_visit(node)
+
+    def visit_Call(self, node):
+        func = node.func
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            if func.value.id in self.aliases:
+                self.methods.add(func.attr)
+        self.generic_visit(node)
+
+    @staticmethod
+    def _is_get_backend(value):
+        if not isinstance(value, ast.Call):
+            return False
+        func = value.func
+        if isinstance(func, ast.Name):
+            return func.id == 'get_backend'
+        return isinstance(func, ast.Attribute) and func.attr == 'get_backend'
+
+
+def _scan_source(source):
+    """Run the scanner over one module's source. Separated so it is testable."""
+    scanner = _BackendCallScanner()
+    # Two passes: assignments anywhere in the module must be known before the
+    # calls are matched, and a call can precede its own assignment lexically
+    # only in code the scanner would not understand anyway — but a second walk
+    # costs nothing and removes the ordering question entirely.
+    tree = ast.parse(source)
+    scanner.visit(tree)
+    scanner.methods.clear()
+    scanner.visit(tree)
+    return scanner.methods
+
+
+def _methods_called_on_backends():
+    """
+    Every method the plugin calls on a `SecretBackend`, read from the source.
+
+    Derived rather than transcribed, because a hand-maintained list is a second
+    place to forget: adding `backend.some_method()` while omitting the abstract
+    declaration would leave a transcribed test green and reproduce exactly the
+    deferred failure this contract exists to prevent.
+    """
+    package = Path(netbox_openbao.__file__).parent
+    found = set()
+
+    for path in package.rglob('*.py'):
+        if 'tests' in path.relative_to(package).parts:
+            continue
+        found |= _scan_source(path.read_text())
+
+    return found
+
+
+class BackendContractTest(TestCase):
+    """
+    The ABC has to enumerate everything the plugin calls on a backend.
+
+    Its whole reason for existing is that a third party can implement it
+    without forking — so a method the plugin depends on but does not declare is
+    a trap: the subclass imports, instantiates, passes every abstract-method
+    check, and fails later inside a background job. `read_metadata` was exactly
+    that, called by `CredentialVerifyJob` and satisfied only by the coincidence
+    that all three shipped backends happened to implement it.
+    """
+
+    def test_every_method_the_plugin_calls_is_abstract(self):
+        """
+        The guard that would have caught the original defect.
+
+        Scanned from the package source, so it cannot be defeated by the same
+        omission it exists to detect.
+        """
+        called = _methods_called_on_backends()
+        undeclared = called - set(SecretBackend.__abstractmethods__)
+
+        self.assertEqual(
+            undeclared, set(),
+            f'The plugin calls {sorted(undeclared)} on a backend, but SecretBackend does not '
+            f'declare them. A third-party backend would import, instantiate, pass every '
+            f'abstract-method check, and then fail at the call site. Add @abstractmethod.',
+        )
+
+    def test_the_scan_finds_known_call_sites(self):
+        """
+        The scanner itself must fail when it stops seeing anything.
+
+        A source scan that silently matches nothing passes the test above
+        vacuously — the failure mode where a guard reports success because it
+        could not evaluate the property at all.
+        """
+        called = _methods_called_on_backends()
+        for known in ('read', 'write', 'delete', 'read_metadata', 'set_metadata'):
+            self.assertIn(
+                known, called,
+                f'The call-site scan no longer sees backend.{known}(), so it is not '
+                f'checking anything. Fix the scan before trusting the test above.',
+            )
+
+    def test_the_scan_survives_a_renamed_backend_variable(self):
+        """
+        The mutation that would otherwise disarm this guard silently.
+
+        Matching only a receiver literally named `backend` meant a routine
+        rename — `store = get_backend(...)` — hid every call on it while the
+        known-call-site test above still passed on the remaining ones.
+        """
+        source = (
+            'def verify(credential):\n'
+            '    store = get_backend(credential.engine, credential.policy)\n'
+            '    return store.read_metadata(credential.path)\n'
+        )
+        self.assertIn('read_metadata', _scan_source(source))
+
+    def test_the_scan_still_sees_a_plainly_named_backend(self):
+        """A parameter or attribute the assignment scan cannot reach."""
+        source = (
+            'def use(backend, path):\n'
+            '    return backend.list_versions(path)\n'
+        )
+        self.assertIn('list_versions', _scan_source(source))
+
+    def test_the_scan_ignores_unrelated_receivers(self):
+        """
+        The scan must not be so eager that it manufactures requirements.
+
+        A method on something that is not a backend appearing in
+        `__abstractmethods__` would be a different kind of wrong.
+        """
+        source = (
+            'def unrelated(credential):\n'
+            '    credential.save()\n'
+            '    other = build_something()\n'
+            '    other.frobnicate()\n'
+        )
+        self.assertEqual(_scan_source(source), set())
+
+    def test_subclass_missing_a_required_method_cannot_be_instantiated(self):
+        required = sorted(SecretBackend.__abstractmethods__)
+        for omitted in required:
+            with self.subTest(omitted=omitted):
+                namespace = {
+                    name: (lambda self, *a, **kw: None)
+                    for name in required if name != omitted
+                }
+                partial = type('PartialBackend', (SecretBackend,), namespace)
+                with self.assertRaises(TypeError):
+                    partial(SecretEngine(name='P', slug='p', api_url='https://bao.invalid:8200'))
+
+    def test_shipped_backends_satisfy_the_contract(self):
+        engine = SecretEngine(name='S', slug='s', api_url='https://bao.invalid:8200')
+        for name, backend_class in BACKENDS.items():
+            with self.subTest(backend=name):
+                # Instantiation alone — no connection is opened here, so this
+                # stays a contract check rather than an integration test.
+                self.assertIsInstance(backend_class(engine), SecretBackend)
 
 
 class ConfigurationTest(TestCase):

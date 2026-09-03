@@ -15,11 +15,22 @@ PLUGINS_CONFIG = {
 
         # Object types a credential may be assigned to. Enforced on the model,
         # so the REST API and direct ORM callers are held to the same list.
+        #
+        # An installed plugin can add its own models to this without you
+        # editing anything — see "Assignable object types" below. The resolved
+        # allowlist is this list plus whatever plugins registered, minus
+        # `assignable_models_deny`.
         'assignable_models': [
             'dcim.device',
             'virtualization.virtualmachine',
             'ipam.service',
         ],
+
+        # Object types to refuse even when an installed plugin registered them.
+        # Registration comes from code rather than from you, so this is what
+        # keeps the allowlist yours: deny wins over both the list above and the
+        # registry.
+        'assignable_models_deny': [],
 
         # Persist non-secret public material (public keys, certificates).
         # Disabling this gives up the zero-read expiry dashboard, which is the
@@ -130,3 +141,115 @@ with a label.
 - `require_reason` (per policy) forces a justification on every reveal, recorded
   in the access log. A refused reveal is still audited — that is the entry you
   most want to see.
+
+## Assignable object types
+
+A `CredentialAssignment` may only target a content type the deployment has
+opted into. Anything else is refused in `CredentialAssignment.clean()`, so the
+form, the REST API, and any direct ORM caller are held to the same list.
+
+The resolved allowlist is:
+
+```
+(assignable_models  ∪  what installed plugins registered)  −  assignable_models_deny
+```
+
+### For operators
+
+`assignable_models` is yours and needs no explanation.
+`assignable_models_deny` subtracts from the result, so you can refuse a
+specific model an installed plugin registered without patching a plugin you did
+not write. **Deny wins over both.**
+
+!!! warning "What this allowlist is, and is not"
+
+    It is **not a security boundary against an installed plugin.** A NetBox
+    plugin runs in the same process with full ORM access — it can already read
+    every `Credential` row and call the service layer directly, allowlist or no
+    allowlist. Registration widens a list that plugin code could bypass anyway,
+    so it grants nothing it did not already have.
+
+    What the allowlist actually bounds is *accident*: a mistyped content type in
+    an API call, a bulk import pointed at the wrong model, an operator attaching
+    a credential to something nobody intended to be a credential holder. That is
+    a real and useful thing to bound, and it is the whole of it.
+
+    The deny list is therefore an **operational** control, not a containment
+    one: it is how you turn off an integration whose behaviour you do not want,
+    or narrow one you only partly want. It is not a defence against a plugin you
+    do not trust. Do not install one.
+
+The validation error names the resolved list, which is the fastest way to see
+what a running instance actually permits:
+
+> Credentials may not be assigned to `dcim.site`. Permitted types:
+> `dcim.device`, `ipam.service`, `virtualization.virtualmachine`.
+
+### For plugin authors
+
+If your plugin stores its secrets here, register its credential-holding models
+from `AppConfig.ready()`:
+
+```python
+from netbox.plugins import PluginConfig
+from netbox_openbao.registry import register_assignable_models
+
+
+class MyPluginConfig(PluginConfig):
+    name = 'my_plugin'
+    # ...
+
+    def ready(self):
+        super().ready()
+        register_assignable_models(
+            'my_plugin.endpoint',
+            'my_plugin.appliance',
+        )
+```
+
+Labels are `app_label.model`, matched case-insensitively, and registration is
+idempotent.
+
+Three things are worth stating plainly:
+
+- **`ready()` is the only place this works.** The registry is read by
+  `CredentialAssignment.clean()`, so registration has to have happened before
+  the first form or serializer validation. Registering from a view, a signal,
+  or the module scope of something imported lazily will appear to work in
+  development and fail on a worker that never imported that module.
+- **Registration adds; it never removes.** You cannot un-register, and you
+  cannot override an operator's `assignable_models_deny`.
+- **Import `netbox_openbao.registry` defensively if your plugin treats this
+  integration as optional.** Wrap the import in `try: ... except ImportError:`
+  so your plugin still loads where `netbox-openbao` is not installed.
+
+A bad label is **rejected and logged at ERROR**, naming the value, and is
+retrievable from `registry.rejected_assignable_models()`. "Bad" is checked two
+ways, because shape alone is not enough — `dcim.rakc` is a perfectly well-formed
+`app_label.model` string and names nothing:
+
+1. it must match `app_label.model`;
+2. it must name a model this NetBox actually has.
+
+It does not raise. This code runs inside `AppConfig.ready()`, where an exception
+does not fail one integration but takes the whole NetBox instance down at
+startup, including the UI an operator would use to diagnose it. Check the log
+after adding a registration — a rejected label means the model silently cannot
+hold credentials.
+
+!!! note "Panel registration does not depend on `PLUGINS` order"
+
+    The credentials panel on object detail pages is registered globally and
+    filters on the allowlist at render time. That is deliberate: NetBox reads a
+    template extension's `models` attribute exactly once, during the owning
+    plugin's `ready()`, so a panel scoped from a snapshot of the allowlist would
+    miss any model registered by a plugin that initialized later — giving the
+    same configuration a different UI depending on the order of `PLUGINS`, with
+    no error anywhere. Your models get their panel regardless of where you sit
+    in that list.
+
+Prefer a core NetBox content type where one already models the thing. If your
+plugin's object has a foreign key to `dcim.Device` or
+`virtualization.VirtualMachine`, assign the credential to *that* — both are in
+the default allowlist, so the integration needs no configuration at all, and
+the Ansible collection can resolve it by device or VM name on day one.

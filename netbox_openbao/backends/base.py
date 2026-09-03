@@ -65,6 +65,23 @@ class SecretBackend(ABC):
         """Return version metadata for `path`, newest first. Never values."""
 
     @abstractmethod
+    def read_metadata(self, path):
+        """
+        Return the KV metadata for `path` as a dict. Never a secret value.
+
+        Carries at least `current_version` and `custom_metadata`; a backend
+        whose store exposes more may include it. Raises `OpenBaoNotFound` if
+        the path does not exist.
+
+        Abstract because `CredentialVerifyJob` calls it on every credential.
+        It was omitted from this contract at first while all three shipped
+        backends happened to implement it, which meant a conforming third-party
+        backend — the whole reason this ABC exists — would import, instantiate,
+        and pass every abstract-method check, then fail inside a background job
+        long after the change that introduced it.
+        """
+
+    @abstractmethod
     def set_metadata(self, path, metadata):
         """Replace the custom metadata at `path` with `metadata`."""
 

@@ -141,6 +141,14 @@ keeps the value out of `/proc/<pid>/environ`:
 NETBOX_BAO_PRIMARY_SECRET_ID_FILE=/run/secrets/bao-secret-id
 ```
 
+`assignable_models` is the allowlist of object types a credential may be
+assigned to. An installed plugin can add its own models to it from
+`AppConfig.ready()` — see
+[Assignable object types](docs/configuration.md#assignable-object-types) — so
+integrating with this plugin does not require every deployment to restate the
+same list in a settings file. `assignable_models_deny` subtracts from the
+result, which is what keeps the final word with the operator.
+
 Full detail in [`docs/installation.md`](docs/installation.md) and
 [`docs/configuration.md`](docs/configuration.md), or on the documentation site:
 <https://emersonfelipesp.github.io/netbox-openbao/>.

@@ -142,9 +142,18 @@ Two constraints do real work:
 - unique on `(object_type, object_id, purpose)` **where `is_primary`** — so
   *"which credential does automation use here?"* always has exactly one answer
 
-The permitted target types come from `assignable_models` in `PLUGINS_CONFIG` and
-are enforced in the model's `clean()`, so the REST API and any direct ORM caller
-are held to the same list as the form.
+The permitted target types are enforced in the model's `clean()`, so the REST
+API and any direct ORM caller are held to the same list as the form. They
+resolve to `assignable_models` in `PLUGINS_CONFIG`, unioned with whatever
+installed plugins registered through `netbox_openbao.registry`, minus
+`assignable_models_deny` — see
+[Assignable object types](../configuration.md#assignable-object-types).
+
+The registry exists so an integrating plugin can declare its own
+credential-holding models from `AppConfig.ready()` instead of requiring every
+deployment to restate them in a settings file. The deny list exists so that
+adding is not the same as deciding: registration comes from installed code, and
+the operator keeps the final word.
 
 ## `CredentialAccessLog` — evidence, not an object
 

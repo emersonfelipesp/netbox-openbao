@@ -20,7 +20,43 @@ __all__ = ('template_extensions',)
 
 
 class CredentialsPanel(PluginTemplateExtension):
-    """Lists the credentials assigned to the object being viewed."""
+    """
+    Lists the credentials assigned to the object being viewed.
+
+    **Registered globally, filtered per request.** `models` is deliberately left
+    unset. NetBox's `register_template_extensions()` reads `models` once, during
+    the plugin's `ready()`, and files the class under each label it names — so a
+    class built from a snapshot of `assignable_model_labels()` freezes that list
+    at whatever it happened to be at that moment. An integrating plugin that
+    registers its models from its own `ready()` would then be permitted to
+    create assignments but get no panel, purely because `PLUGINS` happened to
+    list `netbox_openbao` first. Same configuration, different UI, no error.
+
+    Registering globally and checking the label on each render costs one set
+    lookup per object detail page and cannot go stale.
+    """
+
+    @staticmethod
+    def _canonical_label(obj):
+        """
+        The `app_label.model` an assignment to `obj` would actually carry.
+
+        Resolved through `ContentType.objects.get_for_model()` rather than from
+        `obj._meta`, because for a **proxy model** those two disagree: the
+        content type resolves to the concrete model by default, so a proxy's
+        assignments are filed under the concrete label while `_meta` reports the
+        proxy's own. Comparing `_meta` against the allowlist while querying
+        assignments by content type meant a proxy of an allowed model had valid
+        assignments and never rendered a panel.
+
+        `CredentialAssignment.clean()` validates against the content type too,
+        so this is the label that decides everything else as well.
+        """
+        content_type = ContentType.objects.get_for_model(obj)
+        return f'{content_type.app_label}.{content_type.model}'
+
+    def _is_assignable(self):
+        return self._canonical_label(self.context['object']) in assignable_model_labels()
 
     def buttons(self):
         """
@@ -29,15 +65,17 @@ class CredentialsPanel(PluginTemplateExtension):
         Only Devices and VMs: adding SSH access to a Service would be circular,
         since the service is what the action creates.
         """
-        obj = self.context['object']
         request = self.context['request']
 
-        label = f'{obj._meta.app_label}.{obj._meta.model_name}'
+        label = self._canonical_label(self.context['object'])
         if label not in ('dcim.device', 'virtualization.virtualmachine'):
+            return ''
+        if label not in assignable_model_labels():
             return ''
         if not request.user.has_perm('netbox_openbao.add_credential'):
             return ''
 
+        obj = self.context['object']
         url = reverse('plugins:netbox_openbao:quickadd_ssh', kwargs={
             'app_label': obj._meta.app_label,
             'model_name': obj._meta.model_name,
@@ -48,6 +86,13 @@ class CredentialsPanel(PluginTemplateExtension):
     def right_page(self):
         obj = self.context['object']
         request = self.context['request']
+
+        # Global registration means this runs on every object detail page in
+        # NetBox, so the allowlist check is what scopes it — and because it
+        # reads the live list rather than a startup snapshot, a model registered
+        # by a plugin that initialized after this one still gets its panel.
+        if not self._is_assignable():
+            return ''
 
         content_type = ContentType.objects.get_for_model(obj)
         assignments = CredentialAssignment.objects.restrict(request.user, 'view').filter(
@@ -66,16 +111,15 @@ class CredentialsPanel(PluginTemplateExtension):
         })
 
 
-def _build_extensions():
-    """
-    Register the panel against exactly the models the deployment permits
-    assignment to, so the two lists cannot drift apart.
-    """
-    labels = assignable_model_labels()
-    if not labels:
-        return []
-
-    return [type('OpenBaoCredentialsPanel', (CredentialsPanel,), {'models': labels})]
-
-
-template_extensions = _build_extensions()
+# Registered without `models`, which NetBox treats as global registration: the
+# class is filed under the `None` key and merged into every object detail page's
+# extension list at render time.
+#
+# This used to build a subclass carrying `models=assignable_model_labels()`.
+# That kept the panel and the allowlist in sync only for labels known at import
+# time, and `register_template_extensions()` reads `models` exactly once during
+# `ready()` — so a plugin registering its models from its own `ready()` got
+# assignments but no panel whenever `PLUGINS` listed `netbox_openbao` first.
+# The scoping now happens per render, in `CredentialsPanel._is_assignable()`,
+# where the list cannot be stale.
+template_extensions = [CredentialsPanel]

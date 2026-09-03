@@ -353,6 +353,55 @@ NetBox 4.6.5 as the backward-regression target.
   `backends/BACKENDS` and `BackendChoices`, and add an integration subclass of
   `_KVIntegrationTests`. Never raise a vendor exception, never log material.
   A backend tested only against a different server proves nothing about it.
+- **A method the plugin calls on a backend must be `@abstractmethod`.** The ABC
+  exists so a third party can implement it without forking, so a method that is
+  called but not declared is a trap: the subclass imports, instantiates, passes
+  every abstract-method check, and fails later inside a background job.
+  `read_metadata` was exactly that for a while — `CredentialVerifyJob` calls it
+  and all three shipped backends implemented it, so the omission was invisible.
+  `tests/test_backends` now **derives** the required set by walking the package
+  AST for calls on a backend, rather than from a transcribed list — a
+  transcribed list is a second place to forget, and forgetting both is the same
+  single mistake. The scanner follows names bound from `get_backend()` as well
+  as the literal name `backend`, so a rename does not disarm it, and
+  `test_the_scan_finds_known_call_sites` fails if it stops matching anything.
+  Reach a backend through `getattr` or a long attribute chain and the scan will
+  not see it; do not, or extend `_BackendCallScanner` in the same change.
+- **A plugin integrating with this one registers its assignable models in
+  `ready()`** — `netbox_openbao.registry.register_assignable_models(...)` — it
+  does not ask the operator to edit `PLUGINS_CONFIG`. The resolved allowlist is
+  `assignable_models` ∪ registry − `assignable_models_deny`, computed in
+  `config.assignable_model_labels()`. Three properties are load-bearing:
+  **deny wins**, so an operator can refuse an integration's choice without
+  patching someone else's plugin; the result is **sorted**, because it is
+  rendered into `CredentialAssignment.clean()`'s error message and that message
+  is the only way an operator can discover what a running instance permits; and
+  a bad label is **rejected and logged at ERROR, never raised** — this runs in
+  `AppConfig.ready()`, where an exception takes the whole NetBox instance down
+  instead of failing one integration. "Bad" means shape *and* existence: a label
+  must match `app_label.model` **and** name a model the app registry has, because
+  `dcim.rakc` is well-formed and names nothing. That lookup is safe from
+  `ready()` — `apps.populate()` imports every app's models before it invokes any
+  `ready()` hook, so an earlier note in this file claiming otherwise was wrong.
+  Registration must happen in `ready()` — anywhere later and it will work in
+  development and fail on a worker that never imported the module.
+- **Do not describe the assignable-model allowlist as a boundary against a
+  plugin.** A NetBox plugin runs in-process with full ORM access and can reach
+  every `Credential` row regardless, so registration grants nothing it did not
+  already have. What the allowlist bounds is *accident* — a mistyped content
+  type, a bulk import aimed at the wrong model. The deny list is an operational
+  control for turning an integration off, not containment for one you distrust.
+  Same class of overclaim as the per-tier AppRole and broker-mode sentences
+  above.
+- **A `PluginTemplateExtension` must never carry a `models` list built from
+  `assignable_model_labels()`.** NetBox's `register_template_extensions()` reads
+  `models` **once**, during this plugin's `ready()`, and files the class under
+  each label. A snapshot therefore freezes the allowlist: a model registered by
+  a plugin whose `ready()` runs later is permitted to hold assignments and gets
+  no panel, purely because of where `netbox_openbao` sits in `PLUGINS`. Same
+  config, different UI, no error. `template_content.CredentialsPanel` is
+  registered **globally** (no `models`) and checks the live list per render in
+  `_is_assignable()`. Keep it that way.
 - **`BrokerBackend` is a transport swap, not a different store.** It speaks to
   [`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker),
   which holds the AppRole so NetBox does not, and it must stay

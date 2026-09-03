@@ -30,9 +30,41 @@ def assignable_model_labels():
     """
     Lowercased "app_label.model" strings a Credential may be assigned to.
 
-    Tolerates the key being absent or null. NetBox merges `default_settings`
+    Resolved from three sources, in this precedence:
+
+    1. `assignable_models` — what the operator configured.
+    2. The registry populated by `registry.register_assignable_models()`, which
+       is how an integrating plugin declares its own credential-holding models
+       from `AppConfig.ready()` instead of making every deployment restate them
+       in a settings file.
+    3. `assignable_models_deny` — subtracted from the union of the first two.
+
+    **Deny wins.** Registration comes from installed code rather than from the
+    operator, so without a subtraction an operator could not refuse an
+    integration's choice without patching a plugin they did not write. With it,
+    the allowlist is still theirs.
+
+    Tolerates every key being absent or null. NetBox merges `default_settings`
     into `PLUGINS_CONFIG` at startup, so a deployment that replaces the dict
     afterwards — or a test using `override_settings` — can leave keys missing,
     and an allowlist that raises is worse than one that is empty.
+
+    Sorted, because the returned list is rendered into
+    `CredentialAssignment.clean()`'s error message; an operator comparing two
+    instances should not have to notice that the same set printed in a
+    different order.
     """
-    return [label.lower() for label in (get_config('assignable_models') or [])]
+    def _normalize(values):
+        return {
+            label.strip().lower()
+            for label in (values or [])
+            if isinstance(label, str) and label.strip()
+        }
+
+    from netbox_openbao.registry import registered_assignable_models
+
+    permitted = _normalize(get_config('assignable_models'))
+    permitted |= registered_assignable_models()
+    permitted -= _normalize(get_config('assignable_models_deny'))
+
+    return sorted(permitted)

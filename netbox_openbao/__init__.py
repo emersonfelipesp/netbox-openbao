@@ -47,12 +47,19 @@ class NetBoxOpenBaoConfig(PluginConfig):
         'path_prefix': 'netbox',
 
         # Object types a Credential may be assigned to. Anything not listed
-        # here is rejected at both form and API level.
+        # here — and not registered by an installed plugin, see below — is
+        # rejected at both form and API level.
         'assignable_models': [
             'dcim.device',
             'virtualization.virtualmachine',
             'ipam.service',
         ],
+
+        # Object types to refuse even when an installed plugin registered them
+        # through `registry.register_assignable_models()`. Registration comes
+        # from code rather than from the operator, so this is what keeps the
+        # allowlist theirs: deny wins over both the list above and the registry.
+        'assignable_models_deny': [],
 
         # Persist non-secret public material (public keys, certificates) in
         # NetBox. Disabling this gives up the zero-read expiry dashboard.
