@@ -6,6 +6,87 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Configuration is now stored in the database and editable through the REST
+  API and the CLI.** A singleton `OpenBaoSettings` row holds every runtime
+  setting, exposed at `/api/plugins/openbao/settings/` — which is all `nbx`
+  needs, so the CLI works without anything further.
+
+  `PLUGINS_CONFIG` is **not** removed. It becomes three things: a **seed**, so a
+  data migration copies whatever a deployment currently configures and upgrading
+  changes nobody's behaviour; a **fallback**, so an installation with no row
+  behaves exactly as before; and later a deprecation surface. Removing support
+  for it outright would break every existing deployment and needs its own
+  release cycle.
+
+  Resolution is per-request memo, then the settings row, then `PLUGINS_CONFIG`,
+  then the hard default. A sentinel preserves the no-row result within the
+  request. The credentials panel is registered globally, so this read path runs
+  on every object detail page in NetBox; memoising the complete row keeps five
+  setting reads to one query rather than one query per key.
+
+  A read never creates the row. It is created by the migration when effective
+  non-default values need seeding, or by an explicit save, so a deployment with
+  no row keeps `PLUGINS_CONFIG` reachable —
+  which is also what lets the existing test suite go on configuring the plugin
+  with `override_settings`.
+
+  `reveal_rate_limit` is validated on save, so an unparseable rate is refused
+  there rather than surfacing later as a failed credential reveal, where the
+  rate limit is the last place anyone would look.
+
+  The settings row holds **configuration only**. There is no AppRole, SecretID,
+  or token field, and `scripts/check_no_secret_fields.py` now guards this model
+  as well as `Credential`.
+
+### Fixed
+
+- **The shared Django settings cache has been removed.** A concurrent fill
+  could restore stale security controls after another process committed and
+  invalidated the old entry, while a cache outage made every configuration read
+  fail. The per-request memo still reduces several setting reads to one indexed
+  single-row query. Saving clears the writing thread's memo, uncommitted values
+  are not memoised, and middleware and background jobs bound each snapshot's
+  lifetime.
+
+- **Concurrent settings creation now returns a structured HTTP 400 instead of
+  an unhandled integrity error.** The database singleton constraint remains the
+  authority and the API translates the losing create transaction.
+
+- **`path_prefix` is now validated before it can create a partial outage.** It
+  must be a safe relative path and cannot change, or be restored to a fallback
+  by deleting the settings row, after credentials exist. Credential creation
+  and prefix updates now select the settings row for update, with an advisory
+  transaction lock covering its initial absence, so a credential cannot appear
+  between validation and commit. The AppRole policy remains scoped to the
+  original prefix while new writes would otherwise target the replacement. A
+  stale instance cannot recreate a deleted settings row, the first row must
+  match prefixes stamped into existing credential paths, and the same prefix
+  validator now rejects unsafe legacy fallbacks during every credential path
+  derivation.
+
+- **The settings migration compares set-like configuration canonically.** A
+  reordered list, tuple representation, or case-and-whitespace-only model label
+  difference no longer creates an authoritative database row and accidentally
+  disables later `PLUGINS_CONFIG` edits. Unsafe legacy path prefixes are not
+  copied into a row that runtime validation would reject.
+
+- **`rpc.py` called `get_config()` with no arguments**, against a signature
+  requiring a key — a `TypeError` on the `provision_netbox_approle` dispatch
+  path. The following line indexed the result as a dict, so a shape the function
+  has never returned was expected. Now correct and covered by a test.
+
+### Unchanged, deliberately
+
+- **The five background-job intervals still come from `PLUGINS_CONFIG` and
+  still require a restart.** `@system_job` reads its interval at import time and
+  `rqworker` reads the resulting registry at worker startup, so switching only
+  the model read would make a value revert at the next worker restart.
+  The fields exist on the model so that work needs no second schema change, but
+  presenting them as live before the rescheduling exists would be worse than
+  leaving the current restart-required semantics visible.
+
 ### Changed — action required for third-party backends
 
 - **`SecretBackend` now requires `read_metadata`.** It is declared

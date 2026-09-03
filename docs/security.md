@@ -69,10 +69,14 @@ reveal field must never be among them.
 
 ## 6. No auth material in the database
 
-`SecretEngine` has no `role_id`, `secret_id`, or `token` column. Material is
-read from the process environment at login, or from a file the environment
-points at. Storing the vault's own credentials in the database this plugin
-exists to keep secrets out of would defeat the entire design.
+`SecretEngine` and `OpenBaoSettings` have no `role_id`, `secret_id`, or `token`
+column. Material is read from the process environment at login, or from a file
+the environment points at. Storing the vault's own credentials in the database
+this plugin exists to keep secrets out of would defeat the entire design.
+
+The standalone field checker and the live model test maintain a reviewed
+allowlist for both `Credential` and `OpenBaoSettings`, so a newly added settings
+field receives the same scrutiny as a credential column.
 
 ## 7. Per-tier AppRoles
 

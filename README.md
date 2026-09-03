@@ -112,6 +112,8 @@ PLUGINS = ['netbox_openbao']
 
 PLUGINS_CONFIG = {
     'netbox_openbao': {
+        # Optional seed/fallback. Runtime settings are managed through the
+        # plugin API once its singleton settings row exists.
         'assignable_models': [
             'dcim.device',
             'virtualization.virtualmachine',

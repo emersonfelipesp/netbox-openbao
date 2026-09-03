@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
-from django.db import models
+from django.db import models, router, transaction
 from django.utils.translation import gettext_lazy as _
 from netbox.models import PrimaryModel
 
@@ -250,7 +250,15 @@ class Credential(PrimaryModel):
         the object graph breaks on the first such change. A broken path means
         an orphaned secret nobody can find.
         """
-        prefix = (get_config('path_prefix') or 'netbox').strip('/')
+        return self._path_for_prefix(get_config('path_prefix', 'netbox'))
+
+    def _path_for_prefix(self, prefix):
+        # The fallback can come from legacy PLUGINS_CONFIG rather than the
+        # validated settings row. Validate every derivation so an unsafe legacy
+        # value fails closed instead of reaching a backend path.
+        from netbox_openbao.models.settings import validate_path_prefix
+
+        validate_path_prefix(prefix)
         return f'{prefix}/credentials/{self.uuid}'
 
     @property
@@ -328,10 +336,29 @@ class Credential(PrimaryModel):
         # management commands, data migrations).
         self._apply_defaults()
 
-        # `path` is derived, not user-supplied, and is stamped once. Recomputing
-        # it on every save would silently orphan material if `path_prefix` were
-        # ever changed in deployment configuration.
-        if not self.path:
-            self.path = self.derived_path
+        if not self._state.adding:
+            return super().save(*args, **kwargs)
 
-        super().save(*args, **kwargs)
+        using = kwargs.get('using') or router.db_for_write(type(self), instance=self)
+        kwargs['using'] = using
+        with transaction.atomic(using=using):
+            # Prefix changes lock this same singleton row before their final
+            # credential existence check. Whichever write obtains the lock
+            # first commits a coherent outcome: the credential uses the new
+            # prefix, or its existence prevents the prefix change.
+            from netbox_openbao.models.settings import OpenBaoSettings
+
+            settings_row = OpenBaoSettings._lock_for_prefix_write(using)
+
+            # `path` is derived, not user-supplied, and is stamped once.
+            # Recomputing it on every save would silently orphan material if
+            # `path_prefix` were ever changed in deployment configuration.
+            if not self.path:
+                prefix = (
+                    settings_row.path_prefix
+                    if settings_row is not None
+                    else get_config('path_prefix', 'netbox')
+                )
+                self.path = self._path_for_prefix(prefix)
+
+            return super().save(*args, **kwargs)

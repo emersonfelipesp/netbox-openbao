@@ -48,16 +48,22 @@ filter or a table config and it becomes a standing view.
 by default. It marks anything past `valid_until` as `expired` and logs a
 warning at each horizon in `expiry_warning_days`:
 
+```bash
+curl -X PATCH https://netbox.example.net/api/plugins/openbao/settings/1/ \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"expiry_warning_days": [60, 30, 14, 7, 1]}'
+```
+
+`expiry_warning_days` takes effect without a restart. The job interval remains
+an import-time `PLUGINS_CONFIG` setting for now:
+
 ```python
 PLUGINS_CONFIG = {
     'netbox_openbao': {
-        'expiry_warning_days': [60, 30, 14, 7, 1],
         'expiry_scan_interval': 1440,   # minutes
     },
 }
 ```
-
-Intervals are read at import time, so a change needs a NetBox restart.
 
 The job's output appears in **Operations → Jobs**, and the warnings go to
 NetBox's logging — route `netbox.plugins.netbox_openbao` wherever your alerting

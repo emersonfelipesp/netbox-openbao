@@ -67,12 +67,11 @@ def build_procedure_params(engine, procedure_name: str, overrides: dict | None =
     if procedure_name in OPENBAO_READ_PROCEDURES:
         return overrides
     if procedure_name == 'service.openbao.1.provision_netbox_approle':
-        config = get_config()
         return {
             'mount': engine.kv_mount,
             'role_name': f'netbox-{engine.slug}',
             'engine_slug': engine.slug,
-            'path_prefix': config.get('path_prefix') or 'netbox',
+            'path_prefix': get_config('path_prefix', 'netbox'),
             'restart_netbox': overrides.get('restart_netbox', True),
         }
     return overrides

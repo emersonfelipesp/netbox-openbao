@@ -1,6 +1,116 @@
 # Configuration
 
-## `PLUGINS_CONFIG`
+## Database-backed settings
+
+Runtime configuration is stored in the singleton `OpenBaoSettings` row and is
+available through `/api/plugins/openbao/settings/`. A saved row is
+authoritative, and non-interval changes are visible to the next request without
+restarting NetBox.
+
+Create the row on an installation that does not have one yet:
+
+```bash
+curl -X POST https://netbox.example.net/api/plugins/openbao/settings/ \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"path_prefix": "netbox", "reveal_rate_limit": "30/hour"}'
+```
+
+Read the collection to discover its ID, then update it with `PATCH`:
+
+```bash
+curl https://netbox.example.net/api/plugins/openbao/settings/ \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -X PATCH https://netbox.example.net/api/plugins/openbao/settings/1/ \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"expiry_warning_days": [60, 30, 14, 7, 1]}'
+```
+
+The model has a fixed, unique `singleton_key`, so the database enforces at
+most one settings row. It contains configuration only: OpenBao RoleIDs,
+SecretIDs, and tokens remain outside the database.
+
+The settings row can be deleted only while no credentials exist. Once a
+credential exists, deleting the row could restore a different fallback
+`path_prefix`, producing the same partial outage as changing the prefix: the
+AppRole policy still covers the old path while new writes target another one.
+Credential creation and settings writes select the singleton for update before
+re-checking the committed credential state. A transaction-level advisory lock
+covers the fresh-installation case where no settings row exists to lock yet.
+If credentials were already created from a `PLUGINS_CONFIG` fallback, the first
+settings row must use the prefix stamped into those credential paths. Changing
+the fallback first does not make the stored paths move with it.
+
+The read order is:
+
+```
+per-request memo → settings row → PLUGINS_CONFIG → caller default
+```
+
+The missing-row result is memoised, but a read never creates a row. This keeps
+`PLUGINS_CONFIG` usable as the fallback for a fresh installation and for
+deployment-specific overrides. The whole row, including the no-row sentinel,
+is held only for the current request or job run. Five `get_config()` calls cost
+one indexed single-row query, not five.
+
+There is deliberately no shared Django cache layer. A shared fill could race a
+committed invalidation and restore stale security controls indefinitely, and a
+cache outage would otherwise make every settings read fail. Avoiding those two
+failure modes costs one database query per request on a page that already
+issues dozens. It also means the plugin has no settings-cache backend or TTL to
+configure.
+
+Saving or deleting the row clears the writing thread's memo immediately. Reads
+after a write remain unmemoised until the surrounding transaction ends because
+Django provides no rollback hook that could discard an uncommitted snapshot. A
+rollback therefore cannot leave its discarded value authoritative for the rest
+of the request or job.
+
+Use API or form saves for automatic settings validation. As with every Django
+model, a direct instance `save()` does not call `full_clean()`; an ORM caller
+must call it explicitly, although the instance save still clears the current
+thread's memo. `QuerySet.update()`, `bulk_update()`, and raw SQL bypass both
+`full_clean()` and save signals. An in-flight request may therefore keep its
+earlier snapshot, but every later request performs its own database lookup.
+Nothing can repair an invalid value that bypassed validation.
+
+The per-request memo is load-bearing rather than an optimisation. The
+credentials panel is registered globally, so this read path runs on **every
+object detail page in NetBox**, as well as on every assignment save and every
+reveal. A lookup per key would put several extra queries on every page in the
+estate.
+
+The thread-local memo is discarded after each response by a middleware the
+plugin declares itself, so it needs nothing from you. Each background job also
+clears the memo at the start and in a `finally` block, because an RQ worker is
+long-lived and does not pass through HTTP middleware. Without these lifecycle
+boundaries, a worker thread would retain the first settings snapshot it read.
+
+### From the CLI
+
+The settings are an ordinary plugin API endpoint, so `nbx` reaches them with no
+support of its own:
+
+```bash
+nbx call GET /api/plugins/openbao/settings/ --json
+nbx call PATCH /api/plugins/openbao/settings/1/ \
+  --body-json '{"reveal_ttl": 600}' --confirm --json
+```
+
+## `PLUGINS_CONFIG` seed and fallback
+
+`PLUGINS_CONFIG` remains supported. During upgrade, the data migration copies
+effective non-default values into the settings row. If no row exists, reads
+continue to resolve from `PLUGINS_CONFIG` and then their hard defaults.
+Set-like model labels are stripped, lowercased, deduplicated, and sorted during
+the migration, matching runtime semantics. An unsafe legacy `path_prefix` is
+not copied into a row the runtime model rejects, and credential path derivation
+fails closed until that fallback is corrected.
+
+The five job intervals are transitional exceptions. Their fields exist on the
+settings model, but the `@system_job` decorators still read `PLUGINS_CONFIG` at
+module import. Editing the row's interval fields does not reschedule jobs yet;
+keep configuring those five keys below until interval reconciliation lands.
 
 ```python
 PLUGINS_CONFIG = {
@@ -8,9 +118,13 @@ PLUGINS_CONFIG = {
         # Path prefix beneath the KV mount. The full logical path for a
         # credential is "<path_prefix>/credentials/<uuid>".
         #
-        # Changing this after credentials exist does NOT move them: `path` is
-        # stamped once at creation, on purpose, so a config change cannot
-        # orphan material. Existing credentials keep their old prefix.
+        # This must be a non-empty relative path without leading or trailing
+        # slashes, empty or traversal segments, or whitespace. It can be
+        # changed, or the settings row deleted, only while no credentials
+        # exist. The AppRole's OpenBao policy is scoped to
+        # secret/data/<path_prefix>/credentials/*; changing the prefix later
+        # would make new writes fail with a permission error while every
+        # existing credential continued to work at its stamped path.
         'path_prefix': 'netbox',
 
         # Object types a credential may be assigned to. Enforced on the model,
@@ -60,6 +174,10 @@ PLUGINS_CONFIG = {
         # Optional second, human-readable path written alongside the canonical
         # UUID path. Off by default: it is a consistency liability, because the
         # alias encodes facts that change.
+        #
+        # This setting is not model-backed. It is currently unused by the
+        # package and remains here pending a separate removal-or-implementation
+        # decision.
         'path_alias_template': None,
 
         # Days before expiry at which ExpiryScanJob warns.

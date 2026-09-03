@@ -5,6 +5,7 @@ from .engines import SecretEngine
 from .policies import CredentialPolicy
 from .procedure_runs import OpenBaoProcedureRun
 from .schemas import CredentialTypeSchema
+from .settings import OpenBaoSettings
 
 __all__ = (
     'Credential',
@@ -13,5 +14,6 @@ __all__ = (
     'CredentialPolicy',
     'CredentialTypeSchema',
     'OpenBaoProcedureRun',
+    'OpenBaoSettings',
     'SecretEngine',
 )

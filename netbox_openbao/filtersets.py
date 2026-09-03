@@ -18,6 +18,7 @@ from .models import (
     CredentialPolicy,
     CredentialTypeSchema,
     OpenBaoProcedureRun,
+    OpenBaoSettings,
     SecretEngine,
 )
 
@@ -28,8 +29,16 @@ __all__ = (
     'CredentialPolicyFilterSet',
     'CredentialTypeSchemaFilterSet',
     'OpenBaoProcedureRunFilterSet',
+    'OpenBaoSettingsFilterSet',
     'SecretEngineFilterSet',
 )
+
+
+class OpenBaoSettingsFilterSet(NetBoxModelFilterSet):
+
+    class Meta:
+        model = OpenBaoSettings
+        fields = ('id',)
 
 
 class SecretEngineFilterSet(NetBoxModelFilterSet):

@@ -34,6 +34,7 @@ from netbox_openbao.models import (
     CredentialPolicy,
     CredentialTypeSchema,
     OpenBaoProcedureRun,
+    OpenBaoSettings,
     SecretEngine,
 )
 from netbox_openbao.rpc import ENGINE_BOUND_PARAM_KEYS, OPENBAO_READ_PROCEDURES, OPENBAO_WRITE_PROCEDURES
@@ -51,6 +52,7 @@ __all__ = (
     'RevealRequestSerializer',
     'RunProcedureSerializer',
     'OpenBaoProcedureRunSerializer',
+    'OpenBaoSettingsSerializer',
     'SecretEngineSerializer',
 )
 
@@ -76,6 +78,38 @@ class SecretEngineSerializer(PrimaryModelSerializer):
         )
         brief_fields = ('id', 'url', 'display', 'name', 'slug', 'description')
         read_only_fields = ('status', 'status_message', 'last_checked')
+
+
+class OpenBaoSettingsSerializer(NetBoxModelSerializer):
+    """REST representation of the singleton plugin settings row."""
+
+    url = serializers.HyperlinkedIdentityField(
+        view_name='plugins-api:netbox_openbao-api:openbaosettings-detail'
+    )
+
+    def validate(self, data):
+        data = super().validate(data)
+        if self.instance is None and OpenBaoSettings.objects.exists():
+            raise serializers.ValidationError(
+                {'non_field_errors': ['The OpenBao settings row already exists.']}
+            )
+        return data
+
+    class Meta:
+        model = OpenBaoSettings
+        fields = (
+            'id', 'url', 'display', 'singleton_key',
+            'path_prefix', 'assignable_models', 'assignable_models_deny',
+            'store_public_material', 'reveal_rate_limit', 'reveal_ttl',
+            'token_cache_ttl', 'audit_retention_days', 'allow_generation',
+            'default_ssh_key_type', 'expiry_warning_days',
+            'engine_health_interval', 'expiry_scan_interval',
+            'credential_verify_interval', 'rotation_due_interval',
+            'access_log_prune_interval', 'tags', 'custom_fields',
+            'created', 'last_updated',
+        )
+        brief_fields = ('id', 'url', 'display')
+        read_only_fields = ('singleton_key',)
 
 
 class CredentialPolicySerializer(OrganizationalModelSerializer):

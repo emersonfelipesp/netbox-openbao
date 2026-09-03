@@ -5,13 +5,32 @@ Signal handlers keeping NetBox and OpenBao from drifting apart.
 import logging
 
 from django.db import transaction
-from django.db.models.signals import post_delete, post_save
+from django.db.models.signals import post_delete, post_save, pre_delete
 from django.dispatch import receiver
 
 from .backends.exceptions import OpenBaoError
-from .models import Credential, CredentialAssignment
+from .models import Credential, CredentialAssignment, OpenBaoSettings
 
 logger = logging.getLogger('netbox.plugins.netbox_openbao')
+
+
+@receiver(pre_delete, sender=OpenBaoSettings)
+def prevent_settings_delete(instance, using, **kwargs):
+    """Apply the model deletion guard to QuerySet.delete() as well."""
+    if not getattr(instance, '_settings_delete_guard_checked', False):
+        instance._lock_for_prefix_write(using)
+        instance._ensure_deletable(using)
+
+
+@receiver([post_save, post_delete], sender=OpenBaoSettings)
+def clear_settings_memo(using, **kwargs):
+    """Make the next read observe a saved row or the restored fallback."""
+    from .config import clear_config
+
+    # Signals run before their surrounding transaction commits. Record an
+    # in-flight write so reads until it ends bypass the memo instead of caching
+    # a row that may still be rolled back.
+    clear_config(pending_write=True, using=using)
 
 
 @receiver(post_delete, sender=Credential)

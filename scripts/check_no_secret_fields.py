@@ -27,6 +27,10 @@ model, where it can also see inherited and reverse-relation fields. This script
 is the dependency-free half, for a CI runner with no NetBox, no database, and
 no Redis. It parses the source instead.
 
+By default both the credential inventory and the plugin settings model are
+checked. The latter is configuration only: adding an AppRole, SecretID, token,
+or any other material-shaped field there would violate the same invariant.
+
 Usage:
 
     python scripts/check_no_secret_fields.py [path-to-credentials.py]
@@ -37,6 +41,7 @@ import sys
 from pathlib import Path
 
 DEFAULT_TARGET = 'netbox_openbao/models/credentials.py'
+SETTINGS_TARGET = 'netbox_openbao/models/settings.py'
 MODEL = 'Credential'
 
 # Every concrete field on `Credential`, each reviewed as incapable of holding
@@ -85,6 +90,31 @@ APPROVED_FIELDS = frozenset({
     'objects',
 })
 
+APPROVED_SETTINGS_FIELDS = frozenset({
+    'singleton_key',       # fixed singleton discriminator
+    'path_prefix',         # a location, never secret material
+    'assignable_models',
+    'assignable_models_deny',
+    'store_public_material',
+    'reveal_rate_limit',
+    'reveal_ttl',
+    'token_cache_ttl',
+    'audit_retention_days',
+    'allow_generation',
+    'default_ssh_key_type',
+    'expiry_warning_days',
+    'engine_health_interval',
+    'expiry_scan_interval',
+    'credential_verify_interval',
+    'rotation_due_interval',
+    'access_log_prune_interval',
+})
+
+APPROVED_FIELDS_BY_MODEL = {
+    MODEL: APPROVED_FIELDS,
+    'OpenBaoSettings': APPROVED_SETTINGS_FIELDS,
+}
+
 # Names assigned in the class body that are not fields and need no review.
 NON_FIELD_ASSIGNMENTS = frozenset({'Meta'})
 
@@ -116,6 +146,7 @@ def _assigned_names(node):
 
 def unapproved_names(source, model=MODEL):
     """Names bound in `model`'s class body that are not on the allowlist."""
+    approved_fields = APPROVED_FIELDS_BY_MODEL[model]
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == model:
@@ -124,34 +155,47 @@ def unapproved_names(source, model=MODEL):
                 for name in _assigned_names(statement):
                     if name.startswith('_'):
                         continue
-                    if name in APPROVED_FIELDS or name in NON_FIELD_ASSIGNMENTS:
+                    if name in approved_fields or name in NON_FIELD_ASSIGNMENTS:
                         continue
                     found.append(name)
             return found
     raise LookupError(f'No class named {model!r} in the parsed source')
 
 
-def main(argv):
-    target = Path(argv[1]) if len(argv) > 1 else Path(DEFAULT_TARGET)
+def _check(target, model):
     if not target.is_file():
-        # Fail loudly. A typo'd path that silently checked nothing would leave
-        # a green CI step asserting an invariant it never looked at.
         return f'No such file: {target}'
 
     try:
-        offenders = unapproved_names(target.read_text())
+        offenders = unapproved_names(target.read_text(), model=model)
     except LookupError as exc:
         return str(exc)
 
     if offenders:
         return (
-            f'{target}: {MODEL} gained field(s) that have not been reviewed as non-secret:\n  '
+            f'{target}: {model} gained field(s) that have not been reviewed as non-secret:\n  '
             + '\n  '.join(sorted(offenders))
             + '\n\nSecret material must live only in OpenBao. If these are genuinely non-secret, '
-            'add them to APPROVED_FIELDS in this script with the reasoning. See docs/security.md.'
+            'add them to the model allowlist in this script with the reasoning. See docs/security.md.'
         )
 
-    print(f'{target}: every {MODEL} field is on the reviewed non-secret allowlist.')
+    print(f'{target}: every {model} field is on the reviewed non-secret allowlist.')
+    return 0
+
+
+def main(argv):
+    if len(argv) > 1:
+        target = Path(argv[1])
+        model = 'OpenBaoSettings' if target.name == 'settings.py' else MODEL
+        return _check(target, model)
+
+    for target, model in (
+        (Path(DEFAULT_TARGET), MODEL),
+        (Path(SETTINGS_TARGET), 'OpenBaoSettings'),
+    ):
+        result = _check(target, model)
+        if result:
+            return result
     return 0
 
 

@@ -1,6 +1,6 @@
 # Data model
 
-Six models. Five carry inventory; one is append-only evidence.
+Eight models: configuration and inventory plus two operational audit records.
 
 ```mermaid
 erDiagram
@@ -12,6 +12,14 @@ erDiagram
     CredentialAssignment }o--|| Device : "GFK"
     CredentialAssignment }o--|| VirtualMachine : "GFK"
     CredentialAssignment }o--|| Service : "GFK"
+
+    OpenBaoSettings {
+        string singleton_key UK "always default"
+        string path_prefix
+        string reveal_rate_limit
+        int reveal_ttl
+        int token_cache_ttl
+    }
 
     SecretEngine {
         string slug PK "derives the env prefix"
@@ -39,6 +47,35 @@ erDiagram
     }
 ```
 
+## `OpenBaoSettings` — one configuration row
+
+The fixed `singleton_key` is unique, making "at most one" a database fact. The
+runtime reads the complete row once into a per-request memo, then falls back to
+`PLUGINS_CONFIG` and the caller's hard default if no row exists. Reads use
+`.first()` and never create the row; only the data migration and explicit API
+saves do that. There is no shared Django cache, so stale fills cannot resurrect
+old security controls and cache availability cannot break settings reads. The
+cost is one indexed single-row query per request instead of zero. Uncommitted
+settings reads are not memoised, and HTTP requests and background jobs bound
+the lifetime of their thread-local snapshots. The settings UI is delivered
+separately.
+
+`path_prefix` is validated as a non-empty, structurally safe relative path and
+can change, or the settings row be deleted, only while no credentials exist.
+Credential creation and prefix updates use `select_for_update()` on the
+settings row when it exists, so the guard cannot race a new credential. A
+transaction-level advisory lock covers a fresh installation without a row.
+Existing credential paths are stamped once, while the AppRole policy is scoped
+to `secret/data/<path_prefix>/credentials/*`; allowing a later change would make
+new writes fail as permission errors while existing credentials kept working.
+If credentials predate the first settings row, its prefix must match their
+stamped paths. Credential path derivation applies the same prefix validator to
+the legacy `PLUGINS_CONFIG` fallback and fails closed when it is unsafe.
+
+The row holds no OpenBao authentication material. `RoleID`, `SecretID`, and
+tokens stay in the environment or referenced files under the same invariant as
+`SecretEngine`.
+
 ## `SecretEngine` — one instance, one KV mount
 
 Holds **no authentication material**. There is no `role_id`, `secret_id`, or
@@ -55,7 +92,7 @@ environment (or a file it points at) at the moment of login. See
 
 `is_default` is enforced by a partial unique constraint, so "at most one
 default" is a database fact rather than a convention. There is deliberately no
-`default_engine` setting in `PLUGINS_CONFIG`: a duplicate would be a second
+`default_engine` setting in `OpenBaoSettings`: a duplicate would be a second
 place for the same decision to live, and therefore a place for the two to
 disagree.
 
@@ -87,7 +124,7 @@ Every field is non-secret by construction. The interesting ones:
 | Field | Why it is here |
 |---|---|
 | `uuid` | Immutable identity. Editable is `False`; the path derives from this. |
-| `path` | Stamped **once**, at creation. Recomputing it on every save would silently orphan material if `path_prefix` ever changed in deployment configuration. |
+| `path` | Stamped **once**, at creation. `path_prefix` becomes immutable once any credential exists, and recomputing existing paths would orphan material. |
 | `public_key`, `fingerprint`, `key_type` | Extracted once at write time. Public by definition — a fingerprint is what you publish. |
 | `cert_*`, `valid_from`, `valid_until` | Likewise: transmitted in the clear during every TLS handshake. `valid_until` is indexed, which is what makes the expiry dashboard one query. |
 | `kv_version` | The **highest version ever written** at this path. This is what check-and-set compares against. |
@@ -144,7 +181,8 @@ Two constraints do real work:
 
 The permitted target types are enforced in the model's `clean()`, so the REST
 API and any direct ORM caller are held to the same list as the form. They
-resolve to `assignable_models` in `PLUGINS_CONFIG`, unioned with whatever
+resolve to `assignable_models` in `OpenBaoSettings` (or its `PLUGINS_CONFIG`
+fallback), unioned with whatever
 installed plugins registered through `netbox_openbao.registry`, minus
 `assignable_models_deny` — see
 [Assignable object types](../configuration.md#assignable-object-types).

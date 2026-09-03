@@ -12,5 +12,6 @@ router.register('assignments', views.CredentialAssignmentViewSet)
 router.register('type-schemas', views.CredentialTypeSchemaViewSet)
 router.register('access-logs', views.CredentialAccessLogViewSet)
 router.register('procedure-runs', views.OpenBaoProcedureRunViewSet)
+router.register('settings', views.OpenBaoSettingsViewSet)
 
 urlpatterns = router.urls

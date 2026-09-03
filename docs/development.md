@@ -132,8 +132,8 @@ not listed there is built but unreachable.
 netbox_openbao/
 ├── __init__.py          PluginConfig
 ├── choices.py           ChoiceSets
-├── config.py            typed PLUGINS_CONFIG access
-├── models/              engines, policies, credentials, assignments, audit
+├── config.py            cached settings-row and PLUGINS_CONFIG fallback
+├── models/              settings, engines, policies, credentials, assignments, audit
 ├── backends/            SecretBackend ABC, OpenBao/Vault/broker implementations, exceptions
 ├── secrets/             type registry, cryptography extractors, generators
 ├── services.py          the only code that touches material

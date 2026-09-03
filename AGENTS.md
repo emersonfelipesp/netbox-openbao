@@ -370,6 +370,78 @@ NetBox 4.6.5 as the backward-regression target.
   `test_the_scan_finds_known_call_sites` fails if it stops matching anything.
   Reach a backend through `getattr` or a long attribute chain and the scan will
   not see it; do not, or extend `_BackendCallScanner` in the same change.
+- **Configuration is database-backed, and the read path has five properties
+  that are load-bearing.** `config.get_config()` resolves per-request memo →
+  `OpenBaoSettings` row → `PLUGINS_CONFIG` → default.
+  1. **A read must never create the row** — `.first()`, never `get_or_create()`.
+     A read that creates it makes `PLUGINS_CONFIG` permanently unreachable, and
+     the 19 `override_settings` tests across six files would then pass while
+     asserting against defaults rather than against what they set.
+  2. **The complete row is memoised once per request or job, not once per key.**
+     This path runs on *every object detail page in NetBox*, because the
+     credentials panel is globally registered and scoped per render. Five
+     `get_config()` calls therefore cost one indexed single-row query. The
+     `_MISSING` sentinel preserves the no-row result within that lifetime.
+  3. **There is deliberately no shared Django cache.** A concurrent reader can
+     otherwise restore stale security controls after another process commits
+     and invalidates the old entry, and a cache outage makes every settings read
+     fail. Turning one query per request into zero is not worth either failure
+     mode.
+  4. **Settings signals clear the writing thread's memo immediately.** Reads
+     after a write remain unmemoised until the surrounding transaction ends,
+     because Django has no rollback hook that could discard an uncommitted
+     snapshot. A rollback therefore cannot leave its value authoritative for
+     the rest of the request or job.
+  5. **Direct ORM writes do not gain validation from being settings writes.** As
+     with every Django model, an instance `save()` does not call `full_clean()`;
+     direct callers must do that first, although the save signal still clears
+     the current memo. `QuerySet.update()`, `bulk_update()`, and raw SQL bypass
+     both validation and signals. An in-flight request may retain its earlier
+     snapshot, but the next request reloads the row. Use API/form saves, or call
+     `full_clean()` before an instance save.
+- **`middleware.SettingsCacheMiddleware` is not optional and must not be
+  removed.** The thread-local memo is only safe because something discards it
+  after each response. Drop the middleware and a gunicorn worker thread keeps
+  the configuration it read on its first request for the life of the process, so
+  a settings change applies on the thread that saved it and silently not on any
+  other — no error, nothing logged, and the save looks like it did not take.
+  NetBox clears its own config the same way, in `netbox.middleware`. The plugin
+  declares it through `PluginConfig.middleware`, which NetBox appends to
+  `MIDDLEWARE` at startup, so it needs nothing from the operator.
+- **RQ jobs must clear the settings memo around every run.** They do not pass
+  through HTTP middleware, and a worker process is long-lived. The shared job
+  decorator clears at the start and in a `finally` block so one job never
+  inherits another's snapshot and a failure cannot leave stale state behind.
+- **The five job intervals still come from `PLUGINS_CONFIG` and still need a
+  restart.** `@system_job` evaluates its interval at *import*, requires a plain
+  `int`, and `rqworker` reads the resulting registry at *worker startup*. Fields
+  for them exist on the settings model so the rescheduling work needs no second
+  migration — do not wire the decorators to them until that work lands, because
+  a value that appears live and reverts at the next worker restart is worse than
+  one that is honestly restart-required.
+- **`OpenBaoSettings` holds configuration, never material.** No AppRole, no
+  SecretID, no token — the same rule as `Credential`, and an easier place to
+  talk yourself into breaking it. `scripts/check_no_secret_fields.py` guards
+  both models.
+- **`path_prefix` becomes immutable when the first credential exists.** The
+  settings row cannot be deleted then either, because restoring a different
+  fallback prefix has the same effect as changing it. The AppRole's OpenBao
+  policy is scoped to `secret/data/<path_prefix>/credentials/*`, while existing
+  credential paths are stamped once. Prefix updates and credential creation
+  use `select_for_update()` on the settings row and then re-check committed
+  state. A transaction-level advisory lock covers a fresh installation where
+  there is no row to lock yet. A later prefix change would make every new write
+  fail with a permission error that looks like a vault outage while all old
+  credentials kept working. Validation also rejects empty prefixes, leading or
+  trailing slashes, empty or traversal segments, and whitespace. A stale model
+  instance cannot recreate a deleted row. When credentials predate the first
+  row, its prefix must match their stamped paths. Credential path derivation
+  applies the same validator to a legacy `PLUGINS_CONFIG` fallback and fails
+  closed when that configuration is unsafe.
+- **`path_alias_template` is deliberately absent from `OpenBaoSettings`.** It
+  is declared and documented but unused by the package. Do not turn a dead
+  setting into an operator-facing database field before it is either
+  implemented or removed.
 - **A plugin integrating with this one registers its assignable models in
   `ready()`** — `netbox_openbao.registry.register_assignable_models(...)` — it
   does not ask the operator to edit `PLUGINS_CONFIG`. The resolved allowlist is

@@ -7,6 +7,7 @@ and `netbox-cli` work unmodified.
 
 | Endpoint | Purpose |
 |---|---|
+| `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/` | Singleton runtime configuration; deletion is refused while any credential exists and requires the standard `OpenBaoSettings` model permissions |
 | `GET/POST /engines/` | Secret engines |
 | `GET /engines/{id}/health/` | Probe and record engine status |
 | `GET/POST /policies/` | Credential policy tiers |

@@ -515,8 +515,8 @@ class CredentialAssignmentForm(GenericObjectFormMixin, NetBoxModelForm):
         fields = ('credential', 'purpose', 'is_primary', 'description', 'tags')
 
     def __init__(self, *args, **kwargs):
-        # Evaluated per-instantiation so a change to `assignable_models` in
-        # PLUGINS_CONFIG takes effect on restart without a code change.
+        # Evaluated per-instantiation so a saved settings change takes effect
+        # immediately rather than freezing the allowlist at module import.
         if HAS_GENERIC_OBJECT_FIELD:
             self.base_fields['assigned_object'].content_type_queryset = assignable_content_types()
         else:

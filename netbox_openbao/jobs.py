@@ -13,14 +13,16 @@ network round-trip per certificate.
 
 import logging
 from datetime import timedelta
+from functools import wraps
 
 from django.utils import timezone
 from netbox.jobs import JobRunner, system_job
+from netbox.plugins import get_plugin_config
 
 from .backends import get_backend
 from .backends.exceptions import OpenBaoError
 from .choices import CredentialStatusChoices, EngineStatusChoices
-from .config import get_config
+from .config import clear_config, get_config
 from .models import Credential, CredentialAccessLog, SecretEngine
 
 logger = logging.getLogger('netbox.plugins.netbox_openbao')
@@ -34,16 +36,44 @@ __all__ = (
 )
 
 
+def _static_job_interval(key, default):
+    """Read an import-time interval directly from PLUGINS_CONFIG.
+
+    The settings row contains these fields as schema foundation, but switching
+    the decorators alone would make a UI/API edit appear live and then revert
+    at worker restart. Interval rescheduling is deliberately a separate change.
+    """
+    value = get_plugin_config('netbox_openbao', key)
+    return int(value or default)
+
+
+def _fresh_settings_per_run(run):
+    """Give each RQ job a fresh thread-local settings snapshot."""
+    @wraps(run)
+    def wrapped(self, *args, **kwargs):
+        # RQ reuses a long-lived worker outside the HTTP middleware lifecycle.
+        # Clear on both edges so one job cannot inherit another's snapshot and
+        # a failing job cannot leave its own snapshot behind.
+        clear_config()
+        try:
+            return run(self, *args, **kwargs)
+        finally:
+            clear_config()
+
+    return wrapped
+
+
 # `system_job` requires a plain int and reads it at import time. This module is
 # imported from PluginConfig.ready(), by which point PLUGINS_CONFIG is loaded,
 # so the configured interval is honoured rather than documented-and-ignored.
-@system_job(interval=int(get_config('engine_health_interval') or 5))
+@system_job(interval=_static_job_interval('engine_health_interval', 5))
 class EngineHealthJob(JobRunner):
     """Probe every engine's `sys/health` and record the observed status."""
 
     class Meta:
         name = 'OpenBao engine health'
 
+    @_fresh_settings_per_run
     def run(self, *args, **kwargs):
         checked = 0
         for engine in SecretEngine.objects.all():
@@ -60,7 +90,7 @@ class EngineHealthJob(JobRunner):
         return f'Checked {checked} engine(s).'
 
 
-@system_job(interval=int(get_config('expiry_scan_interval') or 1440))
+@system_job(interval=_static_job_interval('expiry_scan_interval', 1440))
 class ExpiryScanJob(JobRunner):
     """
     Flag credentials at or past their validity window.
@@ -72,6 +102,7 @@ class ExpiryScanJob(JobRunner):
     class Meta:
         name = 'OpenBao credential expiry scan'
 
+    @_fresh_settings_per_run
     def run(self, *args, **kwargs):
         now = timezone.now()
 
@@ -110,7 +141,7 @@ class ExpiryScanJob(JobRunner):
         return summary
 
 
-@system_job(interval=int(get_config('credential_verify_interval') or 1440))
+@system_job(interval=_static_job_interval('credential_verify_interval', 1440))
 class CredentialVerifyJob(JobRunner):
     """
     Confirm every credential's path still resolves, and refresh `kv_version`.
@@ -123,6 +154,7 @@ class CredentialVerifyJob(JobRunner):
     class Meta:
         name = 'OpenBao credential verification'
 
+    @_fresh_settings_per_run
     def run(self, *args, **kwargs):
         verified = missing = errored = 0
 
@@ -155,13 +187,14 @@ class CredentialVerifyJob(JobRunner):
         return f'{verified} verified, {missing} missing, {errored} unreachable.'
 
 
-@system_job(interval=int(get_config('rotation_due_interval') or 1440))
+@system_job(interval=_static_job_interval('rotation_due_interval', 1440))
 class RotationDueJob(JobRunner):
     """Report credentials past their configured rotation interval."""
 
     class Meta:
         name = 'OpenBao rotation due scan'
 
+    @_fresh_settings_per_run
     def run(self, *args, **kwargs):
         now = timezone.now()
         due = []
@@ -181,13 +214,14 @@ class RotationDueJob(JobRunner):
         return f'{len(due)} credential(s) due for rotation.'
 
 
-@system_job(interval=int(get_config('access_log_prune_interval') or 10080))
+@system_job(interval=_static_job_interval('access_log_prune_interval', 10080))
 class AccessLogPruneJob(JobRunner):
     """Enforce the configured audit retention window."""
 
     class Meta:
         name = 'OpenBao access log pruning'
 
+    @_fresh_settings_per_run
     def run(self, *args, **kwargs):
         days = int(get_config('audit_retention_days') or 365)
         cutoff = timezone.now() - timedelta(days=days)

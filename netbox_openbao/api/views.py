@@ -24,7 +24,7 @@ API's response shape is harder to audit than a single named REST action.
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import router, transaction
+from django.db import IntegrityError, router, transaction
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -47,6 +47,7 @@ from netbox_openbao.models import (
     CredentialPolicy,
     CredentialTypeSchema,
     OpenBaoProcedureRun,
+    OpenBaoSettings,
     SecretEngine,
 )
 from netbox_openbao.rpc import dispatch_openbao_procedure
@@ -69,6 +70,7 @@ from .serializers import (
     CredentialSerializer,
     CredentialTypeSchemaSerializer,
     OpenBaoProcedureRunSerializer,
+    OpenBaoSettingsSerializer,
     PromoteRequestSerializer,
     RevealRequestSerializer,
     RunProcedureSerializer,
@@ -83,6 +85,7 @@ __all__ = (
     'CredentialTypeSchemaViewSet',
     'CredentialViewSet',
     'OpenBaoProcedureRunViewSet',
+    'OpenBaoSettingsViewSet',
     'SecretEngineViewSet',
 )
 
@@ -160,6 +163,28 @@ class OpenBaoProcedureRunViewSet(NetBoxReadOnlyModelViewSet):
     )
     serializer_class = OpenBaoProcedureRunSerializer
     filterset_class = filtersets.OpenBaoProcedureRunFilterSet
+
+
+class OpenBaoSettingsViewSet(NetBoxModelViewSet):
+    """REST CRUD for the database-enforced singleton settings row."""
+
+    queryset = OpenBaoSettings.objects.all().order_by('id')
+    serializer_class = OpenBaoSettingsSerializer
+    filterset_class = filtersets.OpenBaoSettingsFilterSet
+
+    def perform_create(self, serializer):
+        # The serializer's exists() check provides a useful early error, but it
+        # cannot serialize two concurrent POSTs. The unique singleton key is
+        # the authority. NetBox's implementation already saves atomically and
+        # enforces constrained object permissions; retain both, and translate
+        # the losing transaction instead of leaking a 500.
+        try:
+            super().perform_create(serializer)
+        except IntegrityError as exc:
+            raise DRFValidationError({
+                'non_field_errors': ['The OpenBao settings row already exists.'],
+            }) from exc
+
 
 class CredentialPolicyViewSet(NetBoxModelViewSet):
     queryset = CredentialPolicy.objects.select_related('engine').annotate(

@@ -40,6 +40,14 @@ class NetBoxOpenBaoConfig(PluginConfig):
 
     required_plugins = ['netbox_rpc']
 
+    # Discards the thread-local settings memo after every response. NetBox
+    # appends this to MIDDLEWARE at startup, so it needs nothing from the
+    # operator. Without it a worker thread keeps whatever configuration it read
+    # on its first request for the life of the process, and a settings change
+    # appears to take on one thread and silently not on the others — see
+    # `middleware.SettingsCacheMiddleware`.
+    middleware = ['netbox_openbao.middleware.SettingsCacheMiddleware']
+
     required_settings = []
     default_settings = {
         # Path prefix beneath the KV mount. Full logical path for a credential

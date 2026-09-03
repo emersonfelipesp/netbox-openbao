@@ -17,7 +17,7 @@ from rest_framework.renderers import BrowsableAPIRenderer, JSONRenderer
 from netbox_openbao.api.serializers import CredentialSerializer
 from netbox_openbao.api.views import CredentialViewSet
 from netbox_openbao.backends.exceptions import OpenBaoAuthError, OpenBaoError
-from netbox_openbao.models import Credential
+from netbox_openbao.models import Credential, OpenBaoSettings
 
 # The reviewed allowlist of non-secret `Credential` fields, imported from the
 # standalone checker rather than restated here so the two cannot disagree.
@@ -46,6 +46,7 @@ def _load_checker():
 _checker = _load_checker()
 
 APPROVED_FIELDS = _checker.APPROVED_FIELDS
+APPROVED_SETTINGS_FIELDS = _checker.APPROVED_SETTINGS_FIELDS
 
 # Fields Django and NetBox contribute that are not declared in the model body,
 # so the source-parsing checker never sees them. Each is machinery, not data
@@ -100,6 +101,18 @@ class ModelSurfaceTest(TestCase):
         self.assertIn('reveal', codenames)
         self.assertIn('rotate', codenames)
         self.assertNotIn('view', codenames, 'view is a reserved action and must not be redeclared')
+
+    def test_every_settings_field_is_on_the_reviewed_non_secret_allowlist(self):
+        """The settings row must never become a second credential store."""
+        known = APPROVED_SETTINGS_FIELDS | INHERITED_FIELDS
+        offenders = sorted(
+            name for field in OpenBaoSettings._meta.get_fields()
+            if (name := getattr(field, 'name', '')) and name not in known
+        )
+        self.assertEqual(
+            offenders, [],
+            f'OpenBaoSettings gained unreviewed field(s): {offenders}. Secret material must live only in OpenBao.',
+        )
 
 
 class SerializerSurfaceTest(TestCase):

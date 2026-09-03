@@ -4,9 +4,18 @@ Five jobs, registered with NetBox's `@system_job` decorator so they are
 scheduled by NetBox's own RQ worker and appear in the core **Jobs** UI. The
 plugin runs no scheduler of its own.
 
-Intervals come from `PLUGINS_CONFIG` and are read **at import time** by the
-decorators, so changing one needs a NetBox restart. See
-[Configuration](../configuration.md).
+Intervals still come from `PLUGINS_CONFIG` and are read **at import time** by
+the decorators. The fields also exist on `OpenBaoSettings` as schema
+foundation, but are not consumed or rescheduled yet; editing those row fields
+does not affect a running or restarted worker. Keep the five interval keys in
+`PLUGINS_CONFIG` until reconciliation support lands. See
+[Configuration](../configuration.md#plugins_config-seed-and-fallback).
+
+Every run clears the thread-local settings memo before it starts and again in a
+`finally` block. RQ workers are long-lived and do not pass through the HTTP
+middleware, so this boundary is what makes changes such as
+`audit_retention_days` and `expiry_warning_days` visible between jobs, including
+after a job raises.
 
 | Job | Default interval | Contacts OpenBao? |
 |---|---|---|
