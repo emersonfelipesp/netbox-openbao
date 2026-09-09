@@ -143,6 +143,7 @@ nav:
       - Credential types: architecture/credential-types.md
       - Background jobs: architecture/background-jobs.md
       - Security invariants: architecture/invariants.md
+      - Proxmox VM secrets: architecture/proxmox-vm-secrets.md
   - How-to:
       - how-to/index.md
       - Grant a device SSH access: quick-add-ssh.md
