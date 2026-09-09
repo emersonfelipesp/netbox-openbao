@@ -13,6 +13,10 @@ centres on three projects that stay deliberately separate:
 Material never lives in PostgreSQL. Procedures never accept arbitrary shell
 text. Reveal and RPC dispatch are separate permissions on separate plugins.
 
+For the complete cross-plugin view of the dispatch lane, credential reveal
+path, and companion-plugin contracts, see the [`netbox-rpc` cross-plugin
+integration guide](https://github.com/N-MultiCloud/netbox-rpc/blob/main/docs/cross-plugin-integrations.md).
+
 ## Stack diagram
 
 ```mermaid
