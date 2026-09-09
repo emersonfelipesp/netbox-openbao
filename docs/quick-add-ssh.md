@@ -16,10 +16,9 @@ most common thing anyone does with this plugin.
 3. A `CredentialAssignment` binding the credential to the service, and a second
    binding it to the object itself.
 
-When `netbox-nms` is installed, password quick-add also creates a matching
-`DeviceCredential` (OpenBao-backed via `openbao_write_policy`) and an SSH
-`DeviceService` on the linked `dcim.Device`, so RPC and NMS automation resolve
-the same secret without a second manual step.
+When audited host automation is needed, `netbox-rpc` resolves the credential
+through the same reveal contract and dispatches an approved procedure through
+`netbox-rpc-backend`; no second credential mirror is required.
 
 All of it inside one `transaction.atomic()`, and the material goes through the
 same `store_credential()` every other write uses — so the rollback compensator
@@ -30,7 +29,7 @@ assignment.
 
 | | |
 |---|---|
-| **Username and password** | Stores an `ssh-password` credential in OpenBao. This is the SSH **login** password, not a key passphrase. When netbox-nms is present, the same password is mirrored into a `DeviceCredential` + SSH `DeviceService` for RPC/NMS consumers. |
+| **Username and password** | Stores an `ssh-password` credential in OpenBao. This is the SSH **login** password, not a key passphrase. Audited RPC consumers resolve it through the POST-only reveal contract. |
 | **SSH keypair** | See the three key-supply options below. |
 
 ## Three ways to supply a keypair

@@ -144,6 +144,7 @@ nav:
       - Background jobs: architecture/background-jobs.md
       - Security invariants: architecture/invariants.md
       - Proxmox VM secrets: architecture/proxmox-vm-secrets.md
+      - OpenBao, broker, and RPC: architecture/openbao-broker-rpc.md
   - How-to:
       - how-to/index.md
       - Grant a device SSH access: quick-add-ssh.md

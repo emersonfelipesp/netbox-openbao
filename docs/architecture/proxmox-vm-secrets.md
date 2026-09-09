@@ -44,13 +44,14 @@ flowchart TB
     OP["Operator / automation\nAdd SSH access · quick-add"]
     SVC["netbox-openbao\nservices.py"]
     META[("NetBox\nCredential · Assignment · Service")]
+    BR["netbox-openbao-broker\noptional mTLS"]
     BAO[("OpenBao KV v2\nssh-password · ssh-keypair")]
-    NMS["netbox-nms\noptional mirror"]
 
     OP -->|"POST · atomic transaction"| SVC
     SVC -->|"indexed metadata"| META
-    SVC -->|"write-only material"| BAO
-    SVC -.->|"password quick-add"| NMS
+    SVC -->|"broker mode"| BR
+    SVC -.->|"direct AppRole"| BAO
+    BR --> BAO
 ```
 
 Quick-add SSH on a Device or VM page creates (when modeled):
@@ -60,9 +61,9 @@ Quick-add SSH on a Device or VM page creates (when modeled):
 3. `CredentialAssignment` rows binding the credential to the service and to the
    object.
 
-When `netbox-nms` is installed, password quick-add also mirrors into
-`DeviceCredential` and an SSH `DeviceService` so RPC and NMS automation resolve
-the same secret without a second manual step.
+Material writes go through `services.py` to OpenBao directly or via
+**netbox-openbao-broker** when broker mode is enabled — see
+[openbao, broker, and RPC stack](openbao-broker-rpc.md).
 
 → [Quick-add SSH](../quick-add-ssh.md) · [The write path](write-path.md)
 
@@ -70,20 +71,25 @@ the same secret without a second manual step.
 
 ```mermaid
 flowchart TB
-    CON["Operator · nbx · NMS RPC"]
+    CON["Operator · nbx · netbox-rpc"]
     REV["POST …/credentials/{id}/reveal/\nreveal_credential · JSON-only"]
+    RPC["netbox-rpc\nprocedure dispatch"]
+    EXEC["netbox-rpc-backend\nSSH executor"]
     BAO[("OpenBao / broker\nKV v2 read")]
     VM["VirtualMachine / LXC\nSSH using proxbox inventory"]
 
     CON --> REV
+    CON --> RPC
     REV --> BAO
-    BAO --> VM
+    RPC --> EXEC
+    EXEC --> BAO
+    EXEC --> VM
 ```
 
 Reading material requires the `reveal_credential` action. Responses are
 `Cache-Control: no-store`, POST-only in the UI, and fully audited. Automation
-should use the plugin REST API — not Proxmox config scraping and not proxbox
-sync payloads.
+should use the plugin REST API or audited **netbox-rpc** procedures — not
+Proxmox config scraping and not proxbox sync payloads.
 
 → [The reveal path](reveal-path.md) · [REST API](../api.md)
 
@@ -104,7 +110,8 @@ sync payloads.
 3. Confirm username or public-key metadata on the credential row; material stays
    write-only on GET.
 4. When access is needed, POST reveal with `reveal_credential` permission — or
-   let `nbx` / NMS RPC do the same through the audited API.
+   dispatch an audited **netbox-rpc** procedure that resolves material through
+   the same openbao API.
 
 ## netbox-proxbox OpenBao integration
 
@@ -118,6 +125,7 @@ the VM object after proxbox sync creates it.
 
 ## Further reading
 
+- [openbao, broker, and RPC stack](openbao-broker-rpc.md)
 - [Architecture overview](index.md)
 - [Security model](../security.md)
 - [netbox-proxbox companion: netbox-openbao](https://github.com/emersonfelipesp/netbox-proxbox/blob/develop/docs/companion-plugins/netbox-openbao.md)
