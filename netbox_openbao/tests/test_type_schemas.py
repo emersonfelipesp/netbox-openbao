@@ -25,7 +25,7 @@ from netbox_openbao.secrets.registry import (
 )
 from netbox_openbao.services import write_material
 
-from .base import OpenBaoTestCase
+from .base import OpenBaoTestCase, OpenBaoTransactionTestCase
 from .fakes import FakeBackend
 
 RADIUS_SCHEMA = {
@@ -109,7 +109,7 @@ class SchemaValidationTest(OpenBaoTestCase):
         self.assertEqual(sorted(schema.public_fields), ['port', 'server'])
 
 
-class StoredTypeUsageTest(OpenBaoTestCase):
+class StoredTypeUsageTest(OpenBaoTransactionTestCase):
 
     def setUp(self):
         super().setUp()
@@ -190,7 +190,7 @@ class StoredTypeUsageTest(OpenBaoTestCase):
         self.assertIn('radius', values)
 
 
-class StoredTypeCannotLeakTest(OpenBaoTestCase):
+class StoredTypeCannotLeakTest(OpenBaoTransactionTestCase):
     """
     The claim worth proving: a schema an operator writes cannot cause secret
     material to be mirrored into a NetBox column.

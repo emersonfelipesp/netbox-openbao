@@ -4,13 +4,14 @@ Write-path behaviour: atomicity, compensation, and audit.
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.db import transaction
 
 from netbox_openbao.backends.exceptions import OpenBaoConflict
 from netbox_openbao.choices import AccessActionChoices, CredentialTypeChoices
 from netbox_openbao.models import Credential, CredentialAccessLog
 from netbox_openbao.services import reveal_material, rotate_material, write_material
 
-from .base import OpenBaoTestCase
+from .base import OpenBaoTransactionTestCase as OpenBaoTestCase
 from .fakes import FakeBackend
 
 User = get_user_model()
@@ -108,9 +109,9 @@ class WritePathTest(OpenBaoTestCase):
 
         self.assertEqual(Credential.objects.count(), 0)
         self.assertNotIn(credential.path, FakeBackend.store)
-        # cas=0 on a create means nothing else lived at this path, so the
-        # compensator destroys it wholesale (versions=None).
-        self.assertEqual(FakeBackend.delete_calls, [(credential.path, None)])
+        # Even a new path can gain a concurrent version after rollback.
+        # Compensation therefore removes only this operation's exact version.
+        self.assertEqual(FakeBackend.delete_calls, [(credential.path, (1,))])
 
     def test_duplicate_path_is_refused_by_the_database(self):
         """
@@ -190,9 +191,8 @@ class WritePathTest(OpenBaoTestCase):
         # Only the failed version was removed, not the whole path.
         self.assertEqual(FakeBackend.delete_calls, [(credential.path, (2,))])
 
-    def test_failed_create_still_removes_the_whole_path(self):
-        """The create case is different: nothing else lives there, so a full
-        destroy is the correct compensation."""
+    def test_failed_create_removes_its_only_material_version(self):
+        """A new path with no concurrent writer has no remaining material."""
         FakeBackend.fail_on_metadata = True
         credential = self.make_credential()
 
@@ -249,16 +249,15 @@ class AuditTest(OpenBaoTestCase):
         deletion cannot destroy a secret it did not actually remove — see
         `tests/test_policy_gate.DeletionOrderingTest` for that half.
 
-        `TestCase` wraps every test in an atomic block it never commits, so the
-        callback would otherwise never fire and this assertion would pass by
-        accident under a plugin that had stopped destroying anything at all.
-        `captureOnCommitCallbacks(execute=True)` runs them at the end of the
-        block, which is what makes this test still mean something.
+        This fixture uses real transaction semantics. The material remains
+        during the database transaction and disappears only after its actual
+        commit, without simulating or manually invoking commit callbacks.
         """
         path = self.credential.path
 
-        with self.captureOnCommitCallbacks(execute=True):
+        with transaction.atomic():
             self.credential.delete()
+            self.assertIn(path, FakeBackend.store)
 
         self.assertNotIn(path, FakeBackend.store)
 

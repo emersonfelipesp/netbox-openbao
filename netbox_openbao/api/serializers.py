@@ -228,7 +228,7 @@ class CredentialAssignmentSerializer(NetBoxModelSerializer):
         model = CredentialAssignment
         fields = (
             'id', 'url', 'display_url', 'display', 'credential', 'assigned_object_type',
-            'assigned_object_id', 'assigned_object', 'purpose', 'is_primary', 'description',
+            'assigned_object_id', 'assigned_object', 'purpose', 'is_primary', 'enabled', 'description',
             'tags', 'custom_fields', 'created', 'last_updated',
         )
         brief_fields = ('id', 'url', 'display', 'credential', 'purpose')
@@ -265,7 +265,9 @@ class CredentialAccessLogSerializer(BaseModelSerializer):
         fields = (
             'id', 'url', 'display_url', 'display', 'credential', 'credential_name_snapshot',
             'credential_uuid_snapshot', 'user', 'username_snapshot', 'action', 'source_ip', 'reason',
-            'request_id', 'success', 'message', 'timestamp',
+            'request_id', 'success', 'message', 'timestamp', 'executor', 'executor_snapshot',
+            'execution_id', 'intent_run_id', 'step_id', 'reference_name', 'assignment_id',
+            'resolved_version', 'purpose', 'dispatch_nonce_digest',
         )
         brief_fields = ('id', 'url', 'display', 'action', 'timestamp')
         read_only_fields = fields

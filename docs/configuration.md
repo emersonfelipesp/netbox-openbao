@@ -150,6 +150,9 @@ PLUGINS_CONFIG = {
         # Disabling this gives up the zero-read expiry dashboard, which is the
         # main reason to run this plugin rather than another one.
         'store_public_material': True,
+        # Verified live/staged SSH public fingerprints and KV version bindings
+        # remain mandatory for automation identity, even when this is False.
+        # Full public keys and optional certificate display metadata remain opt-in.
 
         # DRF throttle rate for the reveal endpoint, per user. Bounds the blast
         # radius of a leaked API token.

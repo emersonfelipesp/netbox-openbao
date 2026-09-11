@@ -102,13 +102,14 @@ class CredentialAssignmentTable(NetBoxTable):
     assigned_object_type = columns.ContentTypeColumn(verbose_name=_('Object type'))
     purpose = columns.ChoiceFieldColumn()
     is_primary = columns.BooleanColumn(verbose_name=_('Primary'))
+    enabled = columns.BooleanColumn(verbose_name=_('Automation enabled'))
     tags = columns.TagColumn(url_name='plugins:netbox_openbao:credentialassignment_list')
 
     class Meta(NetBoxTable.Meta):
         model = CredentialAssignment
         fields = (
             'pk', 'id', 'credential', 'assigned_object_type', 'assigned_object', 'purpose', 'is_primary',
-            'description', 'tags', 'created', 'last_updated',
+            'enabled', 'description', 'tags', 'created', 'last_updated',
         )
         default_columns = ('credential', 'assigned_object_type', 'assigned_object', 'purpose', 'is_primary')
 

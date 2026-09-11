@@ -18,12 +18,13 @@ from netbox_openbao.choices import CredentialTypeChoices
 from netbox_openbao.models import Credential, CredentialAccessLog, CredentialPolicy, SecretEngine
 from netbox_openbao.services import write_material
 
+from .base import MaterialTransactionTestMixin
 from .fakes import FakeBackend
 
 User = get_user_model()
 
 
-class OpenBaoViewTestCase(ModelViewTestCase):
+class OpenBaoViewTestCase(MaterialTransactionTestMixin, ModelViewTestCase):
     model = Credential
 
     def setUp(self):

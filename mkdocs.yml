@@ -159,5 +159,6 @@ nav:
       - Troubleshoot: how-to/troubleshooting.md
   - Security model: security.md
   - REST API: api.md
+  - Automation resolution: automation-resolution.md
   - Code reference: reference/
   - Development: development.md

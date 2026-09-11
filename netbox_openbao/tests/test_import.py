@@ -21,7 +21,7 @@ from netbox_openbao.importers.netbox_secrets import source_marker
 from netbox_openbao.models import Credential, CredentialAssignment, CredentialPolicy
 from netbox_openbao.secrets.generators import generate_ssh_keypair
 
-from .base import OpenBaoTestCase
+from .base import OpenBaoTestCase, OpenBaoTransactionTestCase
 from .fakes import FakeBackend
 
 
@@ -99,7 +99,7 @@ class TypeInferenceTest(OpenBaoTestCase):
         self.assertEqual(kind, CredentialTypeChoices.TYPE_GENERIC_KV)
 
 
-class ImportTest(OpenBaoTestCase):
+class ImportTest(OpenBaoTransactionTestCase):
 
     def setUp(self):
         super().setUp()
@@ -205,7 +205,7 @@ class ImportTest(OpenBaoTestCase):
         self.assertIn(created.openbao_policy, result.policies_needing_setup)
 
 
-class AssignmentImportTest(OpenBaoTestCase):
+class AssignmentImportTest(OpenBaoTransactionTestCase):
 
     def setUp(self):
         super().setUp()

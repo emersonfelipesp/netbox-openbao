@@ -17,10 +17,11 @@ from netbox_openbao.choices import CredentialTypeChoices
 from netbox_openbao.models import Credential, CredentialAccessLog, CredentialPolicy, SecretEngine
 from netbox_openbao.services import write_material
 
+from .base import MaterialTransactionTestMixin
 from .fakes import FakeBackend
 
 
-class OpenBaoAPITestCase(APITestCase):
+class OpenBaoAPITestCase(MaterialTransactionTestMixin, APITestCase):
 
     def setUp(self):
         super().setUp()

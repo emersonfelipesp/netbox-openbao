@@ -19,6 +19,7 @@ from django.utils.translation import gettext_lazy as _
 
 from netbox_openbao.choices import CredentialTypeChoices, PurposeChoices, SSHKeyTypeChoices
 from netbox_openbao.config import assignable_model_labels, get_config
+from netbox_openbao.material_transactions import material_operation
 from netbox_openbao.models import Credential, CredentialAssignment
 from netbox_openbao.nms_bridge import sync_ssh_password_to_nms
 from netbox_openbao.secrets.generators import generate_ssh_keypair
@@ -136,6 +137,7 @@ def _get_or_create_service(target, port, ip_addresses=None):
     return service, True
 
 
+@material_operation
 def quick_add_ssh(
     target,
     policy,

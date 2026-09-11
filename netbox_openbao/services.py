@@ -26,12 +26,19 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from django.views.decorators.debug import sensitive_variables
 
 from netbox_openbao.backends import get_backend
 from netbox_openbao.backends.exceptions import OpenBaoError
 from netbox_openbao.choices import AccessActionChoices, CredentialStatusChoices
 from netbox_openbao.config import get_config
+from netbox_openbao.material_transactions import MaterialAttempt, current_material_transaction, material_operation
 from netbox_openbao.secrets.registry import extract_metadata, validate_payload
+from netbox_openbao.synchronization import (
+    lock_material_subject,
+    refresh_material_selectors,
+    synchronized_material_change,
+)
 
 __all__ = (
     'build_custom_metadata',
@@ -305,6 +312,7 @@ def build_custom_metadata(credential):
     return {key: value for key, value in metadata.items() if value}
 
 
+@sensitive_variables()
 def prepare_material(credential_type, payload):
     """
     Validate a payload and derive its non-secret metadata.
@@ -324,8 +332,10 @@ def prepare_material(credential_type, payload):
 # Write path
 # ----------------------------------------------------------------------
 
+@material_operation
+@sensitive_variables()
 def store_credential(persist, credential_type, payload, *, cas=0, user=None, request=None, action=None,
-                     subject=None, promote=True):
+                     subject=None, promote=True, target_policy=None):
     """
     Persist a credential row and its material as one unit.
 
@@ -351,91 +361,42 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
     """
     action = action or AccessActionChoices.ACTION_WRITE
     cleaned, metadata = prepare_material(credential_type, payload)
+    from netbox_openbao.secrets.identity import derive_key_fingerprint, record_key_version
 
-    credential = subject
-    written = None  # (backend, path, version) once the material has landed
+    fingerprint = derive_key_fingerprint(credential_type, cleaned)
 
-    try:
-        with transaction.atomic():
-            credential = persist(metadata)
+    lock_material_subject(subject, target_policy)
+    credential = persist(metadata)
+    refresh_material_selectors(credential)
+    owner = current_material_transaction()
+    owner.graph_ids.setdefault('credential', set()).add(credential.pk)
+    backend = get_backend(credential.engine, credential.policy)
+    attempt = MaterialAttempt(credential, backend, credential.path, user, action)
+    owner.attempts.append(attempt)
+    version = backend.write(credential.path, cleaned, cas=cas)
+    attempt.version = version
+    backend.set_metadata(credential.path, build_custom_metadata(credential))
 
-            backend = get_backend(credential.engine, credential.policy)
-            version = backend.write(credential.path, cleaned, cas=cas)
-            written = (backend, credential.path, version)
-
-            backend.set_metadata(credential.path, build_custom_metadata(credential))
-
-            credential.kv_version = version
-            credential.last_verified = timezone.now()
-            update_fields = ['kv_version', 'last_verified']
-
-            if promote:
-                # The ordinary path: what was just written is what consumers get.
-                credential.live_kv_version = version
-                credential.staged_kv_version = None
-                update_fields += ['live_kv_version', 'staged_kv_version']
-            else:
-                credential.staged_kv_version = version
-                update_fields.append('staged_kv_version')
-            if action == AccessActionChoices.ACTION_ROTATE:
-                credential.last_rotated = timezone.now()
-                update_fields.append('last_rotated')
-            if action == AccessActionChoices.ACTION_STAGE:
-                credential.status = CredentialStatusChoices.STATUS_STAGED
-                update_fields.append('status')
-
-            credential.save(update_fields=update_fields)
-
-    except Exception as exc:
-        # The database has already rolled back by the time we get here. If the
-        # backend write landed, its path is now orphaned; remove it.
-        if written is not None:
-            backend, path, written_version = written
-            # Scope of the rollback matters enormously. `cas=0` means the write
-            # was only permitted if the path did not already exist, so
-            # destroying it wholesale is safe and correct. Any other `cas` is a
-            # rotation over material that was already there — removing the
-            # whole path would take the working secret with it, turning a
-            # recoverable failure into data loss far worse than the orphan the
-            # compensator exists to prevent. Remove only what this write added.
-            destroy_everything = cas == 0
-            try:
-                if destroy_everything:
-                    backend.delete(path)
-                    logger.warning(
-                        'Rolled back orphaned OpenBao path %s after a failed credential write', path
-                    )
-                else:
-                    backend.delete(path, versions=[written_version])
-                    logger.warning(
-                        'Rolled back OpenBao version %s at %s after a failed rotation; '
-                        'earlier versions were left intact',
-                        written_version, path,
-                    )
-            except OpenBaoError:
-                # Nothing will reconcile this. CredentialVerifyJob iterates
-                # existing credential rows and this residue may have none —
-                # on a failed create the row rolled back with the transaction.
-                # The log line is the only signal; alert on it.
-                logger.error(
-                    'ORPHANED SECRET: wrote version %s at %s but could not roll it back after a '
-                    'failed transaction. No job will find it: CredentialVerifyJob scans from '
-                    'existing rows. Remove it by hand.',
-                    written_version, path,
-                )
-        # The transaction has unwound. A create leaves an in-memory object
-        # holding the primary key of an INSERT that no longer exists, so the
-        # audit entry must not link to it; an update's original row does still
-        # exist, so that one should link. Ask the database which case this is.
-        log_access(
-            credential, user, action, success=False,
-            message=str(exc) if isinstance(exc, OpenBaoError) else 'Credential write failed.',
-            request=request,
-            link=_row_exists(credential),
-        )
-        raise
-
-    log_access(credential, user, action, success=True, request=request)
+    credential.kv_version = version
+    credential.last_verified = timezone.now()
+    update_fields = ['kv_version', 'last_verified']
+    update_fields += record_key_version(credential, fingerprint, version, promote=promote)
+    if promote:
+        credential.live_kv_version = version
+        credential.staged_kv_version = None
+        update_fields += ['live_kv_version', 'staged_kv_version']
+    else:
+        credential.staged_kv_version = version
+        update_fields.append('staged_kv_version')
+    if action == AccessActionChoices.ACTION_ROTATE:
+        credential.last_rotated = timezone.now()
+        update_fields.append('last_rotated')
+    if action == AccessActionChoices.ACTION_STAGE:
+        credential.status = CredentialStatusChoices.STATUS_STAGED
+        update_fields.append('status')
+    credential.save(update_fields=update_fields)
+    audit = log_access(credential, user, action, success=True, request=request)
+    attempt.audit_id = getattr(audit, 'pk', None)
     return credential, version
 
 
@@ -474,6 +435,7 @@ def write_material(credential, payload, *, cas=0, user=None, request=None, actio
     )
 
 
+@synchronized_material_change
 def rotate_material(credential, payload, user=None, request=None):
     """
     Write a new version of a credential's material.
@@ -537,6 +499,38 @@ def reveal_material(credential, user, request=None, reason='', version=None):
     return data, ttl
 
 
+@sensitive_variables()
+def read_automation_bundle(
+    credential, *, version: int, fields: dict, expected_fingerprint: str | None = None,
+) -> tuple[dict, int]:
+    """Read one explicit KV version and project an already-authorized bundle.
+
+    Internal primitive for ``automation.resolve_automation`` only. The caller
+    owns actor, executor, target, assignment, schema and receipt checks. It also
+    owns the required correlated audit; ordinary reveal audit is not reused.
+    """
+    backend = get_backend(credential.engine, credential.policy)
+    data = backend.read(credential.path, version=version)
+    if not isinstance(data, dict):
+        raise OpenBaoError('The credential payload is invalid.')
+    from netbox_openbao.secrets.identity import verify_bundle_identity
+
+    verify_bundle_identity(credential, data, expected_fingerprint)
+    result = {}
+    for field, specification in fields.items():
+        if field not in data:
+            if specification.get('required'):
+                raise OpenBaoError('The credential payload is invalid.')
+            continue
+        value = data[field]
+        if not isinstance(value, str) or len(value.encode('utf-8')) > 262144:
+            raise OpenBaoError('The credential payload is invalid.')
+        result[field] = value
+    ttl = min(int(get_config('reveal_ttl') or 300), credential.policy.max_reveal_ttl)
+    return result, ttl
+
+
+@synchronized_material_change
 def stage_material(credential, payload, user=None, request=None):
     """
     Write replacement material *without* putting it into service.
@@ -572,6 +566,7 @@ def stage_material(credential, payload, user=None, request=None):
     )
 
 
+@synchronized_material_change
 def promote_staged(credential, user=None, request=None, verified=False, note=''):
     """
     Put the staged version into service.
@@ -612,11 +607,14 @@ def promote_staged(credential, user=None, request=None, verified=False, note='')
             ),
         })
 
+    from netbox_openbao.secrets.identity import promote_key_identity
+
+    identity_fields = promote_key_identity(credential)
     credential.live_kv_version = credential.staged_kv_version
     credential.staged_kv_version = None
     credential.status = CredentialStatusChoices.STATUS_ACTIVE
     credential.last_rotated = timezone.now()
-    credential.save(update_fields=['live_kv_version', 'staged_kv_version', 'status', 'last_rotated'])
+    credential.save(update_fields=['live_kv_version', 'staged_kv_version', 'status', 'last_rotated', *identity_fields])
 
     # `verified` records that a human or a job confirmed the new material works
     # before it went live. Actually testing it against the device belongs to
@@ -632,9 +630,10 @@ def promote_staged(credential, user=None, request=None, verified=False, note='')
     return credential
 
 
+@synchronized_material_change
 def discard_staged(credential, user=None, request=None):
     """
-    Destroy the staged version and leave the live one untouched.
+    Commit clearing the staged pointer, then remove its exact old version.
 
     Deletes *only* the staged version. `kv_version` is deliberately left where
     it is: OpenBao's current-version counter does not go backwards when a
@@ -650,23 +649,23 @@ def discard_staged(credential, user=None, request=None):
 
     staged_version = credential.staged_kv_version
     backend = get_backend(credential.engine, credential.policy)
-    try:
-        backend.delete(credential.path, versions=[staged_version])
-    except OpenBaoError as exc:
-        log_access(
-            credential, user, AccessActionChoices.ACTION_DISCARD, success=False,
-            message=str(exc), request=request,
-        )
-        raise
 
+    from netbox_openbao.secrets.identity import clear_staged_key
+
+    identity_fields = clear_staged_key(credential)
     credential.staged_kv_version = None
     credential.status = CredentialStatusChoices.STATUS_ACTIVE
-    credential.save(update_fields=['staged_kv_version', 'status'])
+    credential.save(update_fields=['staged_kv_version', 'status', *identity_fields])
 
-    log_access(
-        credential, user, AccessActionChoices.ACTION_DISCARD, success=True,
+    audit = log_access(
+        credential, user, AccessActionChoices.ACTION_DISCARD, success=False,
         reason=f'discarded version {staged_version}', request=request,
+        message='Staged pointer cleared; exact-version cleanup is pending commit.',
     )
+    current_material_transaction().deletions.append(MaterialAttempt(
+        credential, backend, credential.path, user, AccessActionChoices.ACTION_DISCARD,
+        version=staged_version, audit_id=getattr(audit, 'pk', None),
+    ))
     return credential
 
 

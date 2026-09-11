@@ -1,5 +1,13 @@
 # Security model
 
+Execution-bound automation has an additional boundary described in
+[Automation resolution](automation-resolution.md): the actor and named
+reference come from RPC's authoritative execution, not from the authenticated
+executor's request. The provider rechecks credential/assignment/target access,
+pins one live version, reserves a durable one-use receipt, and requires its
+correlated audit before delivering any material. Unsigned dispatch, staged
+versions, repeated receipt use, and ambient outer transactions are refused.
+
 This plugin's job is to hold the most sensitive data in a NetBox estate. The
 properties below are what make that defensible, and each is enforced
 structurally — by a type, a constraint, or an absent column — rather than by a
@@ -19,6 +27,12 @@ ordinary settings permission. Whoever holds it can:
 - **turn off `store_public_material`**, giving up the zero-read expiry dashboard;
 - **repoint `path_prefix`**, though the model refuses that while credentials
   exist, for the reasons in the configuration guide.
+
+Disabling optional public-material display does not disable SSH automation
+identity verification. Separate live/staged public-key fingerprints and their
+exact KV versions are maintained from actual material writes. Legacy display
+fingerprints are never trusted for admission, and the selected bundle's actual
+public fingerprint must match its frozen authorization before delivery.
 
 Settings changes are recorded in `CredentialAccessLog` with the `configure`
 action as well as in NetBox's changelog. The changelog answers *what* changed;
@@ -205,22 +219,27 @@ user* asked. This table is the other half; `request_id` correlates the two.
 ## 10. Write atomicity and orphaned secrets
 
 OpenBao writes are not transactional with PostgreSQL, and **Django has no
-rollback hook** — `transaction.on_commit` fires only on commit. So compensation
-is explicit: the backend write happens inside the atomic block, the written
-path is recorded, and the enclosing `except` deletes the orphaned path before
-re-raising.
+rollback hook** — `transaction.on_commit` fires only on commit. The explicit
+`material_transaction()` owner therefore remains active through the final
+database commit, including caller object and assignment persistence. It
+requires actual autocommit for every new owner, rejects manually managed and
+unowned ambient transactions, and detects framework-caught inner
+rollback through transaction-local audit witnesses.
 
-If the compensating delete itself fails, it is logged at ERROR with the string
-`ORPHANED SECRET`, naming the engine and path. `CredentialVerifyJob` cannot find it. That job iterates **existing credential
-rows** and asks whether each one's material is still there — so it detects the
-opposite failure (a row whose secret is missing) and is blind to this one,
-where the secret is present and the row is not. Reconciling in that direction
-means listing the mount for `managed_by: netbox-openbao` material with no
-matching row, which the plugin does not do yet.
+Only a definitively rolled-back operation is compensated, and only its exact
+written versions are removed, including on new paths. A lost commit
+acknowledgement is unknown: material is preserved for reconciliation, not
+deleted on a guess. Cleanup failures and unknown outcomes produce fixed,
+non-secret audit evidence outside rollback and operation-correlated logs.
+If the database is unavailable, the log explicitly reports that the audit
+could not be persisted. See the [complete transaction contract](automation-resolution.md#material-transaction-contract).
 
-The `managed_by: netbox-openbao` custom metadata is written on every credential
-precisely so that walk is possible; the job that would perform it is not
-written yet. Alert on the log line.
+`CredentialVerifyJob` checks existing inventory rows; it is not an orphan
+reconciler. There is no distributed atomic commit across PostgreSQL and
+OpenBao, and a process crash can still require manual reconciliation. Retain
+operation evidence and inspect the exact credential UUID and version before
+retrying an unknown outcome. The `managed_by: netbox-openbao` metadata helps
+locate inventory-managed paths, but no automatic orphan cleanup is implied.
 
 Deleting a `Credential` destroys its material from a `post_delete` signal
 deferred to `transaction.on_commit`, so the irreversible half happens only once
@@ -243,7 +262,11 @@ rotation has a verification step and a way back. Two properties matter:
 
 - While a version is staged, `reveal` continues to return the **live** version.
   Resolution consults `live_kv_version` before falling back to latest.
-- `discard` deletes **only** the staged version. Compensation elsewhere in the
+- `discard` first commits clearing the staged pointer, then deletes **only**
+  that exact staged version. A rollback or unknown commit performs no discard
+  deletion. Post-commit cleanup failure leaves the live material untouched and
+  reports committed cleanup-incomplete reconciliation; it never restores a
+  guessed staged pointer. Compensation elsewhere in the
   write path is scoped the same way, for the same reason: destroying a whole
   path to clean up a failed rotation would take the working secret with it.
 

@@ -28,6 +28,7 @@ from django.db import IntegrityError, router, transaction
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
 from rest_framework import status
 from rest_framework.decorators import action
@@ -38,9 +39,11 @@ from rest_framework.response import Response
 from utilities.exceptions import AbortRequest
 
 from netbox_openbao import filtersets
+from netbox_openbao.api.transactions import material_api_operation
 from netbox_openbao.backends import get_backend
 from netbox_openbao.backends.exceptions import OpenBaoError
 from netbox_openbao.choices import AccessActionChoices
+from netbox_openbao.material_transactions import material_operation
 from netbox_openbao.models import (
     Credential,
     CredentialAccessLog,
@@ -62,7 +65,9 @@ from netbox_openbao.services import (
     stage_material,
     store_credential,
 )
+from netbox_openbao.synchronization import lock_material_subject, lock_material_subjects
 
+from .automation import AutomationResolveRequestSerializer, AutomationResolveResponseSerializer
 from .permissions import SecretActionPermissions
 from .serializers import (
     CredentialAccessLogSerializer,
@@ -204,6 +209,61 @@ class CredentialViewSet(NetBoxModelViewSet):
     serializer_class = CredentialSerializer
     filterset_class = filtersets.CredentialFilterSet
 
+    @material_api_operation
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    @material_api_operation
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @material_api_operation
+    def bulk_create(self, request, *args, **kwargs):
+        if isinstance(request.data, list):
+            self._lock_batch_participants([], request.data)
+        return super().bulk_create(request, *args, **kwargs)
+
+    @material_api_operation
+    def bulk_update(self, request, *args, **kwargs):
+        return super().bulk_update(request, *args, **kwargs)
+
+    def _lock_batch_participants(self, subjects, entries):
+        """Predeclare valid destination selectors; native serializers report errors."""
+        policy_field = self.get_serializer().fields['policy']
+        policy_ids = set()
+        for data in entries:
+            if not isinstance(data, dict) or 'policy' not in data:
+                continue
+            try:
+                policy = policy_field.run_validation(data['policy'])
+            except (DRFValidationError, DjangoValidationError):
+                continue
+            if policy is not None:
+                policy_ids.add(policy.pk)
+        lock_material_subjects(list(subjects), additional_policy_ids=policy_ids)
+
+    @extend_schema(request=AutomationResolveRequestSerializer, responses={200: AutomationResolveResponseSerializer})
+    @action(
+        detail=False, methods=['post'], url_path='resolve-automation',
+        renderer_classes=[JSONRenderer], throttle_classes=[RevealRateThrottle],
+        permission_classes=[SecretActionPermissions],
+    )
+    def resolve_automation(self, request) -> Response:
+        """Deliver one execution-authorized named bundle over verified TLS only."""
+        from netbox_openbao.automation import AutomationResolutionDenied, resolve_automation
+
+        request._request.sensitive_post_parameters = '__ALL__'
+        if not request.is_secure():
+            return _no_store(Response({'detail': 'A secure transport is required.'}, status=403))
+        serializer = AutomationResolveRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _no_store(Response({'detail': 'Invalid automation resolution request.'}, status=400))
+        try:
+            result = resolve_automation(request, serializer.validated_data)
+        except AutomationResolutionDenied:
+            return _no_store(Response({'detail': 'Automation credential resolution was refused.'}, status=403))
+        return _no_store(Response(result))
+
     # ------------------------------------------------------------------
     # Write path
     # ------------------------------------------------------------------
@@ -288,6 +348,7 @@ class CredentialViewSet(NetBoxModelViewSet):
                 cas=0,
                 user=self.request.user,
                 request=self.request,
+                target_policy=serializer.validated_data.get('policy'),
             )
         except ObjectDoesNotExist:
             raise PermissionDenied() from None
@@ -322,6 +383,7 @@ class CredentialViewSet(NetBoxModelViewSet):
         it arrives on, so it demands `rotate_credential` and not merely
         `change_credential` — see `_require_rotate`.
         """
+        lock_material_subject(serializer.instance, serializer.validated_data.get('policy'))
         enforce_update_access(
             serializer.instance,
             self.request.user,
@@ -364,6 +426,8 @@ class CredentialViewSet(NetBoxModelViewSet):
                 # Check-and-set against the version we believe is current, so a
                 # concurrent write cannot be silently clobbered.
                 cas=instance.kv_version,
+                subject=instance,
+                target_policy=serializer.validated_data.get('policy'),
                 user=self.request.user,
                 request=self.request,
                 action=AccessActionChoices.ACTION_ROTATE,
@@ -371,27 +435,14 @@ class CredentialViewSet(NetBoxModelViewSet):
         except ObjectDoesNotExist:
             raise PermissionDenied() from None
 
+    @material_operation
     def perform_bulk_update(self, objects, update_data, partial):
         """
-        Refuse a bulk update that carries secret material.
+        Preserve metadata batches while refusing unsupported bulk rotations.
 
-        `BulkUpdateModelMixin` wraps the whole batch in **one** transaction and
-        rolls all of it back if any later item fails. `store_credential`'s
-        compensator only fires for the exception raised inside its own atomic
-        block, so an early item whose OpenBao write succeeded keeps that write
-        while its database row and its audit entry disappear with the batch.
-
-        The residue is worse than an orphan. The version is real and unaudited,
-        it collides with the next check-and-set, and on a credential written
-        before staged rotation existed — no `live_kv_version`, so "serve
-        latest" — the supposedly rolled-back material becomes the value every
-        consumer is handed.
-
-        Compensating across the outer boundary would mean the plugin taking
-        ownership of a transaction NetBox opened, for an operation nobody has
-        asked for: rotating N credentials in one request is not a workflow this
-        plugin supports, and doing them one at a time is both correct and
-        auditable. So this refuses rather than half-solves, and says why.
+        The outer owner and complete source/destination graph now cover native
+        batch persistence. This does not enable a new multi-rotation REST
+        workflow: material updates still require the detail or rotate action.
         """
         offenders = sorted(
             str(pk) for pk, data in (update_data or {}).items()
@@ -400,13 +451,12 @@ class CredentialViewSet(NetBoxModelViewSet):
         if offenders:
             raise DRFValidationError({
                 'secret_data': (
-                    'Secret material cannot be written through a bulk update: the batch shares one '
-                    'transaction, so a later failure would roll back the database while leaving '
-                    'material already written to OpenBao. Rotate these credentials individually, '
+                    'Secret material cannot be written through a bulk update. Rotate these credentials individually, '
                     'through the detail endpoint or the rotate action. '
                     f'Offending credential ID(s): {", ".join(offenders)}.'
                 ),
             })
+        self._lock_batch_participants(objects, (update_data or {}).values())
         return super().perform_bulk_update(objects, update_data, partial)
 
     # ------------------------------------------------------------------

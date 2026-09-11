@@ -24,10 +24,11 @@ from netbox_openbao.models import Credential, CredentialAssignment, CredentialPo
 from netbox_openbao.quickadd import quick_add_ssh
 from netbox_openbao.secrets.generators import generate_ssh_keypair
 
+from .base import MaterialTransactionTestMixin
 from .fakes import FakeBackend
 
 
-class _QuickAddBase(ModelViewTestCase):
+class _QuickAddBase(MaterialTransactionTestMixin, ModelViewTestCase):
     model = Credential
 
     def setUp(self):

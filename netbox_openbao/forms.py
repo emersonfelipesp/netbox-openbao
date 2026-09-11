@@ -41,6 +41,7 @@ from .choices import (
     SSHKeyTypeChoices,
 )
 from .config import get_config
+from .material_transactions import material_operation
 from .models import (
     Credential,
     CredentialAssignment,
@@ -54,6 +55,7 @@ from .rpc import OPENBAO_READ_PROCEDURES, OPENBAO_WRITE_PROCEDURES
 from .secrets.generators import generate_ssh_keypair
 from .secrets.registry import credential_type_choices, get_schema
 from .services import enforce_update_access, stage_material, store_credential
+from .synchronization import lock_material_subject
 from .utils import assignable_content_types, get_default_engine
 
 __all__ = (
@@ -327,16 +329,15 @@ class CredentialForm(PrimaryModelForm):
         self.secret_payload = payload or None
         return cleaned
 
+    @material_operation
     def save(self, *args, **kwargs):
         """
         Persist the row and the material together.
 
-        Hooked here rather than in the view because NetBox's `ObjectEditView`
-        already wraps `form.save()` in `transaction.atomic()` — so the row and
-        the backend write share one transaction without the view having to be
-        reimplemented. An earlier version overrode the view's `post()` instead
-        and silently dropped `restrict_form_fields()`, `snapshot()`, and
-        `alter_object()` along with it.
+        The view enters the outer material owner before delegating unchanged
+        to NetBox's ObjectEditView. This form acquires its complete graph before
+        metadata persistence, while the owner covers framework checks and the
+        final commit without reimplementing NetBox's view behavior.
 
         Backend failures become `AbortRequest`, which NetBox renders as a form
         error rather than a 500.
@@ -344,41 +345,13 @@ class CredentialForm(PrimaryModelForm):
         request = current_request.get()
         user = getattr(request, 'user', None) if request else None
         payload = getattr(self, 'secret_payload', None)
+        lock_material_subject(self.instance, self.cleaned_data.get('policy'))
 
         # Captured before super().save() assigns a primary key.
         is_create = self.instance.pk is None
 
         if not is_create:
-            # Gate every edit of an existing credential against the tier it is
-            # on *now*. Not only the material-bearing ones: `policy` is an
-            # editable field, so an edit that changes nothing else could
-            # otherwise move a credential to a tier the operator is in and make
-            # it revealable to them. `self.instance` is no help here —
-            # ModelForm._post_clean() has already written cleaned_data onto it
-            # — so the committed row is re-read; see enforce_update_access.
-            #
-            # Raised as AbortRequest rather than PermissionDenied so
-            # ObjectEditView renders it as a form error, the way a backend
-            # failure already is, instead of replacing a half-completed edit
-            # with Django's bare 403 page.
-            try:
-                enforce_update_access(
-                    self.instance, user, AccessActionChoices.ACTION_WRITE, request=request,
-                )
-            except PermissionDenied as exc:
-                raise AbortRequest(str(exc)) from None
-
-            # An edit carrying material is a rotation whatever the form calls
-            # it, so it needs `rotate_credential` and not merely `change`.
-            # Covers both branches below, including the staged one. Resolved
-            # with restrict() so ObjectPermission constraints apply, and
-            # against the committed row for the same reason as above.
-            if payload and not Credential.objects.restrict(user, 'rotate').filter(
-                pk=self.instance.pk
-            ).exists():
-                raise AbortRequest(
-                    'Replacing secret material requires the rotate permission on this credential.'
-                )
+            self._authorize_existing_edit(user, request, payload)
 
         if not payload:
             return super().save(*args, **kwargs)
@@ -440,6 +413,17 @@ class CredentialForm(PrimaryModelForm):
         except OpenBaoError as exc:
             raise AbortRequest(str(exc)) from None
         return credential
+
+    def _authorize_existing_edit(self, user, request, payload):
+        # ModelForm has already applied requested fields to self.instance.
+        # Authorization must therefore consult the locked committed source,
+        # including metadata-only policy moves and staged material edits.
+        try:
+            enforce_update_access(self.instance, user, AccessActionChoices.ACTION_WRITE, request=request)
+        except PermissionDenied as exc:
+            raise AbortRequest(str(exc)) from None
+        if payload and not Credential.objects.restrict(user, 'rotate').filter(pk=self.instance.pk).exists():
+            raise AbortRequest('Replacing secret material requires the rotate permission on this credential.')
 
 
 class CredentialFilterForm(NetBoxModelFilterSetForm):
@@ -513,14 +497,14 @@ class CredentialAssignmentForm(GenericObjectFormMixin, NetBoxModelForm):
     _ASSIGNMENT_FIELDSET_KWARGS = {'html_id': 'assignment'} if HAS_GENERIC_OBJECT_FIELD else {}
 
     fieldsets = (
-        FieldSet('credential', *_OBJECT_FIELDS, 'purpose', 'is_primary', 'description',
+        FieldSet('credential', *_OBJECT_FIELDS, 'purpose', 'is_primary', 'enabled', 'description',
                  name=_('Assignment'), **_ASSIGNMENT_FIELDSET_KWARGS),
         FieldSet('tags', name=_('Tags')),
     )
 
     class Meta:
         model = CredentialAssignment
-        fields = ('credential', 'purpose', 'is_primary', 'description', 'tags')
+        fields = ('credential', 'purpose', 'is_primary', 'enabled', 'description', 'tags')
 
     def __init__(self, *args, **kwargs):
         # Evaluated per-instantiation so a saved settings change takes effect

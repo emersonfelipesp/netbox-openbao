@@ -20,7 +20,7 @@ from netbox_openbao.services import (
     write_material,
 )
 
-from .base import OpenBaoTestCase
+from .base import OpenBaoTransactionTestCase as OpenBaoTestCase
 from .fakes import FakeBackend
 
 User = get_user_model()

@@ -65,6 +65,12 @@ APPROVED_FIELDS = frozenset({
     'public_key',
     'fingerprint',
     'key_type',
+    # Verified public SSH key fingerprints and their exact KV version binding.
+    # Never hashes of private keys or secret values; optional display is separate.
+    'live_key_fingerprint',
+    'live_key_version',
+    'staged_key_fingerprint',
+    'staged_key_version',
     'cert_serial',
     'cert_subject',
     'cert_issuer',

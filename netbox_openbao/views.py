@@ -27,6 +27,7 @@ from utilities.views import ObjectPermissionRequiredMixin, register_model_view
 from . import filtersets, forms, tables
 from .backends.exceptions import OpenBaoError
 from .config import assignable_model_labels
+from .material_transactions import material_transaction
 from .models import (
     Credential,
     CredentialAccessLog,
@@ -266,15 +267,27 @@ class CredentialEditView(generic.ObjectEditView):
     """
     Standard NetBox edit view.
 
-    The material write is hooked in `CredentialForm.save()`, not here, because
-    the generic view already wraps `form.save()` in a transaction and also
-    supplies `restrict_form_fields()`, changelog snapshots, `alter_object()`,
-    and quick-add handling that a bespoke `post()` would have to reproduce
-    correctly.
+    The outer material owner wraps the unchanged generic post method. NetBox
+    retains related-field restrictions, snapshots, alter_object and quick-add
+    behavior; the owner additionally covers the framework's final commit.
     """
 
     queryset = Credential.objects.all()
     form = forms.CredentialForm
+
+    def post(self, request, *args, **kwargs):
+        from django.http import HttpResponse
+
+        response = None
+        owner = None
+        try:
+            with material_transaction() as owner:
+                response = super().post(request, *args, **kwargs)
+            return response
+        except OpenBaoError:
+            if owner is not None and owner.failed and response is not None and response.status_code == 200:
+                return response  # Preserve the framework's sanitized form errors.
+            return HttpResponse('The material transaction was refused or requires reconciliation.', status=503)
 
 
 @register_model_view(Credential, 'delete')

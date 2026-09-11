@@ -2,8 +2,9 @@
 
 Base path: `/api/plugins/openbao/`.
 
-All models expose standard NetBox CRUD via `NetBoxModelViewSet`, so `pynetbox`
-and `netbox-cli` work unmodified.
+Inventory models expose standard NetBox CRUD via `NetBoxModelViewSet`, so
+`pynetbox` and `netbox-cli` work unmodified. Access logs are read-only, and
+internal automation resolution receipts have no CRUD endpoint.
 
 | Endpoint | Purpose |
 |---|---|
@@ -176,3 +177,10 @@ staged?" has its own field rather than being inferred from a comparison.
 
 Error bodies never contain OpenBao's response text: a `403` from OpenBao can
 enumerate policy rules, so backend errors are re-raised as fixed strings.
+## Execution-bound automation
+
+`POST /api/plugins/openbao/credentials/resolve-automation/` accepts a signed RPC
+dispatch lease, execution ID, step ID, and frozen reference name. It never
+accepts a caller-selected actor or raw credential reference. See
+[Automation resolution](automation-resolution.md) for the exact request,
+response, permission, version and one-use retry contract.

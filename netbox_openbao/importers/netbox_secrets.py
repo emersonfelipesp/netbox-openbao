@@ -25,10 +25,10 @@ parse the material as that type. Anything that fails falls back to
 import logging
 from dataclasses import dataclass, field
 
-from django.db import transaction
 from django.utils.text import slugify
 
 from netbox_openbao.choices import CredentialTypeChoices
+from netbox_openbao.material_transactions import material_transaction
 from netbox_openbao.models import Credential, CredentialAssignment, CredentialPolicy
 from netbox_openbao.secrets.extractors import extract_certificate_metadata, extract_ssh_metadata
 from netbox_openbao.services import store_credential
@@ -242,7 +242,7 @@ def import_secrets(sources, engine, fallback_policy, *, dry_run=False, map_roles
             return credential
 
         try:
-            with transaction.atomic():
+            with material_transaction():
                 store_credential(
                     persist, credential_type, payload,
                     cas=0, user=user, subject=credential,

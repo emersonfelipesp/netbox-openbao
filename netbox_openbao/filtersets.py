@@ -180,7 +180,7 @@ class CredentialAssignmentFilterSet(NetBoxModelFilterSet):
 
     class Meta:
         model = CredentialAssignment
-        fields = ('id', 'assigned_object_id', 'is_primary', 'description')
+        fields = ('id', 'assigned_object_id', 'is_primary', 'enabled', 'description')
 
     def search(self, queryset, name, value):
         if not value.strip():
@@ -207,7 +207,10 @@ class CredentialAccessLogFilterSet(BaseFilterSet):
 
     class Meta:
         model = CredentialAccessLog
-        fields = ('id', 'credential_name_snapshot', 'username_snapshot', 'source_ip', 'request_id', 'success')
+        fields = (
+            'id', 'credential_name_snapshot', 'username_snapshot', 'source_ip', 'request_id', 'success',
+            'execution_id', 'intent_run_id', 'step_id', 'reference_name', 'executor_id',
+        )
 
     def search(self, queryset, name, value):
         if not value.strip():

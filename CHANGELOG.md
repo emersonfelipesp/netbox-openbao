@@ -8,6 +8,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Execution-bound automation credential resolution with exact target and
+  assignment checks, explicit same-version field bundles, signed RPC dispatch
+  authority, and separate initiating-actor and executor audit correlation.
+  Durable one-use receipts reject retries after an unknown outcome without
+  caching secret material. Assignments can be disabled for automation.
+  Final authorization follows every provider lock wait and uses fresh exact
+  RPC execute/approve restrictions and a verified dispatch expiry. Permissions
+  are checked again after material I/O before any bundle is returned.
+  Version-bound live SSH identity is independently verified
+  even when optional public display extraction is disabled.
+- Explicit outer material transactions cover owner and assignment persistence,
+  multiple writes and the final database commit. Definitive rollback removes
+  only operation-owned versions; uncertain commit outcomes preserve material
+  and emit non-secret reconciliation evidence. Staged forms acquire ordered
+  source/destination locks before saving metadata. Discard commits its pointer
+  change before exact staged-version cleanup and reports committed cleanup
+  failures explicitly. Compatible Proxbox, NMS and other material-write
+  adapters are release prerequisites; older consumers fail closed until they
+  adopt the complete transaction-owner contract.
+  New owners require actual autocommit; manually managed transactions cannot
+  substitute a savepoint for final commit. Staged cleanup independently
+  requires the confirmed commit witness.
+
 - **A settings page, with the fields grouped as decisions.** Storage, reveal
   controls, generation, assignable object types, audit and expiry, and the
   background-job intervals. Reachable from the plugin menu under Configuration.

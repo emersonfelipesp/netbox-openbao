@@ -18,7 +18,7 @@ import os
 import unittest
 from pathlib import Path
 
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 
 import netbox_openbao
 from netbox_openbao.backends import BACKENDS, SecretBackend, get_backend
@@ -530,7 +530,7 @@ class _KVIntegrationTests:
 
 
 @unittest.skipUnless(TEST_ADDR, 'Set NETBOX_OPENBAO_TEST_ADDR to run OpenBao integration tests')
-class OpenBaoIntegrationTest(_KVIntegrationTests, TestCase):
+class OpenBaoIntegrationTest(_KVIntegrationTests, TransactionTestCase):
     server_addr = TEST_ADDR
     server_token = TEST_TOKEN
     backend_value = 'openbao'
@@ -538,7 +538,7 @@ class OpenBaoIntegrationTest(_KVIntegrationTests, TestCase):
 
 
 @unittest.skipUnless(VAULT_TEST_ADDR, 'Set NETBOX_VAULT_TEST_ADDR to run Vault integration tests')
-class VaultIntegrationTest(_KVIntegrationTests, TestCase):
+class VaultIntegrationTest(_KVIntegrationTests, TransactionTestCase):
     """
     The same contract, against HashiCorp Vault.
 

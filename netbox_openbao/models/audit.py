@@ -86,6 +86,18 @@ class CredentialAccessLog(models.Model):
         auto_now_add=True,
         db_index=True,
     )
+    executor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name='+', null=True, blank=True,
+    )
+    executor_snapshot = models.CharField(max_length=150, blank=True, db_default='')
+    execution_id = models.PositiveBigIntegerField(null=True, blank=True, db_index=True)
+    intent_run_id = models.PositiveBigIntegerField(null=True, blank=True)
+    step_id = models.CharField(max_length=100, blank=True, db_default='')
+    reference_name = models.CharField(max_length=100, blank=True, db_default='')
+    assignment_id = models.PositiveBigIntegerField(null=True, blank=True)
+    resolved_version = models.PositiveIntegerField(null=True, blank=True)
+    purpose = models.CharField(max_length=50, blank=True, db_default='')
+    dispatch_nonce_digest = models.CharField(max_length=64, blank=True, db_default='')
 
     # NetBox's generic views call queryset.restrict(); a plain models.Manager
     # has no such method, so the object-permission-aware manager is opted into

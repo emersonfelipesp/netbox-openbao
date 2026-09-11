@@ -100,11 +100,14 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   swallowed and **every HTTP-originated access went unrecorded**. Always
   `str()` it.
 - **Django has no rollback hook.** `transaction.on_commit` fires only on
-  commit. The write path compensates explicitly in an `except` block; do not
-  "simplify" it into an `on_commit` callback.
+  commit. Use the versioned `material_transaction()` owner before framework
+  atomic blocks. It spans all caller/assignment changes and material writes
+  through final commit; do not replace it with an inner savepoint or
+  `on_commit` callback. Unowned ambient transactions are refused.
 - **A rolled-back credential still holds a primary key in memory.** FK-ing an
   audit entry to it raises a deferred FK violation at commit. `log_access`
-  takes `link=False` for that case; `_row_exists()` decides.
+  takes `link=False` for that case. Material recovery always records UUID
+  snapshots without an object FK; legacy deletion uses `_row_exists()`.
 - **`full_clean()` runs `clean_fields()` before `clean()`.** Defaults that
   need to satisfy a `null=False` field must be applied in `full_clean()`, not
   `clean()`, or the API rejects the request before the default can apply.
@@ -134,8 +137,9 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
 - **Do not reimplement `ObjectEditView.post()`.** An earlier revision did, and
   silently dropped `restrict_form_fields()` (which limits related-object
   selectors to what the user may view), changelog snapshots, and
-  `alter_object()`. Hook `form.save()` instead — the generic view already wraps
-  it in a transaction — and raise `AbortRequest` for backend failures.
+  `alter_object()`. Preserve `super().post()` inside the outer material
+  transaction owner; hook `form.save()` for material and acquire the complete
+  source/destination graph before its first metadata save.
 - **`super().clean()` can return `None`** in NetBox's form chain; fall back to
   `self.cleaned_data`.
 - **`get_plugin_config()` returns `None`, not the default**, for a key absent
@@ -154,11 +158,11 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   remaps POST to `view_<model>` for both actions; the action's own permission
   is enforced through `restrict()`. The inherited write-token check still
   applies, so a read-only token cannot rotate.
-- **Compensating a failed *rotation* must be version-scoped.** `backend.delete(path)`
-  with no `versions` destroys the path and every version on it. On a create
-  (`cas=0`) that is correct; on a rotation it would take the working secret
-  with it — data loss strictly worse than the orphan the compensator exists to
-  prevent. `store_credential` branches on `cas`.
+- **All write compensation must be version-scoped, including creation.**
+  Another writer can advance a new path after rollback. Delete only exact
+  versions returned to the failed operation, never the whole path. Unknown
+  commit outcomes must preserve material and emit non-secret reconciliation
+  evidence outside rollback; they are never permission to delete.
 - **Django's `ValidationError` is not translated by DRF** and escapes as a
   **500**. The service layer raises Django's (it also serves forms and
   management commands), so every API action calling it must convert —
@@ -167,6 +171,12 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
 - **`kv_version` and `live_kv_version` legitimately diverge** after a discard,
   because OpenBao's version counter never goes backwards. Never infer "is
   something staged?" from comparing them; `staged_kv_version` is the answer.
+- **Discard deletes an existing version only after its pointer change commits.**
+  Rollback or unknown commit preserves the staged material. A post-commit
+  cleanup failure is committed cleanup-incomplete, not rollback; keep the
+  staged pointer cleared, preserve the live material and retain reconciliation
+  evidence. Later commit-callback errors do not permit compensating a
+  successfully committed write.
 - **Sharing a `requests.Session` across backends is safe only because hvac
   builds `X-Vault-Token` per request** and never assigns to `session.headers`.
   If that changes, two policy tiers on the same engine URL could send each
@@ -204,8 +214,8 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
 - **`CredentialVerifyJob` cannot find an orphan.** It iterates existing
   credential rows, so it detects a row whose material is missing and is blind
   to material whose row is missing. Do not write that it reports orphans — the
-  `ORPHANED SECRET` log line is the only signal until a mount-walking
-  reconciler exists.
+  material owner's reconciliation audit/log and legacy deletion's
+  `ORPHANED SECRET` log are the evidence until a mount-walking reconciler exists.
 - **NetBox's `BaseViewSet` passes `fields`/`omit` to the serializer** for
   `?fields=`, `?omit=`, and `?brief=true`. A plain DRF `ModelSerializer` raises
   `TypeError: Field.__init__() got an unexpected keyword argument 'fields'` —
@@ -241,6 +251,54 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   documentation build found it.
 
 ## Testing
+
+### Execution-bound automation provider
+
+`automation.resolve_automation()` is the only supported automation-resolution
+entry point. It loads the actor and frozen reference through
+`netbox_rpc.credential_authority.validate_secret_resolution_dispatch`; no
+caller-selected identity or reference is accepted. The shared strict reference
+class is owned by `netbox_rpc.credential_contract`, not duplicated here.
+RPC admission calls metadata-only `capture_reference_identity()` and freezes
+its result before approval. The provider rechecks that identity under locks;
+material rotation may advance the live version but cannot substitute an
+assignment, username, key fingerprint, schema or backend identity.
+Material reads remain in `services.read_automation_bundle()` after authorization.
+SSH authority uses separate verified live fingerprint/version fields, never
+the optional display fingerprint. Maintain those fields independently of
+`store_public_material`; refuse legacy unverified admission and compare the
+actual read key's fingerprint before delivery. Never backfill from display
+metadata. Staged identity remains separate until promotion.
+
+`synchronization.lock_credential_graph()` establishes policy IDs, engine IDs,
+credential, then provider assignment and custom-schema lock order. Re-evaluate object restrictions
+and policy groups after waits. Material writers use the same graph order;
+the PostgreSQL policy-group through-table trigger synchronizes relationship
+changes with policy locks, including direct writes and transaction rollback.
+Recheck the RPC-verified lifetime after waits, immediately before the material
+read and after the backend returns. Actor-only no-key locks avoid audit foreign
+key inversions; do not weaken catalog insertion-protection locks.
+Call RPC's fresh `check_authorization_permissions()` at those same boundaries
+without reacquiring authority locks. Repeat provider restrictions after the
+backend returns; a cached permission check from before I/O cannot authorize
+delivery after revocation.
+
+The caller must be in autocommit: a durable `AutomationResolutionReceipt`
+commits before the read so an outer rollback cannot permit replay. Receipt
+identity includes execution, nonce digest, step and reference. All repeats,
+including unknown outcomes, are refused; values are never cached. A missing
+live pointer and staged versions are refused; pinned means the specified version
+must still be live. `CredentialAssignment.enabled` is rechecked immediately
+before read. Audit failure blocks delivery. See `docs/automation-resolution.md`.
+
+Provider and material transaction tests require real `TransactionTestCase`
+semantics, not an artificial `TestCase` transaction. Material API/view fixtures
+use `MaterialTransactionTestMixin` only to retain NetBox helper methods while
+delegating setup, fixture loading, per-test class data and flush to the real
+transaction lifecycle. Production has no test-wrapper exemption: a new owner
+requires actual autocommit, and staged cleanup independently requires confirmed
+commit. Run the real
+OpenBao and broker tests before claiming end-to-end provider acceptance.
 
 ```bash
 cd <netbox>/netbox

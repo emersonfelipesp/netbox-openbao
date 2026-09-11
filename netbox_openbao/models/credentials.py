@@ -177,6 +177,12 @@ class Credential(PrimaryModel):
         editable=False,
         help_text=_('A written but not yet promoted candidate awaiting a decision. Empty when none.'),
     )
+    # Public-key identity only. These never contain a private-key/material
+    # digest and remain maintained when optional public display is disabled.
+    live_key_fingerprint = models.CharField(max_length=128, blank=True, db_default='', editable=False)
+    live_key_version = models.PositiveIntegerField(null=True, blank=True, editable=False)
+    staged_key_fingerprint = models.CharField(max_length=128, blank=True, db_default='', editable=False)
+    staged_key_version = models.PositiveIntegerField(null=True, blank=True, editable=False)
     last_verified = models.DateTimeField(
         verbose_name=_('last verified'),
         null=True,

@@ -47,6 +47,11 @@ class CredentialAssignment(NetBoxModel):
         default=False,
         help_text=_('The credential automation should choose for this object and purpose'),
     )
+    enabled = models.BooleanField(
+        default=True,
+        db_default=True,
+        help_text=_('Permit this assignment to be used by execution-bound automation'),
+    )
     description = models.CharField(
         verbose_name=_('description'),
         max_length=200,

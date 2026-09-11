@@ -28,12 +28,13 @@ from netbox_openbao.choices import CredentialTypeChoices
 from netbox_openbao.models import Credential, CredentialAccessLog, CredentialPolicy, SecretEngine
 from netbox_openbao.services import stage_material, write_material
 
+from .base import MaterialTransactionTestMixin
 from .fakes import FakeBackend
 
 SECRET = 'hunter2'
 
 
-class _GateFixture:
+class _GateFixture(MaterialTransactionTestMixin):
     """Builds a credential on a tier gated to a group the test user is not in."""
 
     def build_estate(self):
@@ -263,7 +264,7 @@ class APIGateTest(_GateFixture, APITestCase):
         self.assertGreater(self.credential.kv_version, before)
 
 
-class AccessLogRestrictionTest(APITestCase):
+class AccessLogRestrictionTest(MaterialTransactionTestMixin, APITestCase):
     """
     The audit log's REST endpoint must honour ObjectPermission constraints.
 
@@ -594,7 +595,7 @@ class RotatePermissionOnUpdateTest(_GateFixture, APITestCase):
         self.assertEqual(self.credential.kv_version, before)
 
 
-class AuditLogDynamicFieldsTest(APITestCase):
+class AuditLogDynamicFieldsTest(MaterialTransactionTestMixin, APITestCase):
     """
     NetBox's `BaseViewSet` passes `fields`/`omit` down to the serializer.
 
@@ -988,3 +989,60 @@ class BulkMaterialWriteTest(_GateFixture, APITestCase):
         self.assertEqual(response.status_code, 200)
         self.credential.refresh_from_db()
         self.assertEqual(self.credential.description, 'a')
+
+    def test_metadata_batch_predeclares_destination_policy_before_updates(self):
+        destination = CredentialPolicy.objects.create(
+            name='Batch destination', slug='batch-destination', engine=self.engine,
+        )
+        self.add_permissions('netbox_openbao.view_credentialpolicy')
+        response = self.client.patch(
+            self.list_url,
+            [{'id': self.credential.pk, 'policy': destination.pk},
+             {'id': self.second.pk, 'policy': str(destination.pk)}],
+            format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.credential.refresh_from_db()
+        self.second.refresh_from_db()
+        self.assertEqual((self.credential.policy_id, self.second.policy_id), (destination.pk, destination.pk))
+
+    def test_invalid_batch_policy_keeps_native_error_and_rolls_back_metadata(self):
+        before = self.credential.description
+        response = self.client.patch(
+            self.list_url,
+            [{'id': self.credential.pk, 'description': 'Uncommitted description'},
+             {'id': self.second.pk, 'policy': {'invalid': 'selector'}}],
+            format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.credential.refresh_from_db()
+        self.assertEqual(self.credential.description, before)
+
+    def test_bulk_create_predeclares_multiple_destination_policies(self):
+        destination = CredentialPolicy.objects.create(
+            name='Create destination', slug='create-destination', engine=self.engine,
+        )
+        self.add_permissions('netbox_openbao.add_credential', 'netbox_openbao.view_credentialpolicy')
+        response = self.client.post(
+            self.list_url,
+            [{'name': f'Batch create {index}', 'credential_type': 'password', 'policy': policy.pk,
+              'secret_data': {'password': 'batch-created-material'}}
+             for index, policy in enumerate((self.policy, destination))],
+            format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Credential.objects.filter(name__startswith='Batch create ').count(), 2)
+
+    def test_bulk_create_failure_preserves_native_error_and_compensates_prior_write(self):
+        self.add_permissions('netbox_openbao.add_credential', 'netbox_openbao.view_credentialpolicy')
+        response = self.client.post(
+            self.list_url,
+            [{'name': 'Provisional batch item', 'credential_type': 'password', 'policy': self.policy.pk,
+              'secret_data': {'password': 'batch-created-material'}},
+             {'name': '', 'credential_type': 'password', 'policy': self.policy.pk,
+              'secret_data': {'password': 'invalid-batch-material'}}],
+            format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Credential.objects.filter(name='Provisional batch item').exists())
+        self.assertTrue(FakeBackend.delete_calls)
