@@ -19,6 +19,7 @@ dependencies = [
     "bcrypt>=4.0.0",
     "jsonschema>=4.0.0",
     "netbox-rpc>=0.1.8",
+    "rpgp-py>=0.20.0,<0.21",
 ]
 authors = [
     {name = "Emerson Felipe", email = "emerson@netdevopsbr.com"},

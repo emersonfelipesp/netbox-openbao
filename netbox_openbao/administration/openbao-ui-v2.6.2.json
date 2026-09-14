@@ -3,9 +3,9 @@
   "source": "OpenBao stable UI router and runtime OpenAPI/help documents",
   "families": [
     {"id": "cluster-session", "upstream_routes": ["auth", "redirect", "logout"], "capability": "Cluster authentication/session state", "owner_issue": 65, "status": "planned"},
-    {"id": "cluster-bootstrap", "upstream_routes": ["init", "unseal", "settings.seal"], "capability": "Initialization, unseal and seal", "owner_issue": 64, "status": "planned"},
+    {"id": "cluster-bootstrap", "upstream_routes": ["init", "unseal", "settings.seal"], "capability": "Initialization, Raft join, unseal and seal", "owner_issue": 70, "status": "foundation"},
     {"id": "api-explorer", "upstream_routes": ["api-explorer"], "capability": "Schema-driven API discovery and invocation", "owner_issue": 66, "status": "foundation"},
-    {"id": "raft-storage", "upstream_routes": ["storage", "storage-restore"], "capability": "Raft peers, snapshots and restore", "owner_issue": 64, "status": "planned"},
+    {"id": "raft-storage", "upstream_routes": ["storage", "storage-restore"], "capability": "Raft peers, snapshots and restore", "owner_issue": 64, "status": "complete"},
     {"id": "auth-methods", "upstream_routes": ["settings.auth", "access.methods", "access.method"], "capability": "Authentication method lifecycle and resources", "owner_issue": 65, "status": "planned"},
     {"id": "mfa", "upstream_routes": ["mfa-setup", "access.mfa"], "capability": "MFA methods and enforcements", "owner_issue": 65, "status": "planned"},
     {"id": "engine-lifecycle", "upstream_routes": ["settings.mount-secret-backend", "settings.configure-secret-backend", "secrets.backends"], "capability": "Secrets engine lifecycle", "owner_issue": 66, "status": "planned"},

@@ -244,6 +244,15 @@ instead of disabling verification. Broker clusters may report health but reject
 capability discovery until the broker implements the bounded administration
 contract; the plugin does not bypass the broker by connecting directly.
 
+The **Administration** tab provides guarded cluster state, initialization,
+unseal, seal, Raft peer, and snapshot controls for OpenBao 2.6.2 through the
+reviewed 2.6.x line. Assign each dedicated object permission separately; broad
+cluster view or discovery access does not grant a mutation. Keep the configured
+API URL on the management network and point it at the active node or a trusted
+OpenBao-aware load balancer. Redirects to a reported leader are intentionally
+not followed. Complete operational procedures are in the
+[cluster administration runbook](how-to/administer-openbao-cluster.md).
+
 ## Policy tiers and defence in depth
 
 A `CredentialPolicy` is not just a label. It maps onto a real OpenBao policy and

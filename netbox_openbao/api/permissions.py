@@ -2,7 +2,7 @@
 
 from netbox.api.authentication import TokenPermissions
 
-__all__ = ('SecretActionPermissions',)
+__all__ = ('ClusterActionPermissions', 'SecretActionPermissions')
 
 
 class SecretActionPermissions(TokenPermissions):
@@ -29,3 +29,7 @@ class SecretActionPermissions(TokenPermissions):
         **TokenPermissions.perms_map,
         'POST': ['%(app_label)s.view_%(model_name)s'],
     }
+
+
+class ClusterActionPermissions(SecretActionPermissions):
+    """Apply the same existing-object POST contract to guarded cluster actions."""

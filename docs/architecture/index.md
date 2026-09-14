@@ -10,8 +10,10 @@ understanding before reading any code.
 flowchart LR
     subgraph netbox["NetBox process"]
         direction TB
-        UI["UI views<br/><small>reveal, promote, discard, quick-add</small>"]
-        API["REST viewsets<br/><small>reveal, rotate, stage, versions</small>"]
+        UI["Credential UI views<br/><small>reveal, promote, discard, quick-add</small>"]
+        API["Credential REST viewsets<br/><small>reveal, rotate, stage, versions</small>"]
+        ADMINUI["Cluster administration UI/API"]
+        ADMIN["<b>administration/</b><br/><small>request-scoped lifecycle custody</small>"]
         FORMS["Forms"]
         JOBS["Background jobs"]
         SVC["<b>services.py</b><br/><small>the single chokepoint</small>"]
@@ -21,19 +23,25 @@ flowchart LR
         API --> SVC
         FORMS --> SVC
         JOBS --> SVC
+        ADMINUI --> ADMIN
         SVC --> BE
         SVC --> DB
+        ADMIN --> DB
     end
 
     BE -->|KV v2 over HTTPS| BAO[("OpenBao<br/><small>material</small>")]
+    ADMIN -->|fixed lifecycle API paths over HTTPS| BAO
     BE -.->|alternative| VAULT[("HashiCorp Vault")]
     BE -.->|"mTLS, broker holds the AppRole"| BROKER["netbox-openbao-broker"]
     BROKER --> BAO
 ```
 
-Read the arrows into `services.py` as the point: no view, serializer, form, or
-job speaks to a backend directly. That is what makes "does this plugin leak
-material?" a question with a bounded answer.
+Read the arrows into `services.py` as the stored credential-material path: no
+credential view, serializer, form, or job speaks to a credential backend
+directly. Cluster initialization, unseal, and snapshot custody use the separate
+bounded administration transport documented in the
+[administration plane](administration-plane.md). Neither boundary persists or
+logs request-scoped material.
 
 ## Four consequences
 
@@ -86,7 +94,8 @@ live version, keeps serving the live one, and promotes only on a decision.
 | Module | Owns |
 |---|---|
 | `models/` | The inventory: engines, policy tiers, credentials, assignments, the audit log, stored credential types |
-| `services.py` | **Every** operation that touches material — writes, reveals, rotation transitions, the audit write, and the tier's group gate |
+| `services.py` | Every stored credential-material operation — writes, reveals, rotation transitions, the audit write, and the tier's group gate |
+| `administration/` | Bounded cluster lifecycle transport for request-scoped initialization, unseal, and snapshot custody plus metadata-only audit |
 | `backends/` | The `SecretBackend` contract and its OpenBao, Vault, and broker implementations |
 | `secrets/` | Credential type schemas, payload validation, and non-secret metadata extraction |
 | `api/` | DRF serializers, viewsets, the reveal permission map, and the reveal throttle |

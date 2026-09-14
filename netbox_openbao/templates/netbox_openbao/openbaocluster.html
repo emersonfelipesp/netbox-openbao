@@ -3,6 +3,9 @@
 {% block controls %}
   {{ block.super }}
   {% if perms.netbox_openbao.discover_openbaocluster %}
+    <a class="btn btn-primary" href="{% url 'plugins:netbox_openbao:openbaocluster_administration' pk=object.pk %}">
+      <i class="mdi mdi-server-security"></i> Administration
+    </a>
     <a class="btn btn-primary" href="{% url 'plugins:netbox_openbao:openbaocluster_capabilities' pk=object.pk %}">
       <i class="mdi mdi-api"></i> Capabilities
     </a>

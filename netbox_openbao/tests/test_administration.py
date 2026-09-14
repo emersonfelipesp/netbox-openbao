@@ -143,14 +143,15 @@ class AdministrationBackendTest(OpenBaoAdministrationTestCase):
         }
         response = _Response(json.dumps(document).encode())
         get_client.return_value.token = 'ephemeral-token'
-        get_session.return_value.get.return_value = response
+        get_session.return_value.request.return_value = response
         self.cluster.namespace = 'team-a'
 
         discovered = DirectAdministrationBackend(self.cluster).discover_capabilities()
 
         self.assertEqual(discovered.product_version, '2.6.2')
         self.assertFalse(discovered.operations[0].executable)
-        get_session.return_value.get.assert_called_once_with(
+        get_session.return_value.request.assert_called_once_with(
+            'GET',
             'https://bao.example.net:8200/v1/sys/internal/specs/openapi',
             headers={
                 'X-Vault-Request': 'true',
@@ -170,7 +171,7 @@ class AdministrationBackendTest(OpenBaoAdministrationTestCase):
     def test_direct_discovery_scrubs_invalid_upstream_content(self, get_client, get_session):
         get_client.return_value.token = None
         response = _Response(b'{"server_secret":')
-        get_session.return_value.get.return_value = response
+        get_session.return_value.request.return_value = response
 
         with self.assertRaisesRegex(
             OpenBaoUnavailable,
@@ -178,7 +179,7 @@ class AdministrationBackendTest(OpenBaoAdministrationTestCase):
         ):
             DirectAdministrationBackend(self.cluster).discover_capabilities()
 
-        request_headers = get_session.return_value.get.call_args.kwargs['headers']
+        request_headers = get_session.return_value.request.call_args.kwargs['headers']
         self.assertNotIn('X-Vault-Token', request_headers)
         self.assertTrue(response.closed)
 

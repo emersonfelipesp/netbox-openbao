@@ -52,6 +52,11 @@ jobs:
       - name: Compile all sources
         run: python -m compileall -q netbox_openbao
 
+      - name: Test cluster administration JavaScript
+        run: |
+          node --check netbox_openbao/static/netbox_openbao/cluster_administration.js
+          node --test netbox_openbao/tests/js/cluster_administration.test.js
+
       - name: Build the distribution
         run: python -m build
 

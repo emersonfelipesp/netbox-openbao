@@ -220,9 +220,20 @@ Administrative calls use a separate `OpenBaoAdministrationLog` with the same
 append-only and object-constraint properties. It stores the cluster and actor
 snapshots, action, reviewed method and path template, risk, status, request ID,
 and capability digest. It has no request-body, response-body, diagnostic, or
-authentication-material field. A successful administrative response is refused
-if the audit insert cannot commit. Capability and health responses are also
-marked `no-store`.
+authentication-material field. A mutation is refused unless its durable
+preflight audit commits. If the backend accepts the mutation but the completion
+audit fails, the response explicitly reports `accepted-audit-incomplete` and
+must not be retried. Capability and health responses are also marked `no-store`.
+
+Cluster bootstrap, unseal, seal, Raft peer removal, and snapshot recovery add
+dedicated object permissions and exact confirmations. Initialization and
+unseal material is request-scoped and never enters the administrative audit.
+Snapshot transfer is raw, authenticated, bounded streaming: the plugin neither
+parses nor retains the bytes, and normal restore can never escalate to force
+restore. A stale cluster ID, Raft index, standby endpoint, unsupported OpenBao
+version, encoded body, multipart body, or transfer beyond 512 MiB fails closed.
+Session-authenticated downloads require a reason, exact confirmation, and CSRF-
+protected POST; API-token GET access remains available.
 
 Runtime OpenAPI discovery is not authorization. Documents are size-, depth-,
 path-, method-, string-, and operation-bounded before normalization; every

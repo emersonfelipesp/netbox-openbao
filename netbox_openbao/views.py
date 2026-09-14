@@ -78,6 +78,7 @@ __all__ = (
     'OpenBaoAdministrationLogListView',
     'OpenBaoAdministrationLogView',
     'OpenBaoClusterBulkDeleteView',
+    'OpenBaoClusterAdministrationView',
     'OpenBaoClusterCapabilitiesView',
     'OpenBaoClusterDeleteView',
     'OpenBaoClusterEditView',
@@ -161,6 +162,72 @@ class OpenBaoClusterCapabilitiesView(ObjectPermissionRequiredMixin, View):
             'object': cluster,
             'document': document,
             'error': error,
+            'return_url': cluster.get_absolute_url(),
+        }, status=503 if error else 200)
+        return _never_store(response)
+
+
+@register_model_view(OpenBaoCluster, 'administration')
+class OpenBaoClusterAdministrationView(ObjectPermissionRequiredMixin, View):
+    """Render current lifecycle state and guarded REST action controls."""
+
+    queryset = OpenBaoCluster.objects.all()
+    template_name = 'netbox_openbao/openbaocluster_administration.html'
+
+    def get_required_permission(self):
+        return 'netbox_openbao.discover_openbaocluster'
+
+    def get(self, request, pk):
+        cluster = get_object_or_404(self.queryset.restrict(request.user, 'discover'), pk=pk)
+        state = None
+        error = None
+        try:
+            backend = get_administration_backend(cluster)
+            seal = backend.seal_status()
+            leader = backend.leader_status() if seal.initialized and not seal.sealed else None
+            ha = backend.ha_status() if leader and leader.ha_enabled else None
+            raft = backend.raft_configuration() if seal.storage_type == 'raft' and not seal.sealed else None
+            state = {
+                'seal': seal,
+                'leader': leader,
+                'ha': ha,
+                'raft': raft,
+            }
+            log_administration(
+                cluster,
+                request.user,
+                action='cluster-administration-ui',
+                operation_id='cluster-state',
+                risk_level='read',
+                success=True,
+                status_code=200,
+                message='Rendered guarded cluster administration state.',
+                request=request,
+            )
+        except (AdministrationAuditError, DatabaseError, OpenBaoError):
+            error = _('OpenBao administration is unavailable.')
+        response = render(request, self.template_name, {
+            'object': cluster,
+            'state': state,
+            'error': error,
+            'snapshot_limit': 512 * 1024 * 1024,
+            'api_urls': {
+                'initialize': reverse('plugins-api:netbox_openbao-api:openbaocluster-initialize', args=[cluster.pk]),
+                'unseal': reverse('plugins-api:netbox_openbao-api:openbaocluster-unseal', args=[cluster.pk]),
+                'seal': reverse('plugins-api:netbox_openbao-api:openbaocluster-seal', args=[cluster.pk]),
+                'remove_peer': reverse(
+                    'plugins-api:netbox_openbao-api:openbaocluster-remove-raft-peer', args=[cluster.pk]
+                ),
+                'snapshot': reverse(
+                    'plugins-api:netbox_openbao-api:openbaocluster-raft-snapshot', args=[cluster.pk]
+                ),
+                'restore': reverse(
+                    'plugins-api:netbox_openbao-api:openbaocluster-raft-snapshot-restore', args=[cluster.pk]
+                ),
+                'force_restore': reverse(
+                    'plugins-api:netbox_openbao-api:openbaocluster-raft-snapshot-restore-force', args=[cluster.pk]
+                ),
+            },
             'return_url': cluster.get_absolute_url(),
         }, status=503 if error else 200)
         return _never_store(response)

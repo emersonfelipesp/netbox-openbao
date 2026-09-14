@@ -65,6 +65,18 @@ Fix the test.
 | Capability responses cannot carry backend diagnostics or enter caches | Fixed exceptions plus `Cache-Control: no-store` on API and UI | `test_administration.AdministrationAPITest.test_upstream_failure_returns_only_a_fixed_error_and_is_audited`, `AdministrationUITest.test_ui_discovery_is_escaped_audited_and_not_storable` |
 | Broker mode never bypasses its isolation boundary | Discovery fails closed until the broker advertises the reviewed contract | `test_administration.AdministrationBackendTest.test_factory_selects_direct_and_broker_transports` |
 
+## Cluster lifecycle and Raft recovery are guarded
+
+| Claim | Enforced by | Test |
+|---|---|---|
+| Initialization custody material is returned once and never audited | JSON-only `no-store` response, redacted result representation, and metadata-only audit | `test_cluster_administration.ClusterAdministrationAPITest.test_initialization_requires_exact_confirmation_and_returns_material_once` |
+| An unseal share is never returned or audited | Write-only serializer field, one-share backend call, and explicit discard on every handled outcome | `test_cluster_administration.ClusterAdministrationAPITest.test_unseal_share_is_not_returned_or_audited` |
+| Raft peer removal uses fresh state and protects quorum | Configuration-index comparison, leader refusal, and minimum-voter guard | `test_cluster_administration.ClusterAdministrationAPITest.test_remove_peer_rejects_stale_index_and_leader`, `test_remove_peer_succeeds_only_with_fresh_safe_configuration` |
+| Snapshot downloads are bounded and closed on cancellation | Streaming response wrapper checks declared and observed bytes and closes upstream in `finally` | `test_cluster_administration.DirectClusterAdministrationBackendTest.test_snapshot_download_is_bounded_and_streamed`, `test_snapshot_download_closes_upstream_when_caller_cancels` |
+| Snapshot restores never enter multipart or automatic retry paths | Exact raw media type, declared limit, bounded reader, fixed request path, and one transport attempt | `test_cluster_administration.ClusterAdministrationAPITest.test_snapshot_restore_rejects_multipart_before_backend_access`, `DirectClusterAdministrationBackendTest.test_snapshot_restore_transport_failure_is_not_retried` |
+| Normal restore cannot escalate to force | Separate route, object permission, confirmation, and fixed OpenBao path | `test_cluster_administration.ClusterAdministrationAPITest.test_force_restore_has_separate_permission_and_confirmation` |
+| Stale recovery state is rejected before snapshot bytes are read | Fresh cluster-ID and configuration-index comparison before backend restore | `test_cluster_administration.ClusterAdministrationAPITest.test_snapshot_restore_refuses_stale_index_before_reading_body` |
+
 ## The two stores cannot silently disagree
 
 | Claim | Enforced by | Test |

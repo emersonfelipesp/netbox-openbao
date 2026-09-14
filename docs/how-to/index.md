@@ -5,6 +5,13 @@ gets you to a working result.
 
 <div class="grid cards" markdown>
 
+-   :material-server-security: **[Administer an OpenBao cluster](administer-openbao-cluster.md)**
+
+    ---
+
+    Bootstrap, unseal, HA, Raft peers, authenticated snapshots, and guarded
+    disaster recovery without retaining custody material.
+
 -   :material-key-plus: **[Grant a device SSH access](../quick-add-ssh.md)**
 
     ---

@@ -94,10 +94,11 @@ As a plugin it reuses NetBox's tokens, object permissions, constraints, and
 changelog directly. Blocking I/O goes through NetBox's own RQ framework: a
 single reveal is synchronous and sub-100 ms; bulk work is a background job.
 
-The same reasoning applies *inside* the plugin, which is why every path that
-touches material funnels through
-[`services.py`](architecture/write-path.md#the-single-chokepoint) rather than
-each view calling a backend for itself.
+The same reasoning applies *inside* the plugin. Stored credential material
+funnels through [`services.py`](architecture/write-path.md#the-single-chokepoint).
+Request-scoped cluster initialization, unseal, and snapshot custody uses the
+separate bounded [administration plane](architecture/administration-plane.md);
+neither boundary persists or logs material.
 
 ## What it is not
 

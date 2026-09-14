@@ -235,9 +235,12 @@ the security invariants above, list/detail/edit UI, Device/VM/Service panels,
 the background jobs, and staged rotation (write, verify, promote — never break
 running access). The [OpenBao administration plane](docs/architecture/administration-plane.md)
 now has cluster inventory, bounded runtime capability discovery, dedicated
-permissions, metadata-only audit, and a pinned OpenBao 2.6.2 parity manifest.
-Discovered operations remain non-executable until their capability family is
-implemented and reviewed.
+permissions, metadata-only audit, guarded bootstrap and seal operations, HA and
+Raft state, peer-removal safety, and bounded authenticated snapshot recovery.
+Its pinned OpenBao 2.6.2 parity manifest records Raft storage as complete.
+Cluster bootstrap remains at `foundation` until guarded Raft join is implemented
+under issue #70. Other discovered operations remain non-executable until their
+capability family is implemented and reviewed.
 
 Also shipped since: the
 [Ansible lookup plugin](https://github.com/emersonfelipesp/netbox-openbao-ansible)

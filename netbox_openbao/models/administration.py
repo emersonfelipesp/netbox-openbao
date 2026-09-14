@@ -99,6 +99,14 @@ class OpenBaoCluster(PrimaryModel):
             ('operate', 'Run non-sensitive OpenBao administrative operations'),
             ('operate_sensitive', 'Run material-bearing OpenBao administrative operations'),
             ('operate_destructive', 'Run destructive OpenBao administrative operations'),
+            ('initialize', 'Initialize an OpenBao cluster'),
+            ('unseal', 'Submit OpenBao unseal material or reset unseal progress'),
+            ('seal', 'Seal an OpenBao cluster'),
+            ('manage_raft', 'Manage OpenBao Raft configuration'),
+            ('remove_raft_peer', 'Remove an OpenBao Raft peer'),
+            ('download_raft_snapshot', 'Download an OpenBao Raft snapshot'),
+            ('restore_raft_snapshot', 'Restore an OpenBao Raft snapshot'),
+            ('force_restore_raft_snapshot', 'Force restore an OpenBao Raft snapshot'),
         )
 
     def __str__(self):

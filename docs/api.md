@@ -11,6 +11,14 @@ internal automation resolution receipts have no CRUD endpoint.
 | `GET/POST /clusters/`, `GET/PATCH/DELETE /clusters/{id}/` | Administrative cluster inventory; never authentication material |
 | `GET /clusters/{id}/health/` | Probe cluster health, persist safe observed status, and write an administration audit record |
 | `GET /clusters/{id}/capabilities/` | Normalize bounded OpenAPI metadata; requires `discover_openbaocluster` and never makes an operation executable |
+| `GET /clusters/{id}/state/` | Read typed initialization, seal, HA, leader, and Raft state |
+| `POST /clusters/{id}/initialize/` | Initialize once and return custody material once; JSON-only and `no-store` |
+| `POST /clusters/{id}/unseal/` | Submit one unseal share or reset accumulated progress |
+| `POST /clusters/{id}/seal/` | Seal an initialized active cluster |
+| `POST /clusters/{id}/raft/remove-peer/` | Remove a non-leader peer after index and quorum checks |
+| `GET/POST /clusters/{id}/raft/snapshot/` | Stream an active-node Raft snapshot; session users require a confirmed CSRF-protected POST, while API tokens may use GET |
+| `POST /clusters/{id}/raft/snapshot/restore/` | Stream a bounded snapshot into normal restore |
+| `POST /clusters/{id}/raft/snapshot/restore-force/` | Stream a bounded snapshot into force restore under a separate permission |
 | `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/` | Singleton runtime configuration; deletion is refused while any credential exists and requires the standard `OpenBaoSettings` model permissions |
 | `GET/POST /engines/` | Secret engines |
 | `GET /engines/{id}/health/` | Probe and record engine status |
@@ -69,6 +77,41 @@ path, method, headers, or body. Every operation is returned with
 unclassified. The response is `no-store`, and every success or failure is
 written synchronously to `OpenBaoAdministrationLog`. See the
 [administration-plane contract](architecture/administration-plane.md).
+
+## Cluster lifecycle and Raft requests
+
+Cluster lifecycle actions require `view_openbaocluster` plus the dedicated
+object permission named for the action. JSON mutations include a non-empty
+`reason` and the exact `confirmation` shown by the Web UI. Initialization uses
+either `secret_shares` plus `secret_threshold`, or `recovery_shares` plus
+`recovery_threshold`; the two modes cannot be mixed. Optional PGP key arrays
+must contain exactly one key per configured share. Each key is a standard-base64
+binary OpenPGP public-key export. The complete export, binding signatures,
+explicit encryption flags, and practical encryption capability are validated
+before OpenBao is contacted.
+
+Initialization responses contain custody material and use the JSON renderer
+only. They are marked `Cache-Control: no-store`. The plugin never persists or
+audits the response. If the initialization request loses its response, the API
+does not retry: re-read cluster state and enter incident recovery, because a
+successful retry could never reproduce the original keys.
+
+Snapshot restore does not use multipart parsing. Send exactly
+`application/octet-stream`, a valid `Content-Length` from 1 through 536870912,
+and these metadata headers:
+
+| Header | Value |
+|---|---|
+| `X-OpenBao-Reason` | Operator or change reason |
+| `X-OpenBao-Confirmation` | `RESTORE SNAPSHOT <cluster-slug>` or `FORCE RESTORE SNAPSHOT <cluster-slug>` |
+| `X-OpenBao-Cluster-ID` | Cluster ID from the fresh state response |
+| `X-OpenBao-Raft-Index` | Configuration index from the fresh state response |
+
+The server checks the cluster ID and Raft index again before reading the body,
+requires an initialized and unsealed Raft cluster, and refuses an HA standby.
+Normal and force restore use different URLs and different permissions. Transfer
+errors have unknown outcome and are never retried automatically. See the
+[cluster administration runbook](how-to/administer-openbao-cluster.md).
 
 ## Writing material
 

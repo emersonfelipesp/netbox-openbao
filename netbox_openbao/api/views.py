@@ -26,14 +26,18 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, IntegrityError, router, transaction
 from django.db.models import Count
+from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
+from packaging.version import InvalidVersion, Version
 from rest_framework import status
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException, PermissionDenied
+from rest_framework.exceptions import APIException, MethodNotAllowed, PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.parsers import BaseParser
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from utilities.exceptions import AbortRequest
@@ -47,7 +51,7 @@ from netbox_openbao.administration import (
 from netbox_openbao.administration.audit import AdministrationAuditError, log_administration
 from netbox_openbao.api.transactions import material_api_operation
 from netbox_openbao.backends import get_backend
-from netbox_openbao.backends.exceptions import OpenBaoError
+from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoError
 from netbox_openbao.choices import AccessActionChoices
 from netbox_openbao.material_transactions import material_operation
 from netbox_openbao.models import (
@@ -76,21 +80,26 @@ from netbox_openbao.services import (
 from netbox_openbao.synchronization import lock_material_subject, lock_material_subjects
 
 from .automation import AutomationResolveRequestSerializer, AutomationResolveResponseSerializer
-from .permissions import SecretActionPermissions
+from .permissions import ClusterActionPermissions, SecretActionPermissions
 from .serializers import (
+    ConfirmClusterActionSerializer,
     CredentialAccessLogSerializer,
     CredentialAssignmentSerializer,
     CredentialPolicySerializer,
     CredentialSerializer,
     CredentialTypeSchemaSerializer,
+    InitializeClusterSerializer,
     OpenBaoAdministrationLogSerializer,
     OpenBaoClusterSerializer,
     OpenBaoProcedureRunSerializer,
     OpenBaoSettingsSerializer,
     PromoteRequestSerializer,
+    RemoveRaftPeerSerializer,
+    RestoreRaftSnapshotSerializer,
     RevealRequestSerializer,
     RunProcedureSerializer,
     SecretEngineSerializer,
+    UnsealClusterSerializer,
 )
 from .throttling import RevealRateThrottle
 
@@ -112,6 +121,22 @@ class OpenBaoAdministrationUnavailable(APIException):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     default_detail = 'OpenBao administration is unavailable.'
     default_code = 'openbao_administration_unavailable'
+
+
+class OpenBaoAdministrationConflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = 'OpenBao administrative state changed; the operation was refused.'
+    default_code = 'openbao_administration_conflict'
+
+
+class RawSnapshotParser(BaseParser):
+    """Authorize octet streams without consuming snapshot bytes into DRF data."""
+
+    media_type = 'application/octet-stream'
+
+    def parse(self, stream, media_type=None, parser_context=None):
+        del stream, media_type, parser_context
+        return {}
 
 
 def _as_drf_validation_error(exc):
@@ -188,21 +213,120 @@ class OpenBaoClusterViewSet(NetBoxModelViewSet):
     serializer_class = OpenBaoClusterSerializer
     filterset_class = filtersets.OpenBaoClusterFilterSet
 
-    def _safe_failure(self, request, cluster, action):
+    def _safe_failure(self, request, cluster, action, *, reason='', risk_level='read', conflict=False):
+        status_code = status.HTTP_409_CONFLICT if conflict else status.HTTP_503_SERVICE_UNAVAILABLE
         try:
             log_administration(
                 cluster,
                 request.user,
                 action=action,
-                risk_level='read',
+                risk_level=risk_level,
+                reason=reason,
                 success=False,
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                message='OpenBao administration is unavailable.',
+                status_code=status_code,
+                message=(
+                    'OpenBao administrative state changed; the operation was refused.'
+                    if conflict
+                    else 'OpenBao administration is unavailable.'
+                ),
                 request=request,
             )
         except AdministrationAuditError:
             pass
+        if conflict:
+            raise OpenBaoAdministrationConflict()
         raise OpenBaoAdministrationUnavailable()
+
+    def _backend_failure(self, request, cluster, action, exc, *, reason='', risk_level='write'):
+        self._safe_failure(
+            request,
+            cluster,
+            action,
+            reason=reason,
+            risk_level=risk_level,
+            conflict=isinstance(exc, OpenBaoConflict),
+        )
+
+    def _cluster(self, request, pk, permission):
+        # NetBox's BaseViewSet restricts every POST queryset with the standard
+        # ``add`` action after DRF permission checks. These administrative
+        # actions mutate an existing cluster and deliberately map POST to
+        # ``view`` instead, so enforce their dedicated object permission on a
+        # fresh queryset rather than inheriting the unrelated add restriction.
+        queryset = OpenBaoCluster.objects.annotate(mount_count=Count('secret_engines'))
+        return get_object_or_404(queryset.restrict(request.user, permission), pk=pk)
+
+    @staticmethod
+    def _snapshot_metadata_serializer(request, cluster, *, force):
+        serializer = RestoreRaftSnapshotSerializer(
+            data={
+                'reason': request.headers.get('X-OpenBao-Reason', ''),
+                'confirmation': request.headers.get('X-OpenBao-Confirmation', ''),
+                'cluster_id': request.headers.get('X-OpenBao-Cluster-ID', ''),
+                'configuration_index': request.headers.get('X-OpenBao-Raft-Index', ''),
+            },
+            context={'request': request, 'cluster': cluster},
+        )
+        serializer.force = force
+        serializer.is_valid(raise_exception=True)
+        return serializer
+
+    @staticmethod
+    def _snapshot_upload_size(request):
+        if request.content_type != 'application/octet-stream':
+            raise DRFValidationError({'content_type': 'Use application/octet-stream.'})
+        if request.headers.get('Content-Encoding'):
+            raise DRFValidationError({'content_encoding': 'Encoded snapshot uploads are not accepted.'})
+        raw_size = request.META.get('CONTENT_LENGTH', '')
+        try:
+            size = int(raw_size)
+        except (TypeError, ValueError):
+            raise DRFValidationError({'content_length': 'A valid Content-Length is required.'}) from None
+        from netbox_openbao.administration.cluster import MAX_SNAPSHOT_BYTES
+        if not 0 < size <= MAX_SNAPSHOT_BYTES:
+            raise DRFValidationError({'content_length': 'Snapshot size is outside the allowed range.'})
+        return size
+
+    def _fresh_raft_state(self, backend, expected_cluster_id, expected_index):
+        seal = backend.seal_status()
+        self._require_baseline(seal)
+        if not seal.initialized or seal.sealed or seal.storage_type != 'raft':
+            raise OpenBaoConflict()
+        leader = backend.leader_status()
+        if leader.ha_enabled and not leader.is_self:
+            raise OpenBaoConflict()
+        config = backend.raft_configuration()
+        if seal.cluster_id != expected_cluster_id or config.index != expected_index:
+            raise OpenBaoConflict()
+        return seal, config
+
+    @staticmethod
+    def _require_baseline(seal):
+        try:
+            version = Version(seal.version)
+        except InvalidVersion:
+            raise OpenBaoConflict() from None
+        if version < Version('2.6.2') or version.release[:2] != (2, 6):
+            raise OpenBaoConflict()
+
+    @staticmethod
+    def _mutation_response(payload, *, status_code=200, audit_complete=True):
+        response_payload = dict(payload)
+        response = _no_store(Response(response_payload, status=status_code))
+        if not audit_complete:
+            response.data['outcome'] = 'accepted-audit-incomplete'
+            response.data['audit_status'] = 'preflight-only'
+            response['X-OpenBao-Operation-Outcome'] = 'accepted-audit-incomplete'
+            response['X-OpenBao-Audit-Status'] = 'preflight-only'
+        return response
+
+    @staticmethod
+    def _confirm_serializer(serializer_class, request, cluster, *, action=None):
+        serializer = serializer_class(data=request.data, context={'request': request, 'cluster': cluster})
+        if action is not None:
+            serializer.action = action
+        serializer.is_valid(raise_exception=True)
+        return serializer
 
     @action(detail=True, methods=['get'])
     def health(self, request, pk=None):
@@ -228,6 +352,463 @@ class OpenBaoClusterViewSet(NetBoxModelViewSet):
         except (AdministrationAuditError, DatabaseError, OpenBaoError):
             self._safe_failure(request, cluster, 'discover-capabilities')
         return _no_store(Response(document.as_dict()))
+
+    @action(detail=True, methods=['get'])
+    def state(self, request, pk=None):
+        cluster = self._cluster(request, pk, 'discover')
+        try:
+            backend = get_administration_backend(cluster)
+            seal = backend.seal_status()
+            leader = backend.leader_status() if seal.initialized and not seal.sealed else None
+            ha = backend.ha_status() if leader and leader.ha_enabled else None
+            raft = backend.raft_configuration() if seal.storage_type == 'raft' and not seal.sealed else None
+            log_administration(
+                cluster,
+                request.user,
+                action='cluster-state',
+                operation_id='cluster-state',
+                risk_level='read',
+                success=True,
+                status_code=200,
+                message='Read cluster lifecycle state.',
+                request=request,
+            )
+        except (AdministrationAuditError, DatabaseError, OpenBaoError):
+            self._safe_failure(request, cluster, 'cluster-state')
+        return _no_store(Response({
+            'seal': seal.as_dict(),
+            'leader': leader.as_dict() if leader else None,
+            'ha': ha.as_dict() if ha else None,
+            'raft': raft.as_dict() if raft else None,
+        }))
+
+    @action(
+        detail=True,
+        methods=['post'],
+        renderer_classes=[JSONRenderer],
+        permission_classes=[ClusterActionPermissions],
+    )
+    def initialize(self, request, pk=None):
+        cluster = self._cluster(request, pk, 'initialize')
+        serializer = self._confirm_serializer(InitializeClusterSerializer, request, cluster)
+        reason = serializer.validated_data['reason']
+        try:
+            backend = get_administration_backend(cluster)
+            before = backend.seal_status()
+            self._require_baseline(before)
+            if before.initialized or backend.initialization_status():
+                raise OpenBaoConflict()
+            log_administration(
+                cluster,
+                request.user,
+                action='initialize-authorized',
+                operation_id='sys-init',
+                risk_level='sensitive',
+                method='POST',
+                path_template='/sys/init',
+                reason=reason,
+                success=True,
+                message='Authorized cluster initialization.',
+                request=request,
+                require_durable=True,
+            )
+            result = backend.initialize(serializer.openbao_payload())
+        except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
+            self._backend_failure(request, cluster, 'initialize', exc, reason=reason, risk_level='sensitive')
+        audit_complete = True
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action='initialize',
+                operation_id='sys-init',
+                risk_level='sensitive',
+                method='POST',
+                path_template='/sys/init',
+                reason=reason,
+                success=True,
+                status_code=status.HTTP_201_CREATED,
+                message='Initialized cluster; custody material was returned once.',
+                request=request,
+            )
+        except AdministrationAuditError:
+            audit_complete = False
+        return self._mutation_response(
+            result.as_dict(),
+            status_code=status.HTTP_201_CREATED,
+            audit_complete=audit_complete,
+        )
+
+    @action(
+        detail=True,
+        methods=['post'],
+        renderer_classes=[JSONRenderer],
+        permission_classes=[ClusterActionPermissions],
+    )
+    def unseal(self, request, pk=None):
+        cluster = self._cluster(request, pk, 'unseal')
+        serializer = self._confirm_serializer(UnsealClusterSerializer, request, cluster)
+        data = serializer.validated_data
+        reason = data['reason']
+        action_name = 'reset-unseal' if data['reset'] else 'unseal'
+        try:
+            backend = get_administration_backend(cluster)
+            before = backend.seal_status()
+            self._require_baseline(before)
+            if not before.initialized or not before.sealed:
+                raise OpenBaoConflict()
+            log_administration(
+                cluster,
+                request.user,
+                action=f'{action_name}-authorized',
+                operation_id='sys-unseal',
+                risk_level='sensitive',
+                method='POST',
+                path_template='/sys/unseal',
+                reason=reason,
+                success=True,
+                message='Authorized an unseal state transition.',
+                request=request,
+                require_durable=True,
+            )
+            result = backend.unseal(
+                key=data.get('key', ''),
+                reset=data['reset'],
+                migrate=data['migrate'],
+            )
+            data.pop('key', None)
+        except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
+            data.pop('key', None)
+            self._backend_failure(request, cluster, action_name, exc, reason=reason, risk_level='sensitive')
+        audit_complete = True
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action=action_name,
+                operation_id='sys-unseal',
+                risk_level='sensitive',
+                method='POST',
+                path_template='/sys/unseal',
+                reason=reason,
+                success=True,
+                status_code=200,
+                message='Updated unseal progress.',
+                request=request,
+            )
+        except AdministrationAuditError:
+            audit_complete = False
+        return self._mutation_response(result.as_dict(), audit_complete=audit_complete)
+
+    @action(detail=True, methods=['post'], permission_classes=[ClusterActionPermissions])
+    def seal(self, request, pk=None):
+        cluster = self._cluster(request, pk, 'seal')
+        serializer = self._confirm_serializer(ConfirmClusterActionSerializer, request, cluster, action='SEAL')
+        reason = serializer.validated_data['reason']
+        try:
+            backend = get_administration_backend(cluster)
+            before = backend.seal_status()
+            self._require_baseline(before)
+            if not before.initialized or before.sealed:
+                raise OpenBaoConflict()
+            leader = backend.leader_status()
+            if leader.ha_enabled and not leader.is_self:
+                raise OpenBaoConflict()
+            log_administration(
+                cluster,
+                request.user,
+                action='seal-authorized',
+                operation_id='sys-seal',
+                risk_level='destructive',
+                method='POST',
+                path_template='/sys/seal',
+                reason=reason,
+                success=True,
+                message='Authorized cluster seal.',
+                request=request,
+                require_durable=True,
+            )
+            backend.seal()
+        except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
+            self._backend_failure(request, cluster, 'seal', exc, reason=reason, risk_level='destructive')
+        audit_complete = True
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action='seal',
+                operation_id='sys-seal',
+                risk_level='destructive',
+                method='POST',
+                path_template='/sys/seal',
+                reason=reason,
+                success=True,
+                status_code=200,
+                message='Sealed cluster.',
+                request=request,
+            )
+        except AdministrationAuditError:
+            audit_complete = False
+        return self._mutation_response({'sealed': True}, audit_complete=audit_complete)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='raft/remove-peer',
+        permission_classes=[ClusterActionPermissions],
+    )
+    def remove_raft_peer(self, request, pk=None):
+        cluster = self._cluster(request, pk, 'remove_raft_peer')
+        serializer = self._confirm_serializer(RemoveRaftPeerSerializer, request, cluster)
+        data = serializer.validated_data
+        reason = data['reason']
+        try:
+            backend = get_administration_backend(cluster)
+            seal = backend.seal_status()
+            self._require_baseline(seal)
+            leader = backend.leader_status()
+            if not seal.initialized or seal.sealed or seal.storage_type != 'raft':
+                raise OpenBaoConflict()
+            if leader.ha_enabled and not leader.is_self:
+                raise OpenBaoConflict()
+            config = backend.raft_configuration()
+            peer = config.peer(data['server_id'])
+            voter_count = sum(candidate.voter for candidate in config.peers)
+            stale = config.index != data['configuration_index']
+            unsafe = peer is None or peer.leader or (peer.voter and voter_count <= 3)
+            if stale or unsafe:
+                raise OpenBaoConflict()
+            log_administration(
+                cluster,
+                request.user,
+                action='remove-raft-peer-authorized',
+                operation_id='raft-remove-peer',
+                risk_level='destructive',
+                method='POST',
+                path_template='/sys/storage/raft/remove-peer',
+                reason=reason,
+                success=True,
+                message=f'Authorized removal of Raft peer {peer.node_id}.',
+                request=request,
+                require_durable=True,
+            )
+            backend.remove_raft_peer(peer.node_id)
+        except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
+            self._backend_failure(
+                request,
+                cluster,
+                'remove-raft-peer',
+                exc,
+                reason=reason,
+                risk_level='destructive',
+            )
+        audit_complete = True
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action='remove-raft-peer',
+                operation_id='raft-remove-peer',
+                risk_level='destructive',
+                method='POST',
+                path_template='/sys/storage/raft/remove-peer',
+                reason=reason,
+                success=True,
+                status_code=200,
+                message=f'Removed Raft peer {peer.node_id}.',
+                request=request,
+            )
+        except AdministrationAuditError:
+            audit_complete = False
+        return self._mutation_response(
+            {'removed': data['server_id'], 'configuration_index': config.index},
+            audit_complete=audit_complete,
+        )
+
+    @action(
+        detail=True,
+        methods=['get', 'post'],
+        url_path='raft/snapshot',
+        url_name='raft-snapshot',
+        renderer_classes=[JSONRenderer],
+        permission_classes=[ClusterActionPermissions],
+    )
+    def download_raft_snapshot(self, request, pk=None):
+        if request.method == 'GET' and isinstance(request.successful_authenticator, SessionAuthentication):
+            raise MethodNotAllowed(
+                'GET',
+                detail='Session-authenticated snapshot downloads require a confirmed POST request.',
+            )
+        cluster = self._cluster(request, pk, 'download_raft_snapshot')
+        reason = ''
+        if request.method == 'POST':
+            serializer = self._confirm_serializer(
+                ConfirmClusterActionSerializer,
+                request,
+                cluster,
+                action='DOWNLOAD SNAPSHOT',
+            )
+            reason = serializer.validated_data['reason']
+        try:
+            backend = get_administration_backend(cluster)
+            seal = backend.seal_status()
+            self._require_baseline(seal)
+            if not seal.initialized or seal.sealed or seal.storage_type != 'raft':
+                raise OpenBaoConflict()
+            leader = backend.leader_status()
+            if leader.ha_enabled and not leader.is_self:
+                raise OpenBaoConflict()
+            log_administration(
+                cluster,
+                request.user,
+                action='download-raft-snapshot-authorized',
+                operation_id='raft-snapshot-download',
+                risk_level='sensitive',
+                method=request.method,
+                path_template='/sys/storage/raft/snapshot',
+                reason=reason,
+                success=True,
+                message='Authorized a streamed Raft snapshot download.',
+                request=request,
+                require_durable=True,
+            )
+            snapshot = backend.download_raft_snapshot()
+        except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
+            self._backend_failure(
+                request,
+                cluster,
+                'download-raft-snapshot',
+                exc,
+                reason=reason,
+                risk_level='sensitive',
+            )
+
+        def stream():
+            success = False
+            try:
+                yield from snapshot.chunks()
+                success = True
+            finally:
+                snapshot.close()
+                try:
+                    log_administration(
+                        cluster,
+                        request.user,
+                        action='download-raft-snapshot',
+                        operation_id='raft-snapshot-download',
+                        risk_level='sensitive',
+                        method=request.method,
+                        path_template='/sys/storage/raft/snapshot',
+                        reason=reason,
+                        success=success,
+                        status_code=200 if success else 499,
+                        message=(
+                            'Streamed a Raft snapshot to the authenticated operator.'
+                            if success
+                            else 'The Raft snapshot stream did not complete.'
+                        ),
+                        request=request,
+                    )
+                except (AdministrationAuditError, DatabaseError):
+                    pass
+
+        response = StreamingHttpResponse(stream(), content_type='application/octet-stream')
+        response['Content-Disposition'] = f'attachment; filename="openbao-{cluster.slug}.snap"'
+        response['X-Content-Type-Options'] = 'nosniff'
+        if snapshot.declared_size is not None:
+            response['Content-Length'] = str(snapshot.declared_size)
+        return _no_store(response)
+
+    def _restore_raft_snapshot(self, request, pk, *, force):
+        permission = 'force_restore_raft_snapshot' if force else 'restore_raft_snapshot'
+        cluster = self._cluster(request, pk, permission)
+        serializer = self._snapshot_metadata_serializer(request, cluster, force=force)
+        size = self._snapshot_upload_size(request)
+        data = serializer.validated_data
+        reason = data['reason']
+        action_name = 'force-restore-raft-snapshot' if force else 'restore-raft-snapshot'
+        path = '/sys/storage/raft/snapshot-force' if force else '/sys/storage/raft/snapshot'
+        try:
+            backend = get_administration_backend(cluster)
+            _, config = self._fresh_raft_state(
+                backend,
+                data['cluster_id'],
+                data['configuration_index'],
+            )
+            log_administration(
+                cluster,
+                request.user,
+                action=f'{action_name}-authorized',
+                operation_id=action_name,
+                risk_level='destructive',
+                method='POST',
+                path_template=path,
+                reason=reason,
+                success=True,
+                message='Authorized a bounded streaming Raft snapshot restore.',
+                request=request,
+                require_durable=True,
+            )
+            backend.restore_raft_snapshot(request.stream, size, force=force)
+        except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
+            self._backend_failure(
+                request,
+                cluster,
+                action_name,
+                exc,
+                reason=reason,
+                risk_level='destructive',
+            )
+        audit_complete = True
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action=action_name,
+                operation_id=action_name,
+                risk_level='destructive',
+                method='POST',
+                path_template=path,
+                reason=reason,
+                success=True,
+                status_code=200,
+                message='Accepted a streamed Raft snapshot restore.',
+                request=request,
+            )
+        except AdministrationAuditError:
+            audit_complete = False
+        return self._mutation_response(
+            {
+                'restored': True,
+                'forced': force,
+                'configuration_index': config.index,
+            },
+            audit_complete=audit_complete,
+        )
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='raft/snapshot/restore',
+        url_name='raft-snapshot-restore',
+        permission_classes=[ClusterActionPermissions],
+        parser_classes=[RawSnapshotParser],
+        renderer_classes=[JSONRenderer],
+    )
+    def restore_raft_snapshot(self, request, pk=None):
+        return self._restore_raft_snapshot(request, pk, force=False)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='raft/snapshot/restore-force',
+        url_name='raft-snapshot-restore-force',
+        permission_classes=[ClusterActionPermissions],
+        parser_classes=[RawSnapshotParser],
+        renderer_classes=[JSONRenderer],
+    )
+    def force_restore_raft_snapshot(self, request, pk=None):
+        return self._restore_raft_snapshot(request, pk, force=True)
 
 
 class OpenBaoAdministrationLogViewSet(NetBoxReadOnlyModelViewSet):

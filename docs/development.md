@@ -139,7 +139,7 @@ netbox_openbao/
 ├── administration/      capability discovery, transport boundary, audit, parity manifest
 ├── backends/            SecretBackend ABC, OpenBao/Vault/broker implementations, exceptions
 ├── secrets/             type registry, cryptography extractors, generators
-├── services.py          the only code that touches material
+├── services.py          the credential-material service boundary
 ├── api/                 serializers, viewsets, urls, throttling
 ├── ui/panels.py         declarative 4.7 detail panels
 ├── forms.py  tables.py  filtersets.py  views.py  urls.py
@@ -153,9 +153,12 @@ of `secret_data`, the full-page UI reveal, the HTMX reveal, and the UI
 promote/discard. Two real gaps hid in the difference between those surfaces, so
 a test that covers one of them is not evidence about the others.
 
-`services.py` is the chokepoint: everything that handles material goes through
-it, so there is exactly one file to audit for leaks. Views, serializers, and
-forms never call a backend directly.
+`services.py` is the stored credential-material chokepoint, so credential
+views, serializers, and forms never call a credential backend directly. The
+separate `administration/` boundary handles request-scoped cluster lifecycle
+custody such as initialization shares, unseal shares, and snapshot streams.
+Administration views may call that bounded transport directly, but neither
+boundary may persist, cache, or log material.
 
 ## Adding a credential type
 

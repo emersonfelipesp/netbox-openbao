@@ -42,12 +42,16 @@ def log_administration(
     status_code: int | None = None,
     message: str = '',
     request=None,
+    require_durable: bool = False,
 ):
     """Append one safe record and fail closed if the evidence cannot commit."""
     from netbox_openbao.models import OpenBaoAdministrationLog
 
     try:
-        with transaction.atomic():
+        # Mutation preflight records opt into ``durable=True``. Django then
+        # rejects any application transaction around the call, while ordinary
+        # read observations can still commit their metadata and audit together.
+        with transaction.atomic(durable=require_durable):
             return OpenBaoAdministrationLog.objects.create(
                 cluster=cluster,
                 cluster_name_snapshot=_text(cluster.name, 100),

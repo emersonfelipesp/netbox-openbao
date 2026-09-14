@@ -8,6 +8,9 @@ browsable API form, an export template, or an OpenAPI example, regardless of
 what any view does. There is also no model field for it to fall back to.
 """
 
+import base64
+import binascii
+
 from dcim.models import Device
 from django.core.exceptions import ValidationError as DjangoValidationError
 from netbox.api.fields import ChoiceField, ContentTypeField
@@ -18,6 +21,9 @@ from netbox.api.serializers import (
     OrganizationalModelSerializer,
     PrimaryModelSerializer,
 )
+from openpgp.composed import MessageBuilder, SignedPublicKey, SignedPublicSubKey
+from openpgp.errors import Error as OpenPGPError
+from openpgp.packet import Signature
 from rest_framework import serializers
 
 from netbox_openbao.choices import (
@@ -59,7 +65,190 @@ __all__ = (
     'OpenBaoClusterSerializer',
     'OpenBaoSettingsSerializer',
     'SecretEngineSerializer',
+    'InitializeClusterSerializer',
+    'UnsealClusterSerializer',
+    'ConfirmClusterActionSerializer',
+    'RemoveRaftPeerSerializer',
+    'RestoreRaftSnapshotSerializer',
 )
+
+
+class _ClusterConfirmationSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=3, max_length=1000, trim_whitespace=True)
+    confirmation = serializers.CharField(max_length=300, trim_whitespace=True)
+
+    def expected_confirmation(self, attrs):
+        raise NotImplementedError
+
+    def validate(self, attrs):
+        expected = self.expected_confirmation(attrs)
+        if attrs.get('confirmation') != expected:
+            raise serializers.ValidationError({'confirmation': f'Type exactly: {expected}'})
+        return attrs
+
+
+OPENPGP_VALIDATION_PAYLOAD = b'netbox-openbao-encryption-key-validation'
+OpenPGPRecipient = SignedPublicKey | SignedPublicSubKey
+
+
+def _signature_allows_encryption(signature: Signature) -> bool:
+    flags = signature.key_flags()
+    return flags.encrypt_communications or flags.encrypt_storage
+
+
+def _encryption_recipients(key: SignedPublicKey) -> list[OpenPGPRecipient]:
+    """Return only certified entity keys that explicitly permit encryption."""
+    primary_signatures = list(key.details.direct_signatures)
+    for identity in (*key.details.users, *key.details.user_attributes):
+        primary_signatures.extend(identity.signatures)
+    recipients = []
+    if key.primary_key.algorithm.can_encrypt() and any(map(_signature_allows_encryption, primary_signatures)):
+        recipients.append(key)
+    for subkey in key.public_subkeys:
+        if subkey.key.algorithm.can_encrypt() and any(map(_signature_allows_encryption, subkey.signatures)):
+            recipients.append(subkey)
+    return recipients
+
+
+def _recipient_can_encrypt(recipient: OpenPGPRecipient) -> bool:
+    try:
+        encrypted = (
+            MessageBuilder.from_bytes('', OPENPGP_VALIDATION_PAYLOAD)
+            .seipd_v1('aes256')
+            .encrypt_to_key(recipient)
+            .to_vec()
+        )
+    except OpenPGPError:
+        return False
+    return bool(encrypted)
+
+
+def _validate_openpgp_export(data: bytes) -> None:
+    """Require one exact, fully verified entity usable for OpenBao encryption."""
+    key = SignedPublicKey.from_bytes(data)
+    if key.to_bytes() != data:
+        raise ValueError
+    key.verify_bindings()
+    if not any(map(_recipient_can_encrypt, _encryption_recipients(key))):
+        raise ValueError
+
+
+def _validate_openpgp_public_key(value: str) -> str:
+    """Accept one verified, encryption-capable standard-base64 public export."""
+    try:
+        decoded = base64.b64decode(value, validate=True)
+        _validate_openpgp_export(decoded)
+    except (binascii.Error, OpenPGPError, TypeError, ValueError):
+        raise serializers.ValidationError(
+            'Use standard base64 of one complete binary OpenPGP public-key export without ASCII armor.'
+        ) from None
+    return value
+
+
+class InitializeClusterSerializer(_ClusterConfirmationSerializer):
+    secret_shares = serializers.IntegerField(min_value=1, max_value=64, required=False)
+    secret_threshold = serializers.IntegerField(min_value=1, max_value=64, required=False)
+    recovery_shares = serializers.IntegerField(min_value=0, max_value=64, required=False)
+    recovery_threshold = serializers.IntegerField(min_value=0, max_value=64, required=False)
+    pgp_keys = serializers.ListField(
+        child=serializers.CharField(
+            min_length=1,
+            max_length=20_000,
+            validators=[_validate_openpgp_public_key],
+        ),
+        max_length=64,
+        required=False,
+    )
+    recovery_pgp_keys = serializers.ListField(
+        child=serializers.CharField(
+            min_length=1,
+            max_length=20_000,
+            validators=[_validate_openpgp_public_key],
+        ),
+        max_length=64,
+        required=False,
+    )
+    root_token_pgp_key = serializers.CharField(
+        min_length=1,
+        max_length=20_000,
+        required=False,
+        validators=[_validate_openpgp_public_key],
+    )
+
+    def expected_confirmation(self, attrs):
+        del attrs
+        return f"INITIALIZE {self.context['cluster'].slug}"
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        shamir = 'secret_shares' in attrs or 'secret_threshold' in attrs
+        recovery = 'recovery_shares' in attrs or 'recovery_threshold' in attrs
+        if shamir == recovery:
+            raise serializers.ValidationError(
+                'Specify either a complete Shamir share pair or a complete recovery share pair.'
+            )
+        shares_key, threshold_key, pgp_key = (
+            ('secret_shares', 'secret_threshold', 'pgp_keys')
+            if shamir
+            else ('recovery_shares', 'recovery_threshold', 'recovery_pgp_keys')
+        )
+        if shares_key not in attrs or threshold_key not in attrs:
+            raise serializers.ValidationError('Both share count and threshold are required.')
+        shares = attrs[shares_key]
+        threshold = attrs[threshold_key]
+        if threshold > shares:
+            raise serializers.ValidationError({threshold_key: 'Threshold cannot exceed the share count.'})
+        if pgp_key in attrs and len(attrs[pgp_key]) != shares:
+            raise serializers.ValidationError({pgp_key: 'Provide exactly one PGP key for every share.'})
+        return attrs
+
+    def openbao_payload(self) -> dict:
+        excluded = {'reason', 'confirmation'}
+        return {key: value for key, value in self.validated_data.items() if key not in excluded}
+
+
+class UnsealClusterSerializer(_ClusterConfirmationSerializer):
+    key = serializers.CharField(min_length=1, max_length=20_000, write_only=True, required=False, trim_whitespace=True)
+    reset = serializers.BooleanField(default=False)
+    migrate = serializers.BooleanField(default=False)
+
+    def expected_confirmation(self, attrs):
+        action = 'RESET UNSEAL' if attrs.get('reset') else 'UNSEAL'
+        return f"{action} {self.context['cluster'].slug}"
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get('reset'):
+            attrs.pop('key', None)
+        elif not attrs.get('key'):
+            raise serializers.ValidationError({'key': 'One unseal share is required.'})
+        return attrs
+
+
+class ConfirmClusterActionSerializer(_ClusterConfirmationSerializer):
+    action = None
+
+    def expected_confirmation(self, attrs):
+        del attrs
+        return f"{self.action} {self.context['cluster'].slug}"
+
+
+class RemoveRaftPeerSerializer(_ClusterConfirmationSerializer):
+    server_id = serializers.RegexField(r'^[A-Za-z0-9_.:-]{1,200}$')
+    configuration_index = serializers.IntegerField(min_value=0)
+
+    def expected_confirmation(self, attrs):
+        return f"REMOVE {attrs.get('server_id', '')} FROM {self.context['cluster'].slug}"
+
+
+class RestoreRaftSnapshotSerializer(_ClusterConfirmationSerializer):
+    cluster_id = serializers.CharField(min_length=1, max_length=200, trim_whitespace=True)
+    configuration_index = serializers.IntegerField(min_value=0)
+    force = False
+
+    def expected_confirmation(self, attrs):
+        action = 'FORCE RESTORE SNAPSHOT' if self.force else 'RESTORE SNAPSHOT'
+        return f"{action} {self.context['cluster'].slug}"
 
 
 class OpenBaoClusterSerializer(PrimaryModelSerializer):

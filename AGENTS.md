@@ -39,10 +39,24 @@ credential-storage mount during the compatibility migration. Runtime OpenAPI
 discovery is bounded by `administration/schema.py` and every discovered
 operation remains non-executable until a reviewed registry entry supplies its
 permission, response class, risk controls, and tests. Unknown operations never
-become a generic proxy. Administrative responses are `no-store`, and an audit
-write failure blocks success. Keep the OpenBao 2.6.2 parity manifest and
+become a generic proxy. Administrative responses are `no-store`, and a mutation
+preflight audit failure blocks backend access. A completion-audit failure after
+backend acceptance returns explicit `accepted-audit-incomplete` state. Keep the OpenBao 2.6.2 parity manifest and
 `docs/architecture/administration-plane.md` synchronized with each capability
 change.
+
+**Cluster custody and Raft snapshots remain request-scoped.** Initialization,
+unseal, seal, peer removal, snapshot download, restore, and force restore use
+their dedicated `OpenBaoCluster` permissions and fixed API paths. Never add a
+model, session, cache, task, audit, exception, screenshot, or multipart-upload
+path for keys, root tokens, recovery material, unseal shares, or snapshot
+bytes. Snapshot transfer stays raw authenticated streaming, bounded to 512 MiB,
+with confirmed CSRF-protected POST for session downloads and normal and force
+restore separated. Refuse stale Raft state, a standby
+endpoint, unsupported OpenBao versions, redirects, retries after an unknown
+outcome, and any mutation whose preflight audit did not commit. The bootstrap,
+HA, recovery, and incident procedures are in
+`docs/how-to/administer-openbao-cluster.md`.
 
 ## The rule that matters most
 
@@ -55,9 +69,13 @@ enforces it by walking the model's fields and failing on any secret-shaped
 name. **If you are about to add a field named `password`, `private_key`,
 `token`, or similar to a model, stop — you are undoing the design.**
 
-Everything that touches material goes through `services.py`. Views,
-serializers, forms, and jobs never call a backend directly. Keep it that way:
-one chokepoint is what makes the plugin auditable.
+Every credential create, reveal, rotation, and deletion that touches stored
+credential material goes through `services.py`; its views, serializers, forms,
+and jobs never call a credential backend directly. Cluster lifecycle custody
+uses the separate `administration/` transport boundary: administration views
+may pass request-scoped initialization, unseal, or snapshot material directly
+to that bounded backend, but may never persist or log it. Keep both boundaries
+explicit so each remains auditable.
 
 ## Verified 4.7 facts
 

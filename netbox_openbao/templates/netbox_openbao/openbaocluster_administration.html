@@ -1,0 +1,194 @@
+{% extends 'generic/object.html' %}
+{% load static %}
+
+{% block title %}{{ object }} — OpenBao administration{% endblock %}
+
+{% block content %}
+  <div
+    id="openbao-administration"
+    data-initialize-url="{{ api_urls.initialize }}"
+    data-unseal-url="{{ api_urls.unseal }}"
+    data-seal-url="{{ api_urls.seal }}"
+    data-remove-peer-url="{{ api_urls.remove_peer }}"
+    data-restore-url="{{ api_urls.restore }}"
+    data-force-restore-url="{{ api_urls.force_restore }}"
+    data-snapshot-limit="{{ snapshot_limit }}"
+  >
+    {% csrf_token %}
+    <div class="alert alert-warning" role="alert">
+      Initialization keys, recovery keys, root tokens, unseal shares, and snapshot bytes are request-scoped.
+      Save initialization material immediately in an approved offline custody system. This page does not retain it.
+    </div>
+
+    {% if error %}
+      <div class="alert alert-danger" role="alert">{{ error }}</div>
+    {% elif state %}
+      <div class="card mb-3">
+        <h2 class="card-header">Cluster state</h2>
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-3">Initialized</dt><dd class="col-sm-9">{{ state.seal.initialized|yesno:"Yes,No" }}</dd>
+            <dt class="col-sm-3">Sealed</dt><dd class="col-sm-9">{{ state.seal.sealed|yesno:"Yes,No" }}</dd>
+            <dt class="col-sm-3">Version</dt><dd class="col-sm-9">{{ state.seal.version|default:"Not reported" }}</dd>
+            <dt class="col-sm-3">Seal</dt><dd class="col-sm-9">{{ state.seal.seal_type|default:"Not reported" }}</dd>
+            <dt class="col-sm-3">Unseal progress</dt><dd class="col-sm-9">{{ state.seal.progress }} / {{ state.seal.threshold }}</dd>
+            <dt class="col-sm-3">Storage</dt><dd class="col-sm-9">{{ state.seal.storage_type|default:"Not reported" }}</dd>
+            <dt class="col-sm-3">Cluster ID</dt><dd class="col-sm-9"><code>{{ state.seal.cluster_id|default:"Not assigned" }}</code></dd>
+            {% if state.leader %}
+              <dt class="col-sm-3">This node is active</dt><dd class="col-sm-9">{{ state.leader.is_self|yesno:"Yes,No" }}</dd>
+              <dt class="col-sm-3">Leader</dt><dd class="col-sm-9"><code>{{ state.leader.leader_address }}</code></dd>
+            {% endif %}
+          </dl>
+        </div>
+      </div>
+
+      {% if state.ha %}
+        <div class="card mb-3">
+          <h2 class="card-header">HA nodes</h2>
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead><tr><th>Hostname</th><th>API address</th><th>Cluster address</th><th>State</th><th>Last echo</th><th>Version</th></tr></thead>
+              <tbody>
+                {% for node in state.ha.nodes %}
+                  <tr>
+                    <td>{{ node.hostname }}</td>
+                    <td><code>{{ node.api_address|default:"Not reported" }}</code></td>
+                    <td><code>{{ node.cluster_address|default:"Not reported" }}</code></td>
+                    <td>{% if node.active_node %}Active{% else %}Standby{% endif %}</td>
+                    <td>{{ node.last_echo|default:"Not reported" }}</td>
+                    <td>{{ node.version|default:"Not reported" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+
+      {% if not state.seal.initialized and perms.netbox_openbao.initialize_openbaocluster %}
+        <div class="card mb-3">
+          <h2 class="card-header">Initialize cluster</h2>
+          <form class="card-body openbao-json-action" data-action="initialize" data-retain-result="true">
+            <div class="row g-3">
+              <div class="col-md-3"><label class="form-label">Seal mode</label><select class="form-select" name="seal_mode"><option value="shamir">Shamir unseal shares</option><option value="recovery">Auto-unseal recovery shares</option></select></div>
+              <div class="col-md-3 openbao-shamir-field"><label class="form-label">Secret shares</label><input class="form-control" name="secret_shares" type="number" min="1" max="64" value="5"></div>
+              <div class="col-md-3 openbao-shamir-field"><label class="form-label">Secret threshold</label><input class="form-control" name="secret_threshold" type="number" min="1" max="64" value="3"></div>
+              <div class="col-md-3 openbao-recovery-field d-none"><label class="form-label">Recovery shares</label><input class="form-control" name="recovery_shares" type="number" min="0" max="64" value="0"></div>
+              <div class="col-md-3 openbao-recovery-field d-none"><label class="form-label">Recovery threshold</label><input class="form-control" name="recovery_threshold" type="number" min="0" max="64" value="0"></div>
+              <div class="col-md-6"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+              <div class="col-md-6 openbao-shamir-field"><label class="form-label">Base64 binary OpenPGP share keys, one per line (optional)</label><textarea class="form-control" name="pgp_keys" rows="3" maxlength="200000"></textarea></div>
+              <div class="col-md-6 openbao-recovery-field d-none"><label class="form-label">Base64 binary OpenPGP recovery keys, one per line (optional)</label><textarea class="form-control" name="recovery_pgp_keys" rows="3" maxlength="200000"></textarea></div>
+              <div class="col-md-6"><label class="form-label">Base64 binary OpenPGP root-token key (optional)</label><textarea class="form-control" name="root_token_pgp_key" rows="3" maxlength="20000"></textarea></div>
+              <div class="col-12"><label class="form-label">Type exactly: <code>INITIALIZE {{ object.slug }}</code></label><input class="form-control" name="confirmation" maxlength="300" autocomplete="off" required></div>
+            </div>
+            <button class="btn btn-danger mt-3" type="submit">Initialize once</button>
+          </form>
+        </div>
+      {% endif %}
+
+      {% if state.seal.initialized and state.seal.sealed and perms.netbox_openbao.unseal_openbaocluster %}
+        <div class="card mb-3">
+          <h2 class="card-header">Unseal</h2>
+          <form class="card-body openbao-json-action" data-action="unseal" data-reload="true">
+            <div class="mb-3"><label class="form-label">One unseal share</label><input class="form-control" name="key" type="password" maxlength="20000" autocomplete="off" required></div>
+            <div class="form-check mb-3"><input class="form-check-input" name="migrate" type="checkbox" value="true" id="openbao-unseal-migrate"><label class="form-check-label" for="openbao-unseal-migrate">Continue a seal migration sequence</label></div>
+            <div class="mb-3"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+            <div class="mb-3"><label class="form-label">Type exactly: <code>UNSEAL {{ object.slug }}</code></label><input class="form-control" name="confirmation" maxlength="300" autocomplete="off" required></div>
+            <button class="btn btn-primary" type="submit">Submit one share</button>
+          </form>
+          <hr class="m-0">
+          <form class="card-body openbao-json-action" data-action="unseal" data-reload="true">
+            <input type="hidden" name="reset" value="true">
+            <div class="mb-3"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+            <div class="mb-3"><label class="form-label">Type exactly: <code>RESET UNSEAL {{ object.slug }}</code></label><input class="form-control" name="confirmation" maxlength="300" autocomplete="off" required></div>
+            <button class="btn btn-warning" type="submit">Reset accumulated progress</button>
+          </form>
+        </div>
+      {% endif %}
+
+      {% if state.seal.initialized and not state.seal.sealed and perms.netbox_openbao.seal_openbaocluster %}
+        <div class="card mb-3">
+          <h2 class="card-header">Seal cluster</h2>
+          <form class="card-body openbao-json-action" data-action="seal" data-reload="true">
+            <div class="mb-3"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+            <div class="mb-3"><label class="form-label">Type exactly: <code>SEAL {{ object.slug }}</code></label><input class="form-control" name="confirmation" maxlength="300" autocomplete="off" required></div>
+            <button class="btn btn-danger" type="submit">Seal cluster</button>
+          </form>
+        </div>
+      {% endif %}
+
+      {% if state.raft %}
+        <div class="card mb-3">
+          <h2 class="card-header d-flex justify-content-between align-items-center">
+            <span>Raft peers</span><span class="badge text-bg-secondary">Index {{ state.raft.index }}</span>
+          </h2>
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead><tr><th>Node ID</th><th>Address</th><th>Role</th><th>Voter</th><th>Protocol</th><th></th></tr></thead>
+              <tbody>
+                {% for peer in state.raft.peers %}
+                  <tr>
+                    <td><code>{{ peer.node_id }}</code></td><td><code>{{ peer.address }}</code></td>
+                    <td>{% if peer.leader %}Leader{% else %}Follower{% endif %}</td><td>{{ peer.voter|yesno:"Yes,No" }}</td><td>{{ peer.protocol_version }}</td>
+                    <td>
+                      {% if perms.netbox_openbao.remove_raft_peer_openbaocluster and not peer.leader %}
+                        <form class="openbao-json-action" data-action="remove-peer" data-reload="true">
+                          <input type="hidden" name="server_id" value="{{ peer.node_id }}">
+                          <input type="hidden" name="configuration_index" value="{{ state.raft.index }}">
+                          <input class="form-control form-control-sm mb-1" name="reason" minlength="3" maxlength="1000" placeholder="Reason" required>
+                          <input class="form-control form-control-sm mb-1" name="confirmation" maxlength="300" placeholder="REMOVE {{ peer.node_id }} FROM {{ object.slug }}" autocomplete="off" required>
+                          <button class="btn btn-sm btn-danger" type="submit">Remove peer</button>
+                        </form>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <h2 class="card-header">Raft snapshot recovery</h2>
+          <div class="card-body">
+            {% if perms.netbox_openbao.download_raft_snapshot_openbaocluster %}
+              <form method="post" action="{{ api_urls.snapshot }}" class="mb-3">
+                {% csrf_token %}
+                <div class="mb-3"><label class="form-label">Backup reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+                <div class="mb-3"><label class="form-label">Type exactly: <code>DOWNLOAD SNAPSHOT {{ object.slug }}</code></label><input class="form-control" name="confirmation" maxlength="300" autocomplete="off" required></div>
+                <button class="btn btn-primary" type="submit">Download authenticated snapshot</button>
+              </form>
+            {% endif %}
+            {% if perms.netbox_openbao.restore_raft_snapshot_openbaocluster %}
+              <form class="openbao-snapshot-restore" data-force="false">
+                <input type="hidden" name="cluster_id" value="{{ state.seal.cluster_id }}">
+                <input type="hidden" name="configuration_index" value="{{ state.raft.index }}">
+                <div class="mb-3"><label class="form-label">Snapshot file</label><input class="form-control" name="snapshot" type="file" accept=".snap,application/octet-stream" required></div>
+                <div class="mb-3"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+                <div class="mb-3"><label class="form-label">Type exactly: <code>RESTORE SNAPSHOT {{ object.slug }}</code></label><input class="form-control" name="confirmation" maxlength="300" autocomplete="off" required></div>
+                <button class="btn btn-danger" type="submit">Restore snapshot</button>
+              </form>
+            {% endif %}
+            {% if perms.netbox_openbao.force_restore_raft_snapshot_openbaocluster %}
+              <hr>
+              <form class="openbao-snapshot-restore" data-force="true">
+                <input type="hidden" name="cluster_id" value="{{ state.seal.cluster_id }}">
+                <input type="hidden" name="configuration_index" value="{{ state.raft.index }}">
+                <div class="mb-3"><label class="form-label">Snapshot file</label><input class="form-control" name="snapshot" type="file" accept=".snap,application/octet-stream" required></div>
+                <div class="mb-3"><label class="form-label">Incident reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+                <div class="mb-3"><label class="form-label">Type exactly: <code>FORCE RESTORE SNAPSHOT {{ object.slug }}</code></label><input class="form-control" name="confirmation" maxlength="300" autocomplete="off" required></div>
+                <button class="btn btn-danger" type="submit">Force restore snapshot</button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
+
+      <pre id="openbao-action-result" class="alert alert-secondary d-none" role="status" aria-live="polite"></pre>
+    {% endif %}
+  </div>
+{% endblock content %}
+
+{% block javascript %}
+  <script type="module" src="{% static 'netbox_openbao/cluster_administration.js' %}"></script>
+{% endblock javascript %}
