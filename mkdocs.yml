@@ -145,6 +145,7 @@ nav:
       - Security invariants: architecture/invariants.md
       - Proxmox VM secrets: architecture/proxmox-vm-secrets.md
       - OpenBao, broker, and RPC: architecture/openbao-broker-rpc.md
+      - OpenBao administration plane: architecture/administration-plane.md
   - How-to:
       - how-to/index.md
       - Grant a device SSH access: quick-add-ssh.md

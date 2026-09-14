@@ -210,7 +210,8 @@ The default engine pre-selects itself when you create a new `CredentialPolicy`.
 ## Environment
 
 Auth material is **never** read from `configuration.py` or the database. Each
-engine derives a prefix from its slug (`prod-core` → `NETBOX_BAO_PROD_CORE`),
+engine and administrative cluster derives a prefix from its slug
+(`prod-core` → `NETBOX_BAO_PROD_CORE`),
 and a `CredentialPolicy` may override it with `approle_env_prefix` so a tier
 authenticates with its own AppRole.
 
@@ -224,6 +225,24 @@ authenticates with its own AppRole.
 Every variable also accepts a `_FILE` suffix naming a file to read instead,
 which is how you mount a Docker or Kubernetes secret without exposing the value
 in `/proc/<pid>/environ`.
+
+## Administrative clusters
+
+Create a cluster under **Plugins → OpenBao → Administration → Clusters** or at
+`POST /api/plugins/openbao/clusters/`. The record contains the API URL,
+namespace, backend, authentication method, TLS policy, and optional NetBox
+device hosting OpenBao. It never contains credentials.
+
+Existing installations receive one cluster per `SecretEngine` during migration
+`0011`. The engine's connection fields remain authoritative for credential
+traffic during the compatibility period, while administration uses the linked
+cluster. Do not deliberately diverge the two connections; later engine
+lifecycle work will complete the consolidation.
+
+Keep `tls_verify` enabled. For an internal CA, set `ca_cert_path` to its bundle
+instead of disabling verification. Broker clusters may report health but reject
+capability discovery until the broker implements the bounded administration
+contract; the plugin does not bypass the broker by connecting directly.
 
 ## Policy tiers and defence in depth
 

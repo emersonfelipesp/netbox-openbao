@@ -69,6 +69,9 @@ jobs:
       - name: Assert the NetBox compatibility contract
         run: python scripts/check_compatibility_contract.py
 
+      - name: Assert the OpenBao UI parity manifest
+        run: python scripts/check_openbao_ui_parity.py
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest

@@ -11,6 +11,7 @@ credential out of the URL bar and the referrer header.
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import DatabaseError
 from django.db.models import Count
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
@@ -25,6 +26,8 @@ from netbox.views import generic
 from utilities.views import ObjectPermissionRequiredMixin, register_model_view
 
 from . import filtersets, forms, tables
+from .administration import get_administration_backend, record_capability_observation
+from .administration.audit import AdministrationAuditError, log_administration
 from .backends.exceptions import OpenBaoError
 from .config import assignable_model_labels
 from .material_transactions import material_transaction
@@ -34,6 +37,8 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoAdministrationLog,
+    OpenBaoCluster,
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
@@ -70,6 +75,14 @@ __all__ = (
     'CredentialView',
     'OpenBaoProcedureRunListView',
     'OpenBaoProcedureRunView',
+    'OpenBaoAdministrationLogListView',
+    'OpenBaoAdministrationLogView',
+    'OpenBaoClusterBulkDeleteView',
+    'OpenBaoClusterCapabilitiesView',
+    'OpenBaoClusterDeleteView',
+    'OpenBaoClusterEditView',
+    'OpenBaoClusterListView',
+    'OpenBaoClusterView',
     'SecretEngineBulkDeleteView',
     'SecretEngineDeleteView',
     'SecretEngineEditView',
@@ -77,6 +90,99 @@ __all__ = (
     'SecretEngineRunProcedureView',
     'SecretEngineView',
 )
+
+
+def _never_store(response):
+    response['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response['Pragma'] = 'no-cache'
+    response['Expires'] = '0'
+    return response
+
+
+#
+# OpenBao clusters and capability discovery
+#
+
+@register_model_view(OpenBaoCluster, 'list', path='', detail=False)
+class OpenBaoClusterListView(generic.ObjectListView):
+    queryset = OpenBaoCluster.objects.annotate(mount_count=Count('secret_engines'))
+    table = tables.OpenBaoClusterTable
+    filterset = filtersets.OpenBaoClusterFilterSet
+    filterset_form = forms.OpenBaoClusterFilterForm
+
+
+@register_model_view(OpenBaoCluster)
+class OpenBaoClusterView(generic.ObjectView):
+    queryset = OpenBaoCluster.objects.all()
+    layout = layout.SimpleLayout(
+        left_panels=[
+            openbao_panels.OpenBaoClusterPanel(),
+            CustomFieldsPanel(),
+            TagsPanel(),
+        ],
+        right_panels=[
+            openbao_panels.OpenBaoClusterStatusPanel(),
+            CommentsPanel(),
+        ],
+    )
+
+
+@register_model_view(OpenBaoCluster, 'capabilities')
+class OpenBaoClusterCapabilitiesView(ObjectPermissionRequiredMixin, View):
+    queryset = OpenBaoCluster.objects.all()
+    template_name = 'netbox_openbao/openbaocluster_capabilities.html'
+
+    def get_required_permission(self):
+        return 'netbox_openbao.discover_openbaocluster'
+
+    def get(self, request, pk):
+        cluster = get_object_or_404(self.queryset.restrict(request.user, 'discover'), pk=pk)
+        document = None
+        error = None
+        try:
+            document = get_administration_backend(cluster).discover_capabilities()
+            record_capability_observation(cluster, request.user, document, request)
+        except (AdministrationAuditError, DatabaseError, OpenBaoError):
+            error = _('OpenBao administration is unavailable.')
+            try:
+                log_administration(
+                    cluster,
+                    request.user,
+                    action='discover-capabilities',
+                    risk_level='read',
+                    success=False,
+                    status_code=503,
+                    message=str(error),
+                    request=request,
+                )
+            except AdministrationAuditError:
+                pass
+        response = render(request, self.template_name, {
+            'object': cluster,
+            'document': document,
+            'error': error,
+            'return_url': cluster.get_absolute_url(),
+        }, status=503 if error else 200)
+        return _never_store(response)
+
+
+@register_model_view(OpenBaoCluster, 'add', detail=False)
+@register_model_view(OpenBaoCluster, 'edit')
+class OpenBaoClusterEditView(generic.ObjectEditView):
+    queryset = OpenBaoCluster.objects.all()
+    form = forms.OpenBaoClusterForm
+
+
+@register_model_view(OpenBaoCluster, 'delete')
+class OpenBaoClusterDeleteView(generic.ObjectDeleteView):
+    queryset = OpenBaoCluster.objects.all()
+
+
+@register_model_view(OpenBaoCluster, 'bulk_delete', path='delete', detail=False)
+class OpenBaoClusterBulkDeleteView(generic.BulkDeleteView):
+    queryset = OpenBaoCluster.objects.all()
+    filterset = filtersets.OpenBaoClusterFilterSet
+    table = tables.OpenBaoClusterTable
 
 
 #
@@ -545,6 +651,21 @@ class CredentialTypeSchemaDeleteView(generic.ObjectDeleteView):
 #
 # Access log (read-only)
 #
+
+@register_model_view(OpenBaoAdministrationLog, 'list', path='', detail=False)
+class OpenBaoAdministrationLogListView(generic.ObjectListView):
+    queryset = OpenBaoAdministrationLog.objects.select_related('cluster', 'user')
+    table = tables.OpenBaoAdministrationLogTable
+    filterset = filtersets.OpenBaoAdministrationLogFilterSet
+    actions = {}
+
+
+@register_model_view(OpenBaoAdministrationLog)
+class OpenBaoAdministrationLogView(generic.ObjectView):
+    queryset = OpenBaoAdministrationLog.objects.select_related('cluster', 'user')
+    layout = layout.SimpleLayout(
+        left_panels=[openbao_panels.OpenBaoAdministrationLogPanel()],
+    )
 
 @register_model_view(CredentialAccessLog, 'list', path='', detail=False)
 class CredentialAccessLogListView(generic.ObjectListView):

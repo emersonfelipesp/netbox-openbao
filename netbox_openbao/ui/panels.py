@@ -37,12 +37,59 @@ __all__ = (
     'PolicyCredentialPanel',
     'SecretEnginePanel',
     'SecretEngineStatusPanel',
+    'OpenBaoClusterPanel',
+    'OpenBaoClusterStatusPanel',
+    'OpenBaoAdministrationLogPanel',
 )
+
+
+class OpenBaoClusterPanel(panels.ObjectAttributesPanel):
+    name = attrs.TextAttr('name')
+    slug = attrs.TextAttr('slug', style='font-monospace')
+    backend = attrs.ChoiceAttr('backend')
+    api_url = attrs.TextAttr('api_url', label=_('API URL'), style='font-monospace', copy_button=True)
+    namespace = attrs.TextAttr('namespace')
+    auth_method = attrs.ChoiceAttr('auth_method', label=_('Auth method'))
+    host_device = attrs.RelatedObjectAttr('host_device', linkify=True, label=_('OpenBao host'))
+    description = attrs.TextAttr('description')
+
+
+class OpenBaoClusterStatusPanel(panels.ObjectAttributesPanel):
+    title = _('Observed administration state')
+    status = attrs.ChoiceAttr('status')
+    status_message = attrs.TextAttr('status_message', label=_('Detail'))
+    last_checked = attrs.DateTimeAttr('last_checked', label=_('Last checked'))
+    openbao_version = attrs.TextAttr('openbao_version', label=_('OpenBao version'))
+    tls_verify = attrs.BooleanAttr('tls_verify', label=_('Verify TLS'))
+    ca_cert_path = attrs.TextAttr('ca_cert_path', label=_('CA bundle'), style='font-monospace')
+    env_prefix = attrs.TextAttr('env_prefix', label=_('Environment prefix'), style='font-monospace', copy_button=True)
+    capability_digest = attrs.TextAttr('capability_digest', label=_('Capability digest'), style='font-monospace')
+    capabilities_checked = attrs.DateTimeAttr('capabilities_checked', label=_('Capabilities checked'))
+
+
+class OpenBaoAdministrationLogPanel(panels.ObjectAttributesPanel):
+    cluster = attrs.RelatedObjectAttr('cluster', linkify=True)
+    cluster_name_snapshot = attrs.TextAttr('cluster_name_snapshot', label=_('Cluster snapshot'))
+    username_snapshot = attrs.TextAttr('username_snapshot', label=_('User'))
+    action = attrs.TextAttr('action')
+    operation_id = attrs.TextAttr('operation_id', label=_('Operation ID'), style='font-monospace')
+    risk_level = attrs.TextAttr('risk_level', label=_('Risk'))
+    method = attrs.TextAttr('method', style='font-monospace')
+    path_template = attrs.TextAttr('path_template', label=_('Path template'), style='font-monospace')
+    source_ip = attrs.TextAttr('source_ip', label=_('Source IP'))
+    reason = attrs.TextAttr('reason')
+    request_id = attrs.TextAttr('request_id', label=_('Request ID'), style='font-monospace')
+    capability_digest = attrs.TextAttr('capability_digest', label=_('Capability digest'), style='font-monospace')
+    success = attrs.BooleanAttr('success')
+    status_code = attrs.NumericAttr('status_code', label=_('Status code'))
+    message = attrs.TextAttr('message')
+    timestamp = attrs.DateTimeAttr('timestamp')
 
 
 class SecretEnginePanel(panels.ObjectAttributesPanel):
     name = attrs.TextAttr('name')
     slug = attrs.TextAttr('slug', style='font-monospace')
+    cluster = attrs.RelatedObjectAttr('cluster', linkify=True, label=_('OpenBao cluster'))
     backend = attrs.ChoiceAttr('backend')
     api_url = attrs.TextAttr('api_url', label=_('API URL'), style='font-monospace', copy_button=True)
     namespace = attrs.TextAttr('namespace')

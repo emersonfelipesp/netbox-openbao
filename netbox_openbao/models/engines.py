@@ -23,6 +23,18 @@ class SecretEngine(PrimaryModel):
         max_length=100,
         unique=True,
     )
+    cluster = models.ForeignKey(
+        to='netbox_openbao.OpenBaoCluster',
+        on_delete=models.PROTECT,
+        related_name='secret_engines',
+        null=True,
+        blank=True,
+        verbose_name=_('OpenBao cluster'),
+        help_text=_(
+            'Cluster connection used for administration. Existing engine connection fields remain '
+            'authoritative for credential traffic during the compatibility migration.'
+        ),
+    )
     slug = models.SlugField(
         verbose_name=_('slug'),
         max_length=100,
@@ -114,7 +126,7 @@ class SecretEngine(PrimaryModel):
     )
 
     clone_fields = (
-        'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method', 'tls_verify',
+        'cluster', 'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'auth_method', 'tls_verify',
         'ca_cert_path', 'host_device',
     )
 

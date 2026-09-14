@@ -6,6 +6,9 @@ from . import views
 app_name = 'netbox_openbao'
 
 urlpatterns = (
+    path('clusters/', include(get_model_urls('netbox_openbao', 'openbaocluster', detail=False))),
+    path('clusters/<int:pk>/', include(get_model_urls('netbox_openbao', 'openbaocluster'))),
+
     # Quick-add is keyed by the target object rather than by a credential, so
     # it is a plain path rather than a registered model view.
     path(
@@ -31,6 +34,15 @@ urlpatterns = (
 
     path('access-logs/', include(get_model_urls('netbox_openbao', 'credentialaccesslog', detail=False))),
     path('access-logs/<int:pk>/', include(get_model_urls('netbox_openbao', 'credentialaccesslog'))),
+
+    path(
+        'administration-logs/',
+        include(get_model_urls('netbox_openbao', 'openbaoadministrationlog', detail=False)),
+    ),
+    path(
+        'administration-logs/<int:pk>/',
+        include(get_model_urls('netbox_openbao', 'openbaoadministrationlog')),
+    ),
 
     path('procedure-runs/', include(get_model_urls('netbox_openbao', 'openbaoprocedurerun', detail=False))),
     path('procedure-runs/<int:pk>/', include(get_model_urls('netbox_openbao', 'openbaoprocedurerun'))),

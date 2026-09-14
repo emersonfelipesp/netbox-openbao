@@ -1,5 +1,19 @@
 from netbox.plugins import PluginMenu, PluginMenuButton, PluginMenuItem
 
+clusters = PluginMenuItem(
+    link='plugins:netbox_openbao:openbaocluster_list',
+    link_text='Clusters',
+    permissions=['netbox_openbao.view_openbaocluster'],
+    buttons=(
+        PluginMenuButton(
+            link='plugins:netbox_openbao:openbaocluster_add',
+            title='Add',
+            icon_class='mdi mdi-plus-thick',
+            permissions=['netbox_openbao.add_openbaocluster'],
+        ),
+    ),
+)
+
 credentials = PluginMenuItem(
     link='plugins:netbox_openbao:credential_list',
     link_text='Credentials',
@@ -76,6 +90,12 @@ access_logs = PluginMenuItem(
     permissions=['netbox_openbao.view_credentialaccesslog'],
 )
 
+administration_logs = PluginMenuItem(
+    link='plugins:netbox_openbao:openbaoadministrationlog_list',
+    link_text='Administration log',
+    permissions=['netbox_openbao.view_openbaoadministrationlog'],
+)
+
 procedure_runs = PluginMenuItem(
     link='plugins:netbox_openbao:openbaoprocedurerun_list',
     link_text='Procedure runs',
@@ -106,8 +126,9 @@ menu = PluginMenu(
     label='OpenBao',
     groups=(
         ('Credentials', (credentials, assignments)),
+        ('Administration', (clusters,)),
         ('Configuration', (policies, engines, type_schemas, settings_item)),
-        ('Audit', (access_logs, procedure_runs)),
+        ('Audit', (access_logs, administration_logs, procedure_runs)),
     ),
     icon_class='mdi mdi-shield-key',
 )

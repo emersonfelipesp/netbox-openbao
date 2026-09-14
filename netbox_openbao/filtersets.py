@@ -17,6 +17,8 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoAdministrationLog,
+    OpenBaoCluster,
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
@@ -29,9 +31,48 @@ __all__ = (
     'CredentialPolicyFilterSet',
     'CredentialTypeSchemaFilterSet',
     'OpenBaoProcedureRunFilterSet',
+    'OpenBaoAdministrationLogFilterSet',
+    'OpenBaoClusterFilterSet',
     'OpenBaoSettingsFilterSet',
     'SecretEngineFilterSet',
 )
+
+
+class OpenBaoClusterFilterSet(NetBoxModelFilterSet):
+    auth_method = django_filters.MultipleChoiceFilter(choices=AuthMethodChoices)
+    status = django_filters.MultipleChoiceFilter(choices=EngineStatusChoices)
+
+    class Meta:
+        model = OpenBaoCluster
+        fields = (
+            'id', 'name', 'slug', 'backend', 'api_url', 'namespace', 'auth_method',
+            'tls_verify', 'host_device_id', 'status', 'openbao_version', 'description',
+        )
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(
+            Q(name__icontains=value)
+            | Q(slug__icontains=value)
+            | Q(api_url__icontains=value)
+            | Q(description__icontains=value)
+        )
+
+
+class OpenBaoAdministrationLogFilterSet(BaseFilterSet):
+    cluster_id = MultiValueNumberFilter(field_name='cluster_id')
+    user_id = MultiValueNumberFilter(field_name='user_id')
+    action = MultiValueCharFilter()
+    operation_id = MultiValueCharFilter()
+    risk_level = MultiValueCharFilter()
+
+    class Meta:
+        model = OpenBaoAdministrationLog
+        fields = (
+            'id', 'cluster_id', 'user_id', 'action', 'operation_id', 'risk_level',
+            'method', 'success', 'status_code', 'request_id', 'capability_digest',
+        )
 
 
 class OpenBaoSettingsFilterSet(NetBoxModelFilterSet):
@@ -47,8 +88,10 @@ class SecretEngineFilterSet(NetBoxModelFilterSet):
 
     class Meta:
         model = SecretEngine
-        fields = ('id', 'name', 'slug', 'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version', 'tls_verify',
-                  'is_default', 'host_device_id', 'description')
+        fields = (
+            'id', 'name', 'slug', 'cluster_id', 'backend', 'api_url', 'namespace',
+            'kv_mount', 'kv_version', 'tls_verify', 'is_default', 'host_device_id', 'description',
+        )
 
     def search(self, queryset, name, value):
         if not value.strip():

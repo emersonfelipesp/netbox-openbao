@@ -8,6 +8,8 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoAdministrationLog,
+    OpenBaoCluster,
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
@@ -20,8 +22,50 @@ __all__ = (
     'CredentialTable',
     'CredentialTypeSchemaTable',
     'OpenBaoProcedureRunTable',
+    'OpenBaoAdministrationLogTable',
+    'OpenBaoClusterTable',
     'SecretEngineTable',
 )
+
+
+class OpenBaoClusterTable(NetBoxTable):
+    name = tables.Column(linkify=True)
+    host_device = tables.Column(linkify=True, verbose_name=_('OpenBao host'))
+    status = columns.ChoiceFieldColumn()
+    tls_verify = columns.BooleanColumn(verbose_name=_('Verify TLS'))
+    mount_count = columns.LinkedCountColumn(
+        viewname='plugins:netbox_openbao:secretengine_list',
+        url_params={'cluster_id': 'pk'},
+        verbose_name=_('Mounts'),
+    )
+    tags = columns.TagColumn(url_name='plugins:netbox_openbao:openbaocluster_list')
+
+    class Meta(NetBoxTable.Meta):
+        model = OpenBaoCluster
+        fields = (
+            'pk', 'id', 'name', 'slug', 'backend', 'api_url', 'namespace', 'host_device',
+            'auth_method', 'tls_verify', 'status', 'status_message', 'last_checked',
+            'openbao_version', 'capability_digest', 'capabilities_checked', 'mount_count',
+            'description', 'comments', 'tags', 'created', 'last_updated',
+        )
+        default_columns = ('name', 'api_url', 'namespace', 'auth_method', 'status', 'mount_count')
+
+
+class OpenBaoAdministrationLogTable(NetBoxTable):
+    cluster = tables.Column(linkify=True)
+    actions = columns.ActionsColumn(actions=())
+
+    class Meta(NetBoxTable.Meta):
+        model = OpenBaoAdministrationLog
+        fields = (
+            'id', 'cluster', 'cluster_name_snapshot', 'user', 'username_snapshot', 'action',
+            'operation_id', 'risk_level', 'method', 'path_template', 'source_ip', 'reason',
+            'request_id', 'capability_digest', 'success', 'status_code', 'message', 'timestamp',
+        )
+        default_columns = (
+            'timestamp', 'cluster_name_snapshot', 'username_snapshot', 'action',
+            'risk_level', 'success', 'status_code',
+        )
 
 
 class SecretEngineTable(NetBoxTable):
@@ -40,7 +84,8 @@ class SecretEngineTable(NetBoxTable):
     class Meta(NetBoxTable.Meta):
         model = SecretEngine
         fields = (
-            'pk', 'id', 'name', 'slug', 'backend', 'api_url', 'namespace', 'host_device', 'kv_mount', 'kv_version',
+            'pk', 'id', 'name', 'slug', 'cluster', 'backend', 'api_url', 'namespace',
+            'host_device', 'kv_mount', 'kv_version',
             'auth_method', 'tls_verify', 'is_default', 'status', 'status_message', 'last_checked', 'credential_count',
             'description', 'comments', 'tags', 'created', 'last_updated',
         )

@@ -8,6 +8,9 @@ internal automation resolution receipts have no CRUD endpoint.
 
 | Endpoint | Purpose |
 |---|---|
+| `GET/POST /clusters/`, `GET/PATCH/DELETE /clusters/{id}/` | Administrative cluster inventory; never authentication material |
+| `GET /clusters/{id}/health/` | Probe cluster health, persist safe observed status, and write an administration audit record |
+| `GET /clusters/{id}/capabilities/` | Normalize bounded OpenAPI metadata; requires `discover_openbaocluster` and never makes an operation executable |
 | `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/` | Singleton runtime configuration; deletion is refused while any credential exists and requires the standard `OpenBaoSettings` model permissions |
 | `GET/POST /engines/` | Secret engines |
 | `GET /engines/{id}/health/` | Probe and record engine status |
@@ -21,6 +24,51 @@ internal automation resolution receipts have no CRUD endpoint.
 | `GET /credentials/{id}/versions/` | Version metadata, never values |
 | `GET/POST /assignments/` | Credential ↔ object bindings |
 | `GET /access-logs/` | Audit trail (read-only) |
+| `GET /administration-logs/` | Administrative audit trail (read-only) |
+
+## Cluster administration foundation
+
+Cluster inventory separates an OpenBao API endpoint and namespace from an
+individual `SecretEngine` mount. The list and detail representations include
+only connection configuration and observed metadata. Authentication material
+comes from the cluster-derived environment prefix and is never serialized.
+
+`GET /clusters/{id}/capabilities/` requires both normal API authentication and
+the object-constrainable `netbox_openbao.discover_openbaocluster` action. Its
+response shape is:
+
+```json
+{
+  "openapi_version": "3.0.2",
+  "product_version": "2.6.2",
+  "digest": "<sha256>",
+  "classified_count": 1,
+  "unclassified_count": 0,
+  "operations": [
+    {
+      "operation_id": "sysHealth",
+      "operation_key": "GET /sys/health",
+      "method": "GET",
+      "path_template": "/sys/health",
+      "summary": "Read health",
+      "tags": ["system"],
+      "family": "cluster",
+      "risk_level": "read",
+      "response_class": "public-metadata",
+      "required_permission": "netbox_openbao.discover_openbaocluster",
+      "classified": true,
+      "executable": false
+    }
+  ]
+}
+```
+
+The endpoint is metadata discovery, not a generic proxy. It accepts no caller
+path, method, headers, or body. Every operation is returned with
+`executable=false`; unknown operations have no required permission and remain
+unclassified. The response is `no-store`, and every success or failure is
+written synchronously to `OpenBaoAdministrationLog`. See the
+[administration-plane contract](architecture/administration-plane.md).
 
 ## Writing material
 

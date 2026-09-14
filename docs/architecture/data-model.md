@@ -1,9 +1,12 @@
 # Data model
 
-Eight models: configuration and inventory plus two operational audit records.
+Eleven models: configuration and inventory plus three operational evidence
+records, including the internal automation receipt.
 
 ```mermaid
 erDiagram
+    OpenBaoCluster ||--o{ SecretEngine : "administers mounts on"
+    OpenBaoCluster ||--o{ OpenBaoAdministrationLog : "is accessed through"
     SecretEngine ||--o{ CredentialPolicy : "backs"
     SecretEngine ||--o{ Credential : "stores material for"
     CredentialPolicy ||--o{ Credential : "governs"
@@ -19,6 +22,14 @@ erDiagram
         string reveal_rate_limit
         int reveal_ttl
         int token_cache_ttl
+    }
+
+    OpenBaoCluster {
+        string slug UK "derives the env prefix"
+        string api_url
+        string backend "openbao | vault | broker"
+        string namespace
+        string capability_digest "observed metadata"
     }
 
     SecretEngine {
@@ -95,6 +106,24 @@ default" is a database fact rather than a convention. There is deliberately no
 `default_engine` setting in `OpenBaoSettings`: a duplicate would be a second
 place for the same decision to live, and therefore a place for the two to
 disagree.
+
+An engine may reference an `OpenBaoCluster`. Migration `0011` creates that
+relation for every existing engine while retaining the engine connection fields
+for credential-traffic compatibility. Administration uses the cluster; later
+engine-lifecycle work will complete the connection consolidation.
+
+## `OpenBaoCluster` — one administrative endpoint
+
+Separates cluster-scoped operations from a mounted secrets engine. It stores the
+API URL, namespace, transport, TLS policy, optional host device, and safe
+observations such as health, version, and the normalized capability digest. It
+does not store an AppRole, token, JWT, client key, request body, or response
+body. Its custom permissions separate discovery, ordinary operation, sensitive
+operation, and destructive operation.
+
+`OpenBaoAdministrationLog` is append-only evidence for calls made through this
+boundary. Cluster, user, and name snapshots preserve correlation after related
+objects are removed; the API and Web UI expose no edit or delete action.
 
 ## `CredentialPolicy` — an authorization tier
 

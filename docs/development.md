@@ -79,7 +79,9 @@ export NETBOX_OPENBAO_TEST_TOKEN=devroot
 ```
 
 They are skipped when `NETBOX_OPENBAO_TEST_ADDR` is unset, so the suite still
-runs anywhere.
+runs anywhere. The same variables enable the administration
+capability-discovery integration test, which performs a read-only request and
+persists no OpenBao response body.
 
 ## Migrations
 
@@ -133,7 +135,8 @@ netbox_openbao/
 ├── __init__.py          PluginConfig
 ├── choices.py           ChoiceSets
 ├── config.py            cached settings-row and PLUGINS_CONFIG fallback
-├── models/              settings, engines, policies, credentials, assignments, audit
+├── models/              settings, clusters, engines, policies, credentials, assignments, audit
+├── administration/      capability discovery, transport boundary, audit, parity manifest
 ├── backends/            SecretBackend ABC, OpenBao/Vault/broker implementations, exceptions
 ├── secrets/             type registry, cryptography extractors, generators
 ├── services.py          the only code that touches material

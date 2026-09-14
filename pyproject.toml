@@ -72,7 +72,7 @@ version = {attr = "netbox_openbao.__version__"}
 include = ["netbox_openbao*"]
 
 [tool.setuptools.package-data]
-netbox_openbao = ["templates/**", "static/**"]
+netbox_openbao = ["templates/**", "static/**", "administration/*.json"]
 
 [tool.ruff]
 line-length = 120

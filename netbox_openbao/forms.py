@@ -34,6 +34,7 @@ from .backends.exceptions import OpenBaoError
 from .choices import (
     AccessActionChoices,
     AuthMethodChoices,
+    BackendChoices,
     CredentialStatusChoices,
     CredentialTypeChoices,
     EngineStatusChoices,
@@ -47,6 +48,7 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoCluster,
     OpenBaoSettings,
     SecretEngine,
 )
@@ -71,7 +73,43 @@ __all__ = (
     'SecretEngineForm',
     'RunProcedureForm',
     'OpenBaoProcedureRunFilterForm',
+    'OpenBaoClusterFilterForm',
+    'OpenBaoClusterForm',
 )
+
+
+class OpenBaoClusterForm(PrimaryModelForm):
+    slug = SlugField()
+    comments = CommentField()
+    host_device = DynamicModelChoiceField(
+        queryset=Device.objects.all(), required=False, label=_('OpenBao host'),
+    )
+
+    fieldsets = (
+        FieldSet('name', 'slug', 'backend', 'api_url', 'namespace', 'host_device', 'description', name=_('Cluster')),
+        FieldSet('auth_method', 'tls_verify', 'ca_cert_path', name=_('Authentication')),
+        FieldSet('tags', name=_('Tags')),
+    )
+
+    class Meta:
+        model = OpenBaoCluster
+        fields = (
+            'name', 'slug', 'backend', 'api_url', 'namespace', 'host_device',
+            'auth_method', 'tls_verify', 'ca_cert_path', 'description', 'comments', 'tags',
+        )
+        help_texts = {
+            'tls_verify': _(
+                'Leave enabled. Disabling verification exposes administrative requests and responses to interception.'
+            ),
+        }
+
+
+class OpenBaoClusterFilterForm(NetBoxModelFilterSetForm):
+    model = OpenBaoCluster
+    backend = forms.MultipleChoiceField(choices=BackendChoices, required=False)
+    auth_method = forms.MultipleChoiceField(choices=AuthMethodChoices, required=False)
+    status = forms.MultipleChoiceField(choices=EngineStatusChoices, required=False)
+    tls_verify = forms.NullBooleanField(required=False)
 
 # Every payload key any built-in credential type accepts. The form offers all
 # of them and the type's schema decides which are required or permitted, so
@@ -96,10 +134,18 @@ class SecretEngineForm(PrimaryModelForm):
         label=_('OpenBao host'),
         help_text=_('Device where OpenBao runs. Required for netbox-rpc host operations.'),
     )
+    cluster = DynamicModelChoiceField(
+        queryset=OpenBaoCluster.objects.all(),
+        required=False,
+        label=_('OpenBao cluster'),
+        help_text=_('Administrative cluster connection associated with this KV mount.'),
+    )
 
     fieldsets = (
-        FieldSet('name', 'slug', 'backend', 'api_url', 'namespace', 'host_device', 'is_default', 'description',
-                 name=_('Engine')),
+        FieldSet(
+            'name', 'slug', 'cluster', 'backend', 'api_url', 'namespace',
+            'host_device', 'is_default', 'description', name=_('Engine'),
+        ),
         FieldSet('kv_mount', 'kv_version', name=_('Key/value mount')),
         FieldSet('auth_method', 'tls_verify', 'ca_cert_path', name=_('Authentication')),
         FieldSet('tags', name=_('Tags')),
@@ -108,7 +154,8 @@ class SecretEngineForm(PrimaryModelForm):
     class Meta:
         model = SecretEngine
         fields = (
-            'name', 'slug', 'backend', 'api_url', 'namespace', 'host_device', 'kv_mount', 'kv_version', 'auth_method',
+            'name', 'slug', 'cluster', 'backend', 'api_url', 'namespace', 'host_device',
+            'kv_mount', 'kv_version', 'auth_method',
             'tls_verify', 'ca_cert_path', 'is_default', 'description', 'comments', 'tags',
         )
         help_texts = {

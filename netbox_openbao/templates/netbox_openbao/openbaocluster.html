@@ -1,0 +1,10 @@
+{% extends 'generic/object.html' %}
+
+{% block controls %}
+  {{ block.super }}
+  {% if perms.netbox_openbao.discover_openbaocluster %}
+    <a class="btn btn-primary" href="{% url 'plugins:netbox_openbao:openbaocluster_capabilities' pk=object.pk %}">
+      <i class="mdi mdi-api"></i> Capabilities
+    </a>
+  {% endif %}
+{% endblock controls %}

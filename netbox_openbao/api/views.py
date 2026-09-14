@@ -24,7 +24,7 @@ API's response shape is harder to audit than a single named REST action.
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError, router, transaction
+from django.db import DatabaseError, IntegrityError, router, transaction
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -32,13 +32,19 @@ from drf_spectacular.utils import extend_schema
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from utilities.exceptions import AbortRequest
 
 from netbox_openbao import filtersets
+from netbox_openbao.administration import (
+    get_administration_backend,
+    record_capability_observation,
+    record_health_observation,
+)
+from netbox_openbao.administration.audit import AdministrationAuditError, log_administration
 from netbox_openbao.api.transactions import material_api_operation
 from netbox_openbao.backends import get_backend
 from netbox_openbao.backends.exceptions import OpenBaoError
@@ -50,6 +56,8 @@ from netbox_openbao.models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoAdministrationLog,
+    OpenBaoCluster,
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
@@ -75,6 +83,8 @@ from .serializers import (
     CredentialPolicySerializer,
     CredentialSerializer,
     CredentialTypeSchemaSerializer,
+    OpenBaoAdministrationLogSerializer,
+    OpenBaoClusterSerializer,
     OpenBaoProcedureRunSerializer,
     OpenBaoSettingsSerializer,
     PromoteRequestSerializer,
@@ -91,9 +101,17 @@ __all__ = (
     'CredentialTypeSchemaViewSet',
     'CredentialViewSet',
     'OpenBaoProcedureRunViewSet',
+    'OpenBaoAdministrationLogViewSet',
+    'OpenBaoClusterViewSet',
     'OpenBaoSettingsViewSet',
     'SecretEngineViewSet',
 )
+
+
+class OpenBaoAdministrationUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = 'OpenBao administration is unavailable.'
+    default_code = 'openbao_administration_unavailable'
 
 
 def _as_drf_validation_error(exc):
@@ -161,6 +179,61 @@ class SecretEngineViewSet(NetBoxModelViewSet):
             OpenBaoProcedureRunSerializer(run, context={'request': request}).data,
             status=status.HTTP_202_ACCEPTED,
         )
+
+
+class OpenBaoClusterViewSet(NetBoxModelViewSet):
+    """Cluster inventory plus safe read-only administrative discovery."""
+
+    queryset = OpenBaoCluster.objects.annotate(mount_count=Count('secret_engines'))
+    serializer_class = OpenBaoClusterSerializer
+    filterset_class = filtersets.OpenBaoClusterFilterSet
+
+    def _safe_failure(self, request, cluster, action):
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action=action,
+                risk_level='read',
+                success=False,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                message='OpenBao administration is unavailable.',
+                request=request,
+            )
+        except AdministrationAuditError:
+            pass
+        raise OpenBaoAdministrationUnavailable()
+
+    @action(detail=True, methods=['get'])
+    def health(self, request, pk=None):
+        cluster = get_object_or_404(self.queryset.restrict(request.user, 'view'), pk=pk)
+        try:
+            result = get_administration_backend(cluster).health()
+            checked = record_health_observation(cluster, request.user, result, request)
+        except (AdministrationAuditError, DatabaseError, OpenBaoError):
+            self._safe_failure(request, cluster, 'health')
+        return _no_store(Response({
+            'cluster': cluster.slug,
+            'status': result['status'],
+            'message': result['message'],
+            'checked': checked,
+        }))
+
+    @action(detail=True, methods=['get'])
+    def capabilities(self, request, pk=None):
+        cluster = get_object_or_404(self.queryset.restrict(request.user, 'discover'), pk=pk)
+        try:
+            document = get_administration_backend(cluster).discover_capabilities()
+            record_capability_observation(cluster, request.user, document, request)
+        except (AdministrationAuditError, DatabaseError, OpenBaoError):
+            self._safe_failure(request, cluster, 'discover-capabilities')
+        return _no_store(Response(document.as_dict()))
+
+
+class OpenBaoAdministrationLogViewSet(NetBoxReadOnlyModelViewSet):
+    queryset = OpenBaoAdministrationLog.objects.select_related('cluster', 'user')
+    serializer_class = OpenBaoAdministrationLogSerializer
+    filterset_class = filtersets.OpenBaoAdministrationLogFilterSet
 
 
 class OpenBaoProcedureRunViewSet(NetBoxReadOnlyModelViewSet):

@@ -23,6 +23,7 @@ from rest_framework import serializers
 from netbox_openbao.choices import (
     AccessActionChoices,
     AuthMethodChoices,
+    BackendChoices,
     CredentialStatusChoices,
     EngineStatusChoices,
     PurposeChoices,
@@ -33,6 +34,8 @@ from netbox_openbao.models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    OpenBaoAdministrationLog,
+    OpenBaoCluster,
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
@@ -52,9 +55,58 @@ __all__ = (
     'RevealRequestSerializer',
     'RunProcedureSerializer',
     'OpenBaoProcedureRunSerializer',
+    'OpenBaoAdministrationLogSerializer',
+    'OpenBaoClusterSerializer',
     'OpenBaoSettingsSerializer',
     'SecretEngineSerializer',
 )
+
+
+class OpenBaoClusterSerializer(PrimaryModelSerializer):
+    url = serializers.HyperlinkedIdentityField(
+        view_name='plugins-api:netbox_openbao-api:openbaocluster-detail'
+    )
+    backend = ChoiceField(choices=BackendChoices, required=False)
+    auth_method = ChoiceField(choices=AuthMethodChoices, required=False)
+    status = ChoiceField(choices=EngineStatusChoices, read_only=True)
+    mount_count = serializers.IntegerField(read_only=True)
+    host_device = serializers.PrimaryKeyRelatedField(
+        queryset=Device.objects.all(), allow_null=True, required=False,
+    )
+
+    class Meta:
+        model = OpenBaoCluster
+        fields = (
+            'id', 'url', 'display_url', 'display', 'name', 'slug', 'backend', 'api_url',
+            'namespace', 'auth_method', 'tls_verify', 'ca_cert_path', 'host_device',
+            'status', 'status_message', 'last_checked', 'openbao_version',
+            'capability_digest', 'capabilities_checked', 'env_prefix', 'mount_count',
+            'description', 'owner', 'comments', 'tags', 'custom_fields', 'created', 'last_updated',
+        )
+        brief_fields = ('id', 'url', 'display', 'name', 'slug', 'status', 'description')
+        read_only_fields = (
+            'status', 'status_message', 'last_checked', 'openbao_version',
+            'capability_digest', 'capabilities_checked',
+        )
+
+
+class OpenBaoAdministrationLogSerializer(BaseModelSerializer):
+    url = serializers.HyperlinkedIdentityField(
+        view_name='plugins-api:netbox_openbao-api:openbaoadministrationlog-detail'
+    )
+    cluster = OpenBaoClusterSerializer(nested=True, read_only=True)
+    display = serializers.CharField(read_only=True, source='__str__')
+
+    class Meta:
+        model = OpenBaoAdministrationLog
+        fields = (
+            'id', 'url', 'display', 'cluster', 'cluster_name_snapshot', 'cluster_slug_snapshot',
+            'user', 'username_snapshot', 'action', 'operation_id', 'risk_level', 'method',
+            'path_template', 'source_ip', 'reason', 'request_id', 'capability_digest',
+            'success', 'status_code', 'message', 'timestamp',
+        )
+        brief_fields = ('id', 'url', 'display', 'action', 'risk_level', 'success', 'timestamp')
+        read_only_fields = fields
 
 
 class SecretEngineSerializer(PrimaryModelSerializer):
@@ -67,11 +119,13 @@ class SecretEngineSerializer(PrimaryModelSerializer):
         allow_null=True,
         required=False,
     )
+    cluster = OpenBaoClusterSerializer(nested=True, required=False, allow_null=True)
 
     class Meta:
         model = SecretEngine
         fields = (
-            'id', 'url', 'display_url', 'display', 'name', 'slug', 'backend', 'api_url', 'namespace', 'host_device',
+            'id', 'url', 'display_url', 'display', 'name', 'slug', 'cluster', 'backend',
+            'api_url', 'namespace', 'host_device',
             'kv_mount', 'kv_version', 'auth_method', 'tls_verify', 'ca_cert_path', 'is_default', 'status',
             'status_message', 'last_checked', 'env_prefix', 'credential_count', 'description', 'owner',
             'comments', 'tags', 'custom_fields', 'created', 'last_updated',

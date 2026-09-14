@@ -211,11 +211,13 @@ Optional throughout. The default deployment is unchanged, and nothing above the
 
 | Model | Role |
 |---|---|
-| `SecretEngine` | One OpenBao instance and KV mount. Holds no auth material. |
+| `OpenBaoCluster` | One administrative API endpoint and namespace. Holds no auth material. |
+| `SecretEngine` | One credential-storage mount, associated with a cluster. Holds no auth material. |
 | `CredentialPolicy` | An authorization tier mapped onto a real OpenBao policy, with its own AppRole. |
 | `Credential` | The inventory record: identity, public material, lifecycle. Never the secret. |
 | `CredentialAssignment` | Many-to-many binding to Devices, VMs, and Services, with a purpose. |
 | `CredentialAccessLog` | Append-only correlation between a NetBox user and an OpenBao read. |
+| `OpenBaoAdministrationLog` | Append-only metadata correlation for administrative probes and operations. |
 
 The OpenBao path is UUID-derived and immutable
 (`<prefix>/credentials/<uuid>`). A path derived from the object graph would
@@ -227,11 +229,15 @@ filter on them.
 
 ## Roadmap
 
-Implemented: the five models, the backend abstraction with the OpenBao
+Implemented: the credential models, the backend abstraction with the OpenBao
 implementation, credential type schemas and extractors, the full REST API with
 the security invariants above, list/detail/edit UI, Device/VM/Service panels,
 the background jobs, and staged rotation (write, verify, promote — never break
-running access).
+running access). The [OpenBao administration plane](docs/architecture/administration-plane.md)
+now has cluster inventory, bounded runtime capability discovery, dedicated
+permissions, metadata-only audit, and a pinned OpenBao 2.6.2 parity manifest.
+Discovered operations remain non-executable until their capability family is
+implemented and reviewed.
 
 Also shipped since: the
 [Ansible lookup plugin](https://github.com/emersonfelipesp/netbox-openbao-ansible)
@@ -243,6 +249,9 @@ Deliberately not yet here:
 
 - Dynamic secrets (database and cloud credential engines), which are a
   different lifecycle rather than a bigger version of this one
+- Complete NetBox-native replacement of the built-in OpenBao Web UI. The
+  security and discovery foundation is present; the parity manifest identifies
+  each remaining capability family without treating discovery as execution.
 
 **Host operations via netbox-rpc** are implemented on `SecretEngine`: bind an
 OpenBao host `dcim.Device`, then dispatch the seeded `service.openbao.1.*`

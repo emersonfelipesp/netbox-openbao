@@ -87,3 +87,7 @@ jobs:
       - name: Assert the NetBox compatibility contract
         shell: bash
         run: .venv/bin/python scripts/check_compatibility_contract.py
+
+      - name: Assert the OpenBao UI parity manifest
+        shell: bash
+        run: .venv/bin/python scripts/check_openbao_ui_parity.py

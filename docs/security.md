@@ -216,6 +216,20 @@ OpenBao's own audit device remains authoritative for what happened at the
 vault. It only ever sees an AppRole, though, so it cannot say *which NetBox
 user* asked. This table is the other half; `request_id` correlates the two.
 
+Administrative calls use a separate `OpenBaoAdministrationLog` with the same
+append-only and object-constraint properties. It stores the cluster and actor
+snapshots, action, reviewed method and path template, risk, status, request ID,
+and capability digest. It has no request-body, response-body, diagnostic, or
+authentication-material field. A successful administrative response is refused
+if the audit insert cannot commit. Capability and health responses are also
+marked `no-store`.
+
+Runtime OpenAPI discovery is not authorization. Documents are size-, depth-,
+path-, method-, string-, and operation-bounded before normalization; every
+operation remains `executable=false`. An unclassified operation has no
+permission and cannot be invoked. See
+[OpenBao administration plane](architecture/administration-plane.md).
+
 ## 10. Write atomicity and orphaned secrets
 
 OpenBao writes are not transactional with PostgreSQL, and **Django has no

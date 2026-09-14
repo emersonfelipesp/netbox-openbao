@@ -30,6 +30,17 @@ must add one. See [Verified 4.7 facts](#verified-47-facts).
 
 **Python 3.12+, PostgreSQL 15+ with `ltree`, Redis 6+.**
 
+**OpenBao administration is cluster-scoped and fail-closed.**
+`OpenBaoCluster` owns the administrative endpoint; `SecretEngine` owns a
+credential-storage mount during the compatibility migration. Runtime OpenAPI
+discovery is bounded by `administration/schema.py` and every discovered
+operation remains non-executable until a reviewed registry entry supplies its
+permission, response class, risk controls, and tests. Unknown operations never
+become a generic proxy. Administrative responses are `no-store`, and an audit
+write failure blocks success. Keep the OpenBao 2.6.2 parity manifest and
+`docs/architecture/administration-plane.md` synchronized with each capability
+change.
+
 ## The rule that matters most
 
 > **Secret material must never become a model field, a form field bound to an

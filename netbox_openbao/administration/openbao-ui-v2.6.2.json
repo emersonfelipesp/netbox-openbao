@@ -1,0 +1,25 @@
+{
+  "baseline": "2.6.2",
+  "source": "OpenBao stable UI router and runtime OpenAPI/help documents",
+  "families": [
+    {"id": "cluster-session", "upstream_routes": ["auth", "redirect", "logout"], "capability": "Cluster authentication/session state", "owner_issue": 65, "status": "planned"},
+    {"id": "cluster-bootstrap", "upstream_routes": ["init", "unseal", "settings.seal"], "capability": "Initialization, unseal and seal", "owner_issue": 64, "status": "planned"},
+    {"id": "api-explorer", "upstream_routes": ["api-explorer"], "capability": "Schema-driven API discovery and invocation", "owner_issue": 66, "status": "foundation"},
+    {"id": "raft-storage", "upstream_routes": ["storage", "storage-restore"], "capability": "Raft peers, snapshots and restore", "owner_issue": 64, "status": "planned"},
+    {"id": "auth-methods", "upstream_routes": ["settings.auth", "access.methods", "access.method"], "capability": "Authentication method lifecycle and resources", "owner_issue": 65, "status": "planned"},
+    {"id": "mfa", "upstream_routes": ["mfa-setup", "access.mfa"], "capability": "MFA methods and enforcements", "owner_issue": 65, "status": "planned"},
+    {"id": "engine-lifecycle", "upstream_routes": ["settings.mount-secret-backend", "settings.configure-secret-backend", "secrets.backends"], "capability": "Secrets engine lifecycle", "owner_issue": 66, "status": "planned"},
+    {"id": "generic-secrets", "upstream_routes": ["secrets.backend.list", "secrets.backend.show", "secrets.backend.create", "secrets.backend.edit", "secrets.backend.configuration"], "capability": "Generic mounted-engine operations", "owner_issue": 66, "status": "planned"},
+    {"id": "kv", "upstream_routes": ["secrets.backend.metadata", "secrets.backend.diff", "secrets.backend.versions"], "capability": "KV v1/v2 data, metadata and versions", "owner_issue": 67, "status": "planned"},
+    {"id": "common-engines", "upstream_routes": ["secrets.backend.credentials", "secrets.backend.sign", "secrets.backend.actions", "secrets.backend.overview"], "capability": "Transit, database, SSH and TOTP journeys", "owner_issue": 67, "status": "planned"},
+    {"id": "pki", "upstream_routes": ["secrets.backend.pki"], "capability": "PKI issuers, keys, roles, certificates and tidy", "owner_issue": 68, "status": "planned"},
+    {"id": "kubernetes", "upstream_routes": ["secrets.backend.kubernetes"], "capability": "Kubernetes configuration, roles and credentials", "owner_issue": 68, "status": "planned"},
+    {"id": "policies", "upstream_routes": ["policies", "policy"], "capability": "Policy lifecycle", "owner_issue": 69, "status": "planned"},
+    {"id": "identity", "upstream_routes": ["access.identity", "access.identity.aliases"], "capability": "Entities, groups, aliases and merge", "owner_issue": 69, "status": "planned"},
+    {"id": "oidc", "upstream_routes": ["access.oidc.clients", "access.oidc.keys", "access.oidc.assignments", "access.oidc.providers", "access.oidc.scopes"], "capability": "OIDC resources and authorization", "owner_issue": 69, "status": "planned"},
+    {"id": "namespaces", "upstream_routes": ["access.namespaces"], "capability": "Namespace lifecycle", "owner_issue": 69, "status": "planned"},
+    {"id": "leases", "upstream_routes": ["access.leases"], "capability": "Lease lookup, renewal and revocation", "owner_issue": 70, "status": "planned"},
+    {"id": "tools", "upstream_routes": ["tools.tool"], "capability": "Wrapping, hashing, random data and token tools", "owner_issue": 70, "status": "planned"},
+    {"id": "ui-configuration", "upstream_routes": ["settings.index"], "capability": "UI response headers and diagnostics", "owner_issue": 70, "status": "planned"}
+  ]
+}

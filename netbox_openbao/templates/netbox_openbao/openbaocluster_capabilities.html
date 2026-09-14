@@ -1,0 +1,47 @@
+{% extends 'generic/object.html' %}
+
+{% block title %}{{ object }} — OpenBao capabilities{% endblock %}
+
+{% block content %}
+  <div class="card">
+    <h2 class="card-header">Advertised OpenBao operations</h2>
+    <div class="card-body">
+      <p>
+        Discovery is read-only. An advertised operation is not executable until a reviewed
+        capability registry entry grants it a permission, material class, and risk treatment.
+      </p>
+      {% if error %}
+        <div class="alert alert-danger" role="alert">{{ error }}</div>
+      {% elif document %}
+        <dl class="row">
+          <dt class="col-sm-3">OpenAPI</dt><dd class="col-sm-9">{{ document.openapi_version }}</dd>
+          <dt class="col-sm-3">Product version</dt><dd class="col-sm-9">{{ document.product_version|default:"Not advertised" }}</dd>
+          <dt class="col-sm-3">Digest</dt><dd class="col-sm-9"><code>{{ document.digest }}</code></dd>
+          <dt class="col-sm-3">Classified</dt><dd class="col-sm-9">{{ document.classified_count }}</dd>
+          <dt class="col-sm-3">Unclassified</dt><dd class="col-sm-9">{{ document.unclassified_count }}</dd>
+        </dl>
+        <div class="table-responsive">
+          <table class="table table-hover">
+            <thead>
+                <tr><th>Family</th><th>Key</th><th>Operation ID</th><th>Summary</th><th>Risk</th><th>Executable</th></tr>
+            </thead>
+            <tbody>
+              {% for operation in document.operations %}
+                <tr>
+                  <td>{{ operation.family }}</td>
+                  <td><code>{{ operation.operation_key }}</code></td>
+                  <td>{{ operation.operation_id }}</td>
+                  <td>{{ operation.summary }}</td>
+                  <td>{{ operation.risk_level }}</td>
+                  <td>No</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="6">The cluster advertised no operations.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock content %}

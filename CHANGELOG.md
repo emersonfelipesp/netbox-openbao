@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An OpenBao administration foundation introduces first-class cluster
+  inventory, a compatibility migration from existing engine connections,
+  dedicated discovery/operation permissions, bounded runtime OpenAPI
+  normalization, direct and broker transport contracts, `no-store` Web UI and
+  REST capability views, and a metadata-only append-only administration log.
+  A strict OpenBao 2.6.2 UI parity manifest assigns every remaining
+  administration family without treating an advertised operation as
+  executable.
+
 - Execution-bound automation credential resolution with exact target and
   assignment checks, explicit same-version field bundles, signed RPC dispatch
   authority, and separate initiating-actor and executor audit correlation.

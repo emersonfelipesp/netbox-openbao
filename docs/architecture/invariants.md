@@ -13,6 +13,7 @@ Fix the test.
 |---|---|---|
 | No `Credential` column can hold material | The absence of a field. `test_credential_has_no_secret_bearing_field` walks `_meta.get_fields()` and fails on any name containing `password`, `private`, `secret`, `passphrase`, or `token` | `test_security.test_credential_has_no_secret_bearing_field` |
 | No `SecretEngine` column holds auth material | Same absence: no `role_id`, `secret_id`, or `token` field | `test_models.test_no_auth_material_fields_exist` |
+| No `OpenBaoCluster` column holds auth material | Same structural absence across the administrative connection model | `test_administration.OpenBaoClusterModelTest.test_cluster_has_no_auth_material_fields` |
 | `secret_data` is never serialized | `write_only=True` — **DRF itself** refuses, so it cannot appear in a `GET`, a `brief=true` response, the browsable API, an export, or an OpenAPI example | `test_security.test_secret_data_is_write_only`, `test_secret_data_absent_from_brief_fields`, `test_no_secret_field_in_read_representation` |
 | No endpoint echoes material | — | `test_api.test_no_endpoint_echoes_material`, `test_detail_never_returns_material`, `test_list_never_returns_material`, `test_brief_never_returns_material` |
 | A rejected form does not echo the key back | `render_value=False` on every sensitive widget | `test_views.test_material_is_not_echoed_back_on_a_validation_error` |
@@ -50,6 +51,19 @@ Fix the test.
 | A record survives deletion of its credential | name and UUID snapshots, `on_delete=SET_NULL` | `test_services.test_log_survives_credential_deletion` |
 | The log cannot be edited or erased through the API | `NetBoxReadOnlyModelViewSet` — retrieve and list only | `test_api.test_access_log_is_read_only`, `test_policy_gate.test_the_viewset_declares_no_write_handler`, `test_write_methods_are_not_allowed_even_with_the_permission` |
 | ObjectPermission constraints apply to the log's API | The same `NetBoxReadOnlyModelViewSet` — `BaseViewSet.initial()` is what calls `restrict()` | `test_policy_gate.test_constraint_is_applied_to_the_list_endpoint`, `test_constraint_is_applied_to_the_detail_endpoint` |
+| Administrative success requires durable audit evidence | `log_administration()` raises a fixed `AdministrationAuditError`; the API and UI fail closed | `test_administration.AdministrationAuditFailureTest.test_audit_write_failure_raises_a_fixed_error`, `AdministrationAPITest.test_discovery_is_bounded_non_executable_audited_and_not_storable` |
+| The administration log cannot be edited through the API | `NetBoxReadOnlyModelViewSet` and read-only serializer fields | `test_administration.AdministrationAPITest.test_administration_log_api_is_read_only` |
+
+## Capability discovery is not generic execution
+
+| Claim | Enforced by | Test |
+|---|---|---|
+| `view` alone cannot discover cluster operations | `restrict(user, 'discover')` in both API and Web UI views | `test_administration.AdministrationAPITest.test_view_permission_does_not_grant_capability_discovery`, `AdministrationUITest.test_view_permission_does_not_grant_ui_discovery` |
+| ObjectPermission constraints hide other clusters | The same restricted queryset returns `404` | `test_administration.ConstrainedAdministrationPermissionTest.test_discovery_constraint_hides_other_clusters` |
+| Advertised operations never become executable through discovery | Normalization hard-codes `executable=False`; unknown operations receive no permission | `test_administration_schema.CapabilitySchemaTest.test_normalization_is_stable_classified_and_never_executable`, `test_administration.AdministrationAPITest.test_discovery_is_bounded_non_executable_audited_and_not_storable` |
+| Hostile or malformed OpenAPI metadata fails closed | Bounded size, depth, path, method, ID, string and collection validation | `test_administration_schema.CapabilitySchemaTest`, `test_administration.AdministrationBackendTest.test_direct_discovery_scrubs_invalid_upstream_content` |
+| Capability responses cannot carry backend diagnostics or enter caches | Fixed exceptions plus `Cache-Control: no-store` on API and UI | `test_administration.AdministrationAPITest.test_upstream_failure_returns_only_a_fixed_error_and_is_audited`, `AdministrationUITest.test_ui_discovery_is_escaped_audited_and_not_storable` |
+| Broker mode never bypasses its isolation boundary | Discovery fails closed until the broker advertises the reviewed contract | `test_administration.AdministrationBackendTest.test_factory_selects_direct_and_broker_transports` |
 
 ## The two stores cannot silently disagree
 
