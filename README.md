@@ -237,7 +237,11 @@ running access). The [OpenBao administration plane](docs/architecture/administra
 now has cluster inventory, bounded runtime capability discovery, dedicated
 permissions, metadata-only audit, guarded bootstrap and seal operations, HA and
 Raft state, peer-removal safety, and bounded authenticated snapshot recovery.
-Its pinned OpenBao 2.6.2 parity manifest records Raft storage as complete.
+Its pinned OpenBao 2.6.2 parity manifest records Raft storage, secrets-engine
+lifecycle, and the classified API explorer as complete. Mounted operation
+execution covers runtime-advertised GET, LIST, POST, PUT, PATCH, and DELETE
+templates that satisfy the reviewed grammar, schema, authorization, and
+material-handling contract, including external plugin-style schemas.
 Cluster bootstrap remains at `foundation` until guarded Raft join is implemented
 under issue #70. Other discovered operations remain non-executable until their
 capability family is implemented and reviewed.
@@ -252,9 +256,10 @@ Deliberately not yet here:
 
 - Dynamic secrets (database and cloud credential engines), which are a
   different lifecycle rather than a bigger version of this one
-- Complete NetBox-native replacement of the built-in OpenBao Web UI. The
-  security and discovery foundation is present; the parity manifest identifies
-  each remaining capability family without treating discovery as execution.
+- Complete NetBox-native replacement of the built-in OpenBao Web UI. Cluster,
+  authentication, MFA, storage, secrets-engine lifecycle, and bounded generic
+  mounted operations are present; the parity manifest identifies the remaining
+  typed capability families without treating discovery as execution.
 
 **Host operations via netbox-rpc** are implemented on `SecretEngine`: bind an
 OpenBao host `dcim.Device`, then dispatch the seeded `service.openbao.1.*`

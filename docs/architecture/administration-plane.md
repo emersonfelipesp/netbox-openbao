@@ -72,9 +72,11 @@ redirects. The response is rejected unless all of these checks pass:
 
 The normalized representation stores or returns only the OpenAPI version,
 OpenBao version, SHA-256 digest, operation identifier, method, path template,
-short summary, tags, family, response class, risk level, and permission name.
-Request schemas, examples, defaults, request bodies, response bodies, and
-upstream diagnostic text are excluded.
+short summary, tags, family, response class, risk level, permission name, and
+bounded query and top-level JSON request-field names and primitive types.
+Examples, defaults,
+submitted request bodies, response schemas and bodies, and upstream diagnostic
+text are excluded.
 
 Every discovered operation has `executable = false`, including classified
 operations. Classification describes where review belongs; it does not grant
@@ -266,6 +268,42 @@ must pass before the body is read. Normal restore and seal-consistency-bypassing
 force restore have separate routes and permissions. Neither request is retried
 after a transport failure because its outcome may be unknown.
 
+## Secrets-engine lifecycle and classified explorer
+
+Secrets-engine lifecycle uses fixed `/sys/mounts` and `/sys/remount` contracts
+for listing, configuration reads, tuning reads and writes, enable, asynchronous
+remount status, and guarded disable. The view reloads live mount state before a
+mutation so a stale browser cannot enable an existing mount, tune or disable a
+missing mount, or remount from or onto changed state. Disabling also refuses a
+mount that still backs NetBox credential inventory.
+
+The mounted-operation explorer is an intersection, not an arbitrary OpenAPI
+proxy. Runtime discovery proves the current operation and supplies bounded path,
+query, and top-level request-body field names and primitive types. The reviewed
+registry admits only GET, LIST, POST, PUT, PATCH, and DELETE templates in the
+mounted-secrets family whose paths are rooted at `/{secret_mount_path}`, contain
+only safe literal or bounded parameter segments, and declare every placeholder
+as required and typed. The server chooses the origin, `/v1` prefix,
+method, service identity, namespace header, TLS policy, timeout, response size,
+redirect policy, permission, risk, and material response class. A caller sends
+an operation key, current capability digest, live mount, bounded parameter
+values, declared query and body fields with matching JSON types, and an audit
+reason. Runtime advertisement alone cannot bypass the mounted grammar or any
+authorization, stale-state, material, audit, or transport boundary.
+
+All explorer responses are conservatively classified as secret material.
+Reads, non-destructive writes, mounted-resource deletion or destruction, and
+whole-engine disable use separate object permissions. A destructive execution
+also requires an exact confirmation over its advertised HTTP method, compiled
+mount path, and cluster slug. The result has no persistence route and uses the
+JSON renderer with `no-store`; browser memory clears on demand, after five
+minutes, and on `pagehide`. A transport or response-parsing failure after a
+mutation is an unknown outcome and is never retried automatically.
+
+Broker mode inherits unsupported lifecycle and explorer methods and therefore
+fails closed. It must implement and advertise the equivalent reviewed contract
+before these actions become available through the broker.
+
 ## Permissions
 
 The cluster model supplies these custom actions in addition to NetBox's normal
@@ -296,6 +334,13 @@ view/add/change/delete permissions:
 | `revoke_tokens_openbaocluster` | Revoke submitted tokens or accessors after confirmation |
 | `manage_mfa_openbaocluster` | Manage MFA methods, TOTP setup, and enforcements |
 | `delete_mfa_openbaocluster` | Delete MFA state after confirmation |
+| `view_secret_engines_openbaocluster` | List mounts and read configuration and tuning metadata |
+| `manage_secret_engines_openbaocluster` | Enable, tune, and remount secret engines |
+| `disable_secret_engines_openbaocluster` | Disable an entire secret engine after confirmation |
+| `explore_secret_operations_openbaocluster` | Load classified mounted-operation metadata |
+| `execute_secret_operations_openbaocluster` | Execute reviewed non-destructive mounted writes |
+| `delete_secret_operations_openbaocluster` | Delete or destroy mounted resources after confirmation |
+| `reveal_secret_operations_openbaocluster` | Execute reads whose response may contain material |
 
 `view_openbaocluster` alone does not grant discovery. Both UI and API queries
 use `RestrictedQuerySet.restrict()`, so NetBox object-permission constraints

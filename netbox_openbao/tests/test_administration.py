@@ -14,7 +14,7 @@ from netbox_openbao.administration.backends import (
     get_administration_backend,
 )
 from netbox_openbao.administration.schema import CapabilityDocument, DiscoveredOperation
-from netbox_openbao.backends.exceptions import BackendConfigurationError, OpenBaoUnavailable
+from netbox_openbao.backends.exceptions import BackendConfigurationError, OpenBaoMutationUnknown, OpenBaoUnavailable
 from netbox_openbao.choices import BackendChoices
 from netbox_openbao.models import OpenBaoAdministrationLog, OpenBaoCluster, SecretEngine
 
@@ -127,6 +127,43 @@ class AdministrationBackendTest(OpenBaoAdministrationTestCase):
 
     @patch('netbox_openbao.administration.backends.OpenBaoBackend._get_session')
     @patch('netbox_openbao.administration.backends.OpenBaoBackend._get_client')
+    def test_mounted_patch_uses_merge_patch_media_type(self, get_client, get_session):
+        get_client.return_value.token = 'ephemeral-token'
+        get_session.return_value.request.return_value = _Response(b'{"data":{}}')
+
+        DirectAdministrationBackend(self.cluster).execute_mounted_operation(
+            'PATCH', '/secret/data/team/db', query={}, body={'data': {'password': 'new'}}
+        )
+
+        self.assertEqual(
+            get_session.return_value.request.call_args.kwargs['headers']['Content-Type'],
+            'application/merge-patch+json',
+        )
+
+    @patch('netbox_openbao.administration.backends.OpenBaoBackend._get_session')
+    @patch('netbox_openbao.administration.backends.OpenBaoBackend._get_client')
+    def test_mutating_server_errors_have_unknown_outcome(self, get_client, get_session):
+        get_client.return_value.token = 'ephemeral-token'
+        backend = DirectAdministrationBackend(self.cluster)
+        for method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+            for status in (500, 502, 503, 504):
+                with self.subTest(method=method, status=status):
+                    get_session.return_value.request.return_value = _Response(b'{}', status)
+                    with self.assertRaises(OpenBaoMutationUnknown):
+                        backend._request(method, '/secret/data/team/db', authenticated=True, expected=(200,))
+
+    @patch('netbox_openbao.administration.backends.OpenBaoBackend._get_session')
+    @patch('netbox_openbao.administration.backends.OpenBaoBackend._get_client')
+    def test_read_server_error_remains_unavailable(self, get_client, get_session):
+        get_client.return_value.token = 'ephemeral-token'
+        get_session.return_value.request.return_value = _Response(b'{}', 503)
+        with self.assertRaises(OpenBaoUnavailable):
+            DirectAdministrationBackend(self.cluster)._request(
+                'GET', '/secret/data/team/db', authenticated=True, expected=(200,)
+            )
+
+    @patch('netbox_openbao.administration.backends.OpenBaoBackend._get_session')
+    @patch('netbox_openbao.administration.backends.OpenBaoBackend._get_client')
     def test_direct_discovery_uses_fixed_safe_request_contract(self, get_client, get_session):
         document = {
             'openapi': '3.0.2',
@@ -220,7 +257,7 @@ class AdministrationAPITest(OpenBaoAdministrationTestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertIn('no-store', response['Cache-Control'])
         self.assertFalse(response.data['operations'][0]['executable'])
-        self.assertEqual(response.data['operations'][0]['operation_key'], 'GET /sys/health')
+        self.assertEqual(response.data['operations'][0]['operation_key'], 'global :: sysHealth :: GET /sys/health')
         self.assertNotIn('upstream secret diagnostic', response.content.decode())
         entry = OpenBaoAdministrationLog.objects.get(action='discover-capabilities')
         self.assertTrue(entry.success)

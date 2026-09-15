@@ -80,6 +80,7 @@ __all__ = (
     'OpenBaoClusterBulkDeleteView',
     'OpenBaoClusterAdministrationView',
     'OpenBaoClusterAuthenticationView',
+    'OpenBaoClusterSecretEnginesView',
     'OpenBaoClusterCapabilitiesView',
     'OpenBaoClusterDeleteView',
     'OpenBaoClusterEditView',
@@ -266,6 +267,40 @@ class OpenBaoClusterAuthenticationView(ObjectPermissionRequiredMixin, View):
                 'plugins-api:netbox_openbao-api:openbaocluster-detail',
                 args=[cluster.pk],
             ),
+            'return_url': cluster.get_absolute_url(),
+        })
+        return _never_store(response)
+
+
+@register_model_view(OpenBaoCluster, 'secret_engines')
+class OpenBaoClusterSecretEnginesView(ObjectPermissionRequiredMixin, View):
+    """Render the secrets-engine lifecycle and classified explorer workspace."""
+
+    queryset = OpenBaoCluster.objects.all()
+    template_name = 'netbox_openbao/openbaocluster_secret_engines.html'
+
+    def get_required_permission(self):
+        return 'netbox_openbao.view_secret_engines_openbaocluster'
+
+    def get(self, request, pk):
+        cluster = get_object_or_404(self.queryset.restrict(request.user, 'view_secret_engines'), pk=pk)
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action='secret-engine-administration-ui',
+                operation_id='secret-engine-workspace',
+                risk_level='read',
+                success=True,
+                status_code=200,
+                message='Rendered the secrets-engine administration workspace.',
+                request=request,
+            )
+        except AdministrationAuditError:
+            raise PermissionDenied(_('OpenBao administration access could not be audited.')) from None
+        response = render(request, self.template_name, {
+            'object': cluster,
+            'api_base': reverse('plugins-api:netbox_openbao-api:openbaocluster-detail', args=[cluster.pk]),
             'return_url': cluster.get_absolute_url(),
         })
         return _never_store(response)

@@ -52,6 +52,14 @@ from .cluster import (
     normalize_raft_configuration,
     normalize_seal_status,
 )
+from .engines import (
+    SecretEngineMount,
+    normalize_migration_id,
+    normalize_secret_engine_mounts,
+)
+from .engines import (
+    normalize_mount_path as normalize_engine_mount_path,
+)
 from .schema import MAX_DOCUMENT_BYTES, CapabilityDocument, CapabilitySchemaError, normalize_openapi_document
 
 __all__ = ("AdministrationBackend", "get_administration_backend")
@@ -70,6 +78,48 @@ class AdministrationBackend(ABC):
     @abstractmethod
     def discover_capabilities(self) -> CapabilityDocument:
         """Return normalized runtime OpenAPI metadata or a fixed safe error."""
+
+    def list_secret_engines(self) -> tuple[SecretEngineMount, ...]:
+        raise self._unsupported()
+
+    def read_secret_engine(self, mount_path: str) -> dict:
+        del mount_path
+        raise self._unsupported()
+
+    def read_secret_engine_tuning(self, mount_path: str) -> dict:
+        del mount_path
+        raise self._unsupported()
+
+    def enable_secret_engine(self, mount_path: str, payload: dict) -> None:
+        del mount_path, payload
+        raise self._unsupported()
+
+    def tune_secret_engine(self, mount_path: str, payload: dict) -> None:
+        del mount_path, payload
+        raise self._unsupported()
+
+    def remount_secret_engine(self, source: str, destination: str) -> dict:
+        del source, destination
+        raise self._unsupported()
+
+    def secret_engine_remount_status(self, migration_id: str) -> dict:
+        del migration_id
+        raise self._unsupported()
+
+    def disable_secret_engine(self, mount_path: str) -> None:
+        del mount_path
+        raise self._unsupported()
+
+    def execute_mounted_operation(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict,
+        body: dict,
+    ) -> dict:
+        del method, path, query, body
+        raise self._unsupported()
 
     def initialization_status(self) -> bool:
         raise self._unsupported()
@@ -320,6 +370,8 @@ class DirectAdministrationBackend(AdministrationBackend):
             raise OpenBaoNotFound("OpenBao does not support this administrative operation.", 404)
         if response.status_code in (400, 409, 412):
             raise OpenBaoConflict("OpenBao refused the administrative state transition.", response.status_code)
+        if response.status_code >= 500 and method.upper() not in {"GET", "HEAD", "LIST", "OPTIONS"}:
+            raise OpenBaoMutationUnknown()
         raise OpenBaoUnavailable("OpenBao administration request failed.", response.status_code)
 
     @sensitive_variables()
@@ -485,6 +537,68 @@ class DirectAdministrationBackend(AdministrationBackend):
     def list_auth_methods(self) -> tuple[AuthMount, ...]:
         payload = self._request_json("GET", "/sys/auth", authenticated=True)
         return self._normalize(normalize_auth_mounts, payload)
+
+    def list_secret_engines(self) -> tuple[SecretEngineMount, ...]:
+        payload = self._request_json("GET", "/sys/mounts", authenticated=True)
+        return self._normalize(normalize_secret_engine_mounts, payload)
+
+    def read_secret_engine(self, mount_path: str) -> dict:
+        path = normalize_engine_mount_path(mount_path)
+        payload = self._request_json("GET", f"/sys/mounts/{path}", authenticated=True)
+        return self._normalize(normalize_public_auth_data, payload)
+
+    def read_secret_engine_tuning(self, mount_path: str) -> dict:
+        path = normalize_engine_mount_path(mount_path)
+        payload = self._request_json("GET", f"/sys/mounts/{path}/tune", authenticated=True)
+        return self._normalize(normalize_public_auth_data, payload)
+
+    def enable_secret_engine(self, mount_path: str, payload: dict) -> None:
+        path = normalize_engine_mount_path(mount_path)
+        response = self._request("POST", f"/sys/mounts/{path}", authenticated=True, expected=(200, 204), json=payload)
+        response.close()
+
+    def tune_secret_engine(self, mount_path: str, payload: dict) -> None:
+        path = normalize_engine_mount_path(mount_path)
+        response = self._request(
+            "POST", f"/sys/mounts/{path}/tune", authenticated=True, expected=(200, 204), json=payload
+        )
+        response.close()
+
+    def remount_secret_engine(self, source: str, destination: str) -> dict:
+        source_path = normalize_engine_mount_path(source)
+        destination_path = normalize_engine_mount_path(destination)
+        payload = self._request_json(
+            "POST",
+            "/sys/remount",
+            authenticated=True,
+            json={"from": f"{source_path}/", "to": f"{destination_path}/"},
+        )
+        return self._normalize(normalize_public_auth_data, payload)
+
+    def secret_engine_remount_status(self, migration_id: str) -> dict:
+        migration = normalize_migration_id(migration_id)
+        payload = self._request_json("GET", f"/sys/remount/status/{migration}", authenticated=True)
+        return self._normalize(normalize_public_auth_data, payload)
+
+    def disable_secret_engine(self, mount_path: str) -> None:
+        path = normalize_engine_mount_path(mount_path)
+        response = self._request("DELETE", f"/sys/mounts/{path}", authenticated=True, expected=(200, 204))
+        response.close()
+
+    @sensitive_variables()
+    def execute_mounted_operation(self, method: str, path: str, *, query: dict, body: dict) -> dict:
+        if method not in {"GET", "LIST", "POST", "PUT", "PATCH", "DELETE"} or not path.startswith("/"):
+            raise BackendConfigurationError("The mounted operation is outside the reviewed transport contract.")
+        kwargs = {"params": query}
+        if method not in {"GET", "LIST", "DELETE"}:
+            kwargs["json"] = body
+        if method == "PATCH":
+            kwargs["headers"] = {"Content-Type": "application/merge-patch+json"}
+        response = self._request(method, path, authenticated=True, expected=(200, 204), **kwargs)
+        if response.status_code == 204:
+            response.close()
+            return {}
+        return self._response_json(response)
 
     def read_auth_method(self, mount_path: str) -> dict:
         path = normalize_mount_path(mount_path)

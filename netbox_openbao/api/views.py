@@ -81,6 +81,7 @@ from netbox_openbao.synchronization import lock_material_subject, lock_material_
 
 from .authentication_views import AuthenticationAdministrationMixin
 from .automation import AutomationResolveRequestSerializer, AutomationResolveResponseSerializer
+from .engine_views import SecretEngineAdministrationMixin
 from .permissions import ClusterActionPermissions, ProcedureActionPermissions, SecretActionPermissions
 from .serializers import (
     ConfirmClusterActionSerializer,
@@ -214,7 +215,11 @@ class SecretEngineViewSet(NetBoxModelViewSet):
         )
 
 
-class OpenBaoClusterViewSet(AuthenticationAdministrationMixin, NetBoxModelViewSet):
+class OpenBaoClusterViewSet(
+    SecretEngineAdministrationMixin,
+    AuthenticationAdministrationMixin,
+    NetBoxModelViewSet,
+):
     """Cluster inventory plus safe read-only administrative discovery."""
 
     queryset = OpenBaoCluster.objects.annotate(mount_count=Count('secret_engines'))

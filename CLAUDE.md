@@ -76,6 +76,19 @@ never be retried automatically. Destructive auth/MFA/token operations
 require their dedicated object permissions, reasons, and exact confirmations.
 See `docs/how-to/administer-openbao-authentication.md`.
 
+**Secrets-engine administration uses a classified, mount-scoped contract.**
+Runtime OpenAPI discovery may admit only reviewed `(method, path template,
+operation ID)` tuples whose path begins with the fixed `{secret_mount_path}`
+placeholder and contains reviewed literal or bounded parameter segments. It
+never supplies an origin, method, permission, response
+class, identity, namespace, header, or redirect policy. Reads, writes,
+mounted-resource deletion, and whole-engine disable use separate object
+permissions. Bind every execution to the current capability digest and a live
+non-system mount; bind destructive confirmation to the advertised method,
+compiled path, and cluster slug. Material responses remain request-scoped and
+`no-store`, and mutation uncertainty must never be retried automatically. See
+`docs/how-to/administer-openbao-secret-engines.md`.
+
 ## The rule that matters most
 
 > **Secret material must never become a model field, a form field bound to an

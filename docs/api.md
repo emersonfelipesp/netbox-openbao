@@ -19,6 +19,16 @@ internal automation resolution receipts have no CRUD endpoint.
 | `GET/POST /clusters/{id}/raft/snapshot/` | Stream an active-node Raft snapshot; session users require a confirmed CSRF-protected POST, while API tokens may use GET |
 | `POST /clusters/{id}/raft/snapshot/restore/` | Stream a bounded snapshot into normal restore |
 | `POST /clusters/{id}/raft/snapshot/restore-force/` | Stream a bounded snapshot into force restore under a separate permission |
+| `GET /clusters/{id}/secret-engines/` | List bounded secrets-engine mount metadata |
+| `POST /clusters/{id}/secret-engines/configuration/` | Read one mount's public configuration metadata |
+| `POST /clusters/{id}/secret-engines/tuning/` | Read one mount's public tuning metadata |
+| `POST /clusters/{id}/secret-engines/enable/` | Enable a reviewed secrets-engine type with bounded configuration |
+| `POST /clusters/{id}/secret-engines/tune/` | Tune a live mount with bounded OpenBao 2.6.2 fields |
+| `POST /clusters/{id}/secret-engines/remount/` | Start a confirmed mount move and return its migration identifier |
+| `POST /clusters/{id}/secret-engines/remount-status/` | Read bounded remount status metadata |
+| `POST /clusters/{id}/secret-engines/disable/` | Disable a mount under separate permission and exact confirmation |
+| `GET /clusters/{id}/secret-operations/` | Return the classified mounted-operation catalog and current capability digest |
+| `POST /clusters/{id}/secret-operations/execute/` | Execute one reviewed mounted operation with stale-state, schema, permission, and confirmation checks |
 | `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/` | Singleton runtime configuration; deletion is refused while any credential exists and requires the standard `OpenBaoSettings` model permissions |
 | `GET/POST /engines/` | Secret engines |
 | `GET /engines/{id}/health/` | Probe and record engine status |
@@ -55,7 +65,7 @@ response shape is:
   "operations": [
     {
       "operation_id": "sysHealth",
-      "operation_key": "GET /sys/health",
+      "operation_key": "global :: sysHealth :: GET /sys/health",
       "method": "GET",
       "path_template": "/sys/health",
       "summary": "Read health",
@@ -77,6 +87,37 @@ path, method, headers, or body. Every operation is returned with
 unclassified. The response is `no-store`, and every success or failure is
 written synchronously to `OpenBaoAdministrationLog`. See the
 [administration-plane contract](architecture/administration-plane.md).
+
+## Secrets-engine lifecycle and mounted operations
+
+All secrets-engine actions use the cluster's configured service identity and
+return `Cache-Control: no-store`; callers cannot supply an origin, raw path,
+HTTP method, token, namespace, header, TLS policy, or redirect behavior. Object
+permissions separate mount metadata reads, lifecycle management, whole-engine
+disable, catalog discovery, ordinary mounted writes, mounted deletion or
+destruction, and material-bearing reads. The exact permission names and request
+examples are documented in the [secret-engine administration
+runbook](how-to/administer-openbao-secret-engines.md).
+
+Lifecycle mutations include a non-empty `reason`. Remount and disable also use
+the exact cluster-bound confirmations shown by the Web UI. The server reloads
+live mount state before every mutation. A transport failure, malformed success,
+or HTTP 5xx after a mutation returns an explicit unknown outcome with
+`X-OpenBao-Operation-Outcome: unknown`; clients must reconcile state and must
+not retry automatically.
+
+Mounted execution requires the latest catalog `capability_digest`, an exact
+`operation_key`, a live non-system mount, bounded resource and path parameters,
+declared query/body fields with matching primitive types, and an audit reason.
+Destructive operations additionally bind confirmation to the advertised method,
+compiled path, and cluster slug. Material responses use the JSON renderer only
+and are neither persisted nor included in audit records.
+
+The executable registry accepts runtime-advertised GET, LIST, POST, PUT, PATCH,
+and DELETE operations only when they belong to the mounted-secrets family,
+match the reviewed `/{secret_mount_path}` grammar, declare every path placeholder
+as required and typed, and pass the request and response controls above. An
+advertised operation outside that grammar remains display-only.
 
 ## Cluster lifecycle and Raft requests
 

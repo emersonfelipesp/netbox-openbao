@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Secrets-engine administration now provides cluster-scoped Web UI and REST
+  actions for mount listing, configuration, tuning, enable, remount status, and
+  guarded disable. A classified OpenBao 2.6.2 operation explorer intersects
+  bounded runtime discovery with a fixed mounted-path grammar, dedicated
+  read/write/delete permissions, capability-digest freshness, exact destructive
+  confirmations, metadata-only audit, no-store material responses, and direct
+  transport controls that prevent caller-selected origins, methods, headers,
+  namespaces, identities, redirects, and mutation retries.
+
 - An OpenBao administration foundation introduces first-class cluster
   inventory, a compatibility migration from existing engine connections,
   dedicated discovery/operation permissions, bounded runtime OpenAPI

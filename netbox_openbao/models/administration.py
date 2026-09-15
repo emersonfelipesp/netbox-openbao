@@ -118,6 +118,13 @@ class OpenBaoCluster(PrimaryModel):
             ('revoke_tokens', 'Revoke OpenBao tokens'),
             ('manage_mfa', 'Manage OpenBao MFA methods and login enforcements'),
             ('delete_mfa', 'Delete OpenBao MFA methods, secrets, and login enforcements'),
+            ('view_secret_engines', 'View OpenBao secrets-engine configuration'),
+            ('manage_secret_engines', 'Enable, tune, and remount OpenBao secrets engines'),
+            ('disable_secret_engines', 'Disable OpenBao secrets engines'),
+            ('explore_secret_operations', 'View classified OpenBao mounted operations'),
+            ('execute_secret_operations', 'Execute write operations on OpenBao secrets engines'),
+            ('delete_secret_operations', 'Delete or destroy mounted OpenBao secret resources'),
+            ('reveal_secret_operations', 'Read material-bearing OpenBao secrets-engine responses'),
         )
 
     def __str__(self):

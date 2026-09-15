@@ -2,24 +2,470 @@
   "baseline": "2.6.2",
   "source": "OpenBao stable UI router and runtime OpenAPI/help documents",
   "families": [
-    {"id": "cluster-session", "upstream_routes": ["auth", "redirect", "logout"], "capability": "Cluster authentication/session state", "owner_issue": 65, "status": "complete", "equivalence": {"auth": "Request-scoped typed login and MFA challenge completion replace the upstream persistent browser authentication session.", "redirect": "A signed, nonce-bound, five-minute direct OIDC controller replaces the upstream redirect session while keeping credentials in memory only.", "logout": "Token lookup and guarded revocation provide explicit lifecycle control without retaining an OpenBao token in a NetBox browser session."}, "evidence": {"auth": {"implementation": ["netbox_openbao/administration/authentication.py", "netbox_openbao/api/authentication_views.py"], "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html", "netbox_openbao/static/netbox_openbao/authentication_administration.js"], "tests": ["netbox_openbao/tests/test_authentication_administration.py", "netbox_openbao/tests/test_authentication_administration_browser.py"]}, "redirect": {"implementation": ["netbox_openbao/administration/authentication.py", "netbox_openbao/api/authentication_views.py"], "ui": ["netbox_openbao/static/netbox_openbao/authentication_administration.js"], "tests": ["netbox_openbao/tests/test_authentication_administration.py", "netbox_openbao/tests/test_authentication_administration_browser.py", "netbox_openbao/tests/js/authentication_administration.test.js"]}, "logout": {"implementation": ["netbox_openbao/administration/authentication.py", "netbox_openbao/api/authentication_views.py"], "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html", "netbox_openbao/static/netbox_openbao/authentication_administration.js"], "tests": ["netbox_openbao/tests/test_authentication_administration.py"]}}},
-    {"id": "cluster-bootstrap", "upstream_routes": ["init", "unseal", "settings.seal"], "capability": "Initialization, Raft join, unseal and seal", "owner_issue": 70, "status": "foundation"},
-    {"id": "api-explorer", "upstream_routes": ["api-explorer"], "capability": "Schema-driven API discovery and invocation", "owner_issue": 66, "status": "foundation"},
-    {"id": "raft-storage", "upstream_routes": ["storage", "storage-restore"], "capability": "Raft peers, snapshots and restore", "owner_issue": 64, "status": "complete", "equivalence": {"storage": "Raft peer inspection, join, guarded removal, and snapshot download cover the upstream integrated-storage management route.", "storage-restore": "Bounded snapshot upload, baseline checks, typed confirmation, and guarded force restore cover the upstream restore route."}, "evidence": {"storage": {"implementation": ["netbox_openbao/administration/cluster.py", "netbox_openbao/api/views.py"], "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_administration.html", "netbox_openbao/static/netbox_openbao/cluster_administration.js"], "tests": ["netbox_openbao/tests/test_cluster_administration.py", "netbox_openbao/tests/js/cluster_administration.test.js"]}, "storage-restore": {"implementation": ["netbox_openbao/administration/cluster.py", "netbox_openbao/api/views.py"], "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_administration.html", "netbox_openbao/static/netbox_openbao/cluster_administration.js"], "tests": ["netbox_openbao/tests/test_cluster_administration.py", "netbox_openbao/tests/js/cluster_administration.test.js"]}}},
-    {"id": "auth-methods", "upstream_routes": ["settings.auth", "access.methods", "access.method"], "capability": "Authentication method lifecycle and resources", "owner_issue": 65, "status": "complete", "equivalence": {"settings.auth": "Reviewed mount enable, tune, remount, and disable operations cover authentication settings lifecycle.", "access.methods": "Typed discovery and list operations cover the upstream authentication-method index.", "access.method": "Reviewed OpenBao 2.6.2 configuration, login, and typed resource contracts cover token, userpass, AppRole, Kubernetes, JWT/OIDC, LDAP, RADIUS, and certificate methods."}, "evidence": {"settings.auth": {"implementation": ["netbox_openbao/administration/authentication.py", "netbox_openbao/administration/backends.py", "netbox_openbao/api/authentication_views.py"], "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html", "netbox_openbao/static/netbox_openbao/authentication_administration.js"], "tests": ["netbox_openbao/tests/test_authentication_administration.py", "netbox_openbao/tests/test_authentication_administration_live.py"]}, "access.methods": {"implementation": ["netbox_openbao/administration/authentication.py", "netbox_openbao/api/authentication_views.py"], "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html", "netbox_openbao/static/netbox_openbao/authentication_administration.js"], "tests": ["netbox_openbao/tests/test_authentication_administration.py"]}, "access.method": {"implementation": ["netbox_openbao/administration/authentication.py", "netbox_openbao/administration/backends.py", "netbox_openbao/api/authentication_views.py"], "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html", "netbox_openbao/static/netbox_openbao/authentication_administration.js"], "tests": ["netbox_openbao/tests/test_authentication_administration.py", "netbox_openbao/tests/test_authentication_administration_live.py"]}}},
-    {"id": "mfa", "upstream_routes": ["mfa-setup", "access.mfa"], "capability": "MFA methods and enforcements", "owner_issue": 65, "status": "complete", "equivalence": {"mfa-setup": "TOTP QR enrollment, current-token entity derivation, self-reset, and administrator recovery cover the upstream user setup journey.", "access.mfa": "TOTP, Duo, Okta, and PingID method administration, login enforcements, and challenge completion cover the upstream MFA administration route."}, "evidence": {"mfa-setup": {"implementation": ["netbox_openbao/administration/authentication.py", "netbox_openbao/api/authentication_views.py"], "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html", "netbox_openbao/static/netbox_openbao/authentication_administration.js"], "tests": ["netbox_openbao/tests/test_authentication_administration.py", "netbox_openbao/tests/test_authentication_administration_browser.py", "netbox_openbao/tests/test_authentication_administration_live.py"]}, "access.mfa": {"implementation": ["netbox_openbao/administration/authentication.py", "netbox_openbao/api/authentication_views.py"], "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html", "netbox_openbao/static/netbox_openbao/authentication_administration.js"], "tests": ["netbox_openbao/tests/test_authentication_administration.py", "netbox_openbao/tests/test_authentication_administration_live.py"]}}},
-    {"id": "engine-lifecycle", "upstream_routes": ["settings.mount-secret-backend", "settings.configure-secret-backend", "secrets.backends"], "capability": "Secrets engine lifecycle", "owner_issue": 66, "status": "planned"},
-    {"id": "generic-secrets", "upstream_routes": ["secrets.backend.list", "secrets.backend.show", "secrets.backend.create", "secrets.backend.edit", "secrets.backend.configuration"], "capability": "Generic mounted-engine operations", "owner_issue": 66, "status": "planned"},
-    {"id": "kv", "upstream_routes": ["secrets.backend.metadata", "secrets.backend.diff", "secrets.backend.versions"], "capability": "KV v1/v2 data, metadata and versions", "owner_issue": 67, "status": "planned"},
-    {"id": "common-engines", "upstream_routes": ["secrets.backend.credentials", "secrets.backend.sign", "secrets.backend.actions", "secrets.backend.overview"], "capability": "Transit, database, SSH and TOTP journeys", "owner_issue": 67, "status": "planned"},
-    {"id": "pki", "upstream_routes": ["secrets.backend.pki"], "capability": "PKI issuers, keys, roles, certificates and tidy", "owner_issue": 68, "status": "planned"},
-    {"id": "kubernetes", "upstream_routes": ["secrets.backend.kubernetes"], "capability": "Kubernetes configuration, roles and credentials", "owner_issue": 68, "status": "planned"},
-    {"id": "policies", "upstream_routes": ["policies", "policy"], "capability": "Policy lifecycle", "owner_issue": 69, "status": "planned"},
-    {"id": "identity", "upstream_routes": ["access.identity", "access.identity.aliases"], "capability": "Entities, groups, aliases and merge", "owner_issue": 69, "status": "planned"},
-    {"id": "oidc", "upstream_routes": ["access.oidc.clients", "access.oidc.keys", "access.oidc.assignments", "access.oidc.providers", "access.oidc.scopes"], "capability": "OIDC resources and authorization", "owner_issue": 69, "status": "planned"},
-    {"id": "namespaces", "upstream_routes": ["access.namespaces"], "capability": "Namespace lifecycle", "owner_issue": 69, "status": "planned"},
-    {"id": "leases", "upstream_routes": ["access.leases"], "capability": "Lease lookup, renewal and revocation", "owner_issue": 70, "status": "planned"},
-    {"id": "tools", "upstream_routes": ["tools.tool"], "capability": "Wrapping, hashing, random data and token tools", "owner_issue": 70, "status": "planned"},
-    {"id": "ui-configuration", "upstream_routes": ["settings.index"], "capability": "UI response headers and diagnostics", "owner_issue": 70, "status": "planned"}
+    {
+      "id": "cluster-session",
+      "upstream_routes": [
+        "auth",
+        "redirect",
+        "logout"
+      ],
+      "capability": "Cluster authentication/session state",
+      "owner_issue": 65,
+      "status": "complete",
+      "equivalence": {
+        "auth": "Request-scoped typed login and MFA challenge completion replace the upstream persistent browser authentication session.",
+        "redirect": "A signed, nonce-bound, five-minute direct OIDC controller replaces the upstream redirect session while keeping credentials in memory only.",
+        "logout": "Token lookup and guarded revocation provide explicit lifecycle control without retaining an OpenBao token in a NetBox browser session."
+      },
+      "evidence": {
+        "auth": {
+          "implementation": [
+            "netbox_openbao/administration/authentication.py",
+            "netbox_openbao/api/authentication_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html",
+            "netbox_openbao/static/netbox_openbao/authentication_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_authentication_administration.py",
+            "netbox_openbao/tests/test_authentication_administration_browser.py"
+          ]
+        },
+        "redirect": {
+          "implementation": [
+            "netbox_openbao/administration/authentication.py",
+            "netbox_openbao/api/authentication_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/static/netbox_openbao/authentication_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_authentication_administration.py",
+            "netbox_openbao/tests/test_authentication_administration_browser.py",
+            "netbox_openbao/tests/js/authentication_administration.test.js"
+          ]
+        },
+        "logout": {
+          "implementation": [
+            "netbox_openbao/administration/authentication.py",
+            "netbox_openbao/api/authentication_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html",
+            "netbox_openbao/static/netbox_openbao/authentication_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_authentication_administration.py"
+          ]
+        }
+      }
+    },
+    {
+      "id": "cluster-bootstrap",
+      "upstream_routes": [
+        "init",
+        "unseal",
+        "settings.seal"
+      ],
+      "capability": "Initialization, Raft join, unseal and seal",
+      "owner_issue": 70,
+      "status": "foundation"
+    },
+    {
+      "id": "api-explorer",
+      "upstream_routes": [
+        "api-explorer"
+      ],
+      "capability": "Schema-driven API discovery and invocation",
+      "owner_issue": 66,
+      "status": "complete",
+      "equivalence": {
+        "api-explorer": "Bounded runtime OpenAPI discovery is intersected with a reviewed mount-scoped execution grammar, stale capability digests, dedicated risk permissions, and material-safe response handling."
+      },
+      "evidence": {
+        "api-explorer": {
+          "implementation": [
+            "netbox_openbao/administration/schema.py",
+            "netbox_openbao/administration/engines.py",
+            "netbox_openbao/api/engine_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html",
+            "netbox_openbao/static/netbox_openbao/secret_engine_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_engine_administration.py",
+            "netbox_openbao/tests/test_engine_administration_live.py",
+            "netbox_openbao/tests/js/secret_engine_administration.test.js"
+          ]
+        }
+      }
+    },
+    {
+      "id": "raft-storage",
+      "upstream_routes": [
+        "storage",
+        "storage-restore"
+      ],
+      "capability": "Raft peers, snapshots and restore",
+      "owner_issue": 64,
+      "status": "complete",
+      "equivalence": {
+        "storage": "Raft peer inspection, join, guarded removal, and snapshot download cover the upstream integrated-storage management route.",
+        "storage-restore": "Bounded snapshot upload, baseline checks, typed confirmation, and guarded force restore cover the upstream restore route."
+      },
+      "evidence": {
+        "storage": {
+          "implementation": [
+            "netbox_openbao/administration/cluster.py",
+            "netbox_openbao/api/views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_administration.html",
+            "netbox_openbao/static/netbox_openbao/cluster_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_cluster_administration.py",
+            "netbox_openbao/tests/js/cluster_administration.test.js"
+          ]
+        },
+        "storage-restore": {
+          "implementation": [
+            "netbox_openbao/administration/cluster.py",
+            "netbox_openbao/api/views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_administration.html",
+            "netbox_openbao/static/netbox_openbao/cluster_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_cluster_administration.py",
+            "netbox_openbao/tests/js/cluster_administration.test.js"
+          ]
+        }
+      }
+    },
+    {
+      "id": "auth-methods",
+      "upstream_routes": [
+        "settings.auth",
+        "access.methods",
+        "access.method"
+      ],
+      "capability": "Authentication method lifecycle and resources",
+      "owner_issue": 65,
+      "status": "complete",
+      "equivalence": {
+        "settings.auth": "Reviewed mount enable, tune, remount, and disable operations cover authentication settings lifecycle.",
+        "access.methods": "Typed discovery and list operations cover the upstream authentication-method index.",
+        "access.method": "Reviewed OpenBao 2.6.2 configuration, login, and typed resource contracts cover token, userpass, AppRole, Kubernetes, JWT/OIDC, LDAP, RADIUS, and certificate methods."
+      },
+      "evidence": {
+        "settings.auth": {
+          "implementation": [
+            "netbox_openbao/administration/authentication.py",
+            "netbox_openbao/administration/backends.py",
+            "netbox_openbao/api/authentication_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html",
+            "netbox_openbao/static/netbox_openbao/authentication_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_authentication_administration.py",
+            "netbox_openbao/tests/test_authentication_administration_live.py"
+          ]
+        },
+        "access.methods": {
+          "implementation": [
+            "netbox_openbao/administration/authentication.py",
+            "netbox_openbao/api/authentication_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html",
+            "netbox_openbao/static/netbox_openbao/authentication_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_authentication_administration.py"
+          ]
+        },
+        "access.method": {
+          "implementation": [
+            "netbox_openbao/administration/authentication.py",
+            "netbox_openbao/administration/backends.py",
+            "netbox_openbao/api/authentication_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html",
+            "netbox_openbao/static/netbox_openbao/authentication_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_authentication_administration.py",
+            "netbox_openbao/tests/test_authentication_administration_live.py"
+          ]
+        }
+      }
+    },
+    {
+      "id": "mfa",
+      "upstream_routes": [
+        "mfa-setup",
+        "access.mfa"
+      ],
+      "capability": "MFA methods and enforcements",
+      "owner_issue": 65,
+      "status": "complete",
+      "equivalence": {
+        "mfa-setup": "TOTP QR enrollment, current-token entity derivation, self-reset, and administrator recovery cover the upstream user setup journey.",
+        "access.mfa": "TOTP, Duo, Okta, and PingID method administration, login enforcements, and challenge completion cover the upstream MFA administration route."
+      },
+      "evidence": {
+        "mfa-setup": {
+          "implementation": [
+            "netbox_openbao/administration/authentication.py",
+            "netbox_openbao/api/authentication_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html",
+            "netbox_openbao/static/netbox_openbao/authentication_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_authentication_administration.py",
+            "netbox_openbao/tests/test_authentication_administration_browser.py",
+            "netbox_openbao/tests/test_authentication_administration_live.py"
+          ]
+        },
+        "access.mfa": {
+          "implementation": [
+            "netbox_openbao/administration/authentication.py",
+            "netbox_openbao/api/authentication_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_authentication.html",
+            "netbox_openbao/static/netbox_openbao/authentication_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_authentication_administration.py",
+            "netbox_openbao/tests/test_authentication_administration_live.py"
+          ]
+        }
+      }
+    },
+    {
+      "id": "engine-lifecycle",
+      "upstream_routes": [
+        "settings.mount-secret-backend",
+        "settings.configure-secret-backend",
+        "secrets.backends"
+      ],
+      "capability": "Secrets engine lifecycle",
+      "owner_issue": 66,
+      "status": "complete",
+      "equivalence": {
+        "settings.mount-secret-backend": "Reviewed type and configuration fields plus live mount collision checks cover enabling a secrets engine.",
+        "settings.configure-secret-backend": "Configuration and tuning reads, bounded tune writes, confirmed remount, and separately authorized disable cover mount settings.",
+        "secrets.backends": "Bounded live mount metadata supplies the cluster secrets-engine index without exposing service identity material."
+      },
+      "evidence": {
+        "settings.mount-secret-backend": {
+          "implementation": [
+            "netbox_openbao/administration/engines.py",
+            "netbox_openbao/administration/backends.py",
+            "netbox_openbao/api/engine_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_engine_administration.py",
+            "netbox_openbao/tests/test_engine_administration_live.py"
+          ]
+        },
+        "settings.configure-secret-backend": {
+          "implementation": [
+            "netbox_openbao/administration/backends.py",
+            "netbox_openbao/api/engine_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html",
+            "netbox_openbao/static/netbox_openbao/secret_engine_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_engine_administration.py",
+            "netbox_openbao/tests/test_engine_administration_live.py"
+          ]
+        },
+        "secrets.backends": {
+          "implementation": [
+            "netbox_openbao/administration/engines.py",
+            "netbox_openbao/api/engine_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_engine_administration.py"
+          ]
+        }
+      }
+    },
+    {
+      "id": "generic-secrets",
+      "upstream_routes": [
+        "secrets.backend.list",
+        "secrets.backend.show",
+        "secrets.backend.create",
+        "secrets.backend.edit",
+        "secrets.backend.configuration"
+      ],
+      "capability": "Generic mounted-engine operations",
+      "owner_issue": 66,
+      "status": "complete",
+      "equivalence": {
+        "secrets.backend.list": "Advertised LIST and GET templates compile only from required typed mounted-path parameters and bounded declared pagination query fields.",
+        "secrets.backend.show": "Advertised mounted GET templates use dedicated reveal permission and request-scoped no-store material responses.",
+        "secrets.backend.create": "Advertised mounted POST and PUT templates accept only schema-declared typed fields through the fixed service-identity transport.",
+        "secrets.backend.edit": "Advertised mounted PATCH and POST templates preserve merge-patch semantics, stale capability checks, and unknown mutation outcomes.",
+        "secrets.backend.configuration": "Runtime mounted templates are classified through the reviewed grammar and remain bound to live mounts, permissions, risk, audit, and exact destructive confirmation."
+      },
+      "evidence": {
+        "secrets.backend.list": {
+          "implementation": ["netbox_openbao/administration/schema.py", "netbox_openbao/administration/engines.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html", "netbox_openbao/static/netbox_openbao/secret_engine_administration.js"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_live.py"]
+        },
+        "secrets.backend.show": {
+          "implementation": ["netbox_openbao/administration/engines.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/static/netbox_openbao/secret_engine_administration.js"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_browser.py"]
+        },
+        "secrets.backend.create": {
+          "implementation": ["netbox_openbao/administration/engines.py", "netbox_openbao/administration/backends.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_live.py"]
+        },
+        "secrets.backend.edit": {
+          "implementation": ["netbox_openbao/administration/engines.py", "netbox_openbao/administration/backends.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html"],
+          "tests": ["netbox_openbao/tests/test_administration.py", "netbox_openbao/tests/test_engine_administration_live.py"]
+        },
+        "secrets.backend.configuration": {
+          "implementation": ["netbox_openbao/administration/schema.py", "netbox_openbao/administration/engines.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py"]
+        }
+      }
+    },
+    {
+      "id": "kv",
+      "upstream_routes": [
+        "secrets.backend.metadata",
+        "secrets.backend.diff",
+        "secrets.backend.versions"
+      ],
+      "capability": "KV v1/v2 data, metadata and versions",
+      "owner_issue": 67,
+      "status": "planned"
+    },
+    {
+      "id": "common-engines",
+      "upstream_routes": [
+        "secrets.backend.credentials",
+        "secrets.backend.sign",
+        "secrets.backend.actions",
+        "secrets.backend.overview"
+      ],
+      "capability": "Transit, database, SSH and TOTP journeys",
+      "owner_issue": 67,
+      "status": "planned"
+    },
+    {
+      "id": "pki",
+      "upstream_routes": [
+        "secrets.backend.pki"
+      ],
+      "capability": "PKI issuers, keys, roles, certificates and tidy",
+      "owner_issue": 68,
+      "status": "planned"
+    },
+    {
+      "id": "kubernetes",
+      "upstream_routes": [
+        "secrets.backend.kubernetes"
+      ],
+      "capability": "Kubernetes configuration, roles and credentials",
+      "owner_issue": 68,
+      "status": "planned"
+    },
+    {
+      "id": "policies",
+      "upstream_routes": [
+        "policies",
+        "policy"
+      ],
+      "capability": "Policy lifecycle",
+      "owner_issue": 69,
+      "status": "planned"
+    },
+    {
+      "id": "identity",
+      "upstream_routes": [
+        "access.identity",
+        "access.identity.aliases"
+      ],
+      "capability": "Entities, groups, aliases and merge",
+      "owner_issue": 69,
+      "status": "planned"
+    },
+    {
+      "id": "oidc",
+      "upstream_routes": [
+        "access.oidc.clients",
+        "access.oidc.keys",
+        "access.oidc.assignments",
+        "access.oidc.providers",
+        "access.oidc.scopes"
+      ],
+      "capability": "OIDC resources and authorization",
+      "owner_issue": 69,
+      "status": "planned"
+    },
+    {
+      "id": "namespaces",
+      "upstream_routes": [
+        "access.namespaces"
+      ],
+      "capability": "Namespace lifecycle",
+      "owner_issue": 69,
+      "status": "planned"
+    },
+    {
+      "id": "leases",
+      "upstream_routes": [
+        "access.leases"
+      ],
+      "capability": "Lease lookup, renewal and revocation",
+      "owner_issue": 70,
+      "status": "planned"
+    },
+    {
+      "id": "tools",
+      "upstream_routes": [
+        "tools.tool"
+      ],
+      "capability": "Wrapping, hashing, random data and token tools",
+      "owner_issue": 70,
+      "status": "planned"
+    },
+    {
+      "id": "ui-configuration",
+      "upstream_routes": [
+        "settings.index"
+      ],
+      "capability": "UI response headers and diagnostics",
+      "owner_issue": 70,
+      "status": "planned"
+    }
   ]
 }

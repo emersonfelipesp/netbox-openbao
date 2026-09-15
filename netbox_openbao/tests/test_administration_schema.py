@@ -92,7 +92,10 @@ class CapabilitySchemaTest(TestCase):
         normalized = normalize_openapi_document(document)
 
         operation = next(item for item in normalized.operations if item.operation_id == 'sysHealth')
-        self.assertEqual(operation.operation_key, 'GET /{secret_mount_path}/^.*$')
+        self.assertEqual(
+            operation.operation_key,
+            'secret_mount_path :: sysHealth :: GET /{secret_mount_path}/^.*$',
+        )
 
     def test_duplicate_openbao_operation_ids_get_unique_method_path_keys(self):
         document = _document()
