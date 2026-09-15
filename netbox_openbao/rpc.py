@@ -41,12 +41,9 @@ ENGINE_BOUND_PARAM_KEYS = frozenset({
 })
 
 
-def _require_rpc_permissions(user) -> None:
-    for permission in (
-        'netbox_rpc.execute_rpcprocedure',
-    ):
-        if not user.has_perm(permission):
-            raise PermissionDenied(f'{permission} permission is required.')
+def _require_rpc_permission(user, procedure, action: str) -> None:
+    if not procedure.__class__.objects.restrict(user, action).filter(pk=procedure.pk).exists():
+        raise PermissionDenied(f'netbox_rpc.{action}_rpcprocedure permission is required.')
 
 
 def _device_content_type():
@@ -99,16 +96,15 @@ def dispatch_openbao_procedure(*, engine, procedure_name: str, user, request=Non
     if procedure_name not in allowed:
         raise ValidationError({'procedure': _('Procedure is not exposed by netbox-openbao.')})
 
-    _require_rpc_permissions(user)
-
     try:
         procedure = RPCProcedure.objects.get(name=procedure_name)
     except RPCProcedure.DoesNotExist as exc:
         raise ValidationError({
             'procedure': _('Procedure is not registered in netbox-rpc.'),
         }) from exc
-    if procedure.approval_required and not user.has_perm('netbox_rpc.approve_rpcprocedure'):
-        raise PermissionDenied('This procedure requires approval (approve_rpcprocedure permission).')
+    _require_rpc_permission(user, procedure, 'execute')
+    if procedure.approval_required:
+        _require_rpc_permission(user, procedure, 'approve')
 
     payload = build_procedure_params(engine, procedure_name, params)
     device_ct = _device_content_type()

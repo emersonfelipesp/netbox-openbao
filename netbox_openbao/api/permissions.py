@@ -2,7 +2,7 @@
 
 from netbox.api.authentication import TokenPermissions
 
-__all__ = ('ClusterActionPermissions', 'SecretActionPermissions')
+__all__ = ('ClusterActionPermissions', 'ProcedureActionPermissions', 'SecretActionPermissions')
 
 
 class SecretActionPermissions(TokenPermissions):
@@ -34,3 +34,12 @@ class SecretActionPermissions(TokenPermissions):
 
 class ClusterActionPermissions(SecretActionPermissions):
     """Apply the same existing-object POST contract to guarded cluster actions."""
+
+
+class ProcedureActionPermissions(TokenPermissions):
+    """Map procedure dispatch to changing an existing secret engine."""
+
+    perms_map = {
+        **TokenPermissions.perms_map,
+        'POST': ['%(app_label)s.change_%(model_name)s'],
+    }

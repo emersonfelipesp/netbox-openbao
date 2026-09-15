@@ -20,8 +20,11 @@ psql -h 127.0.0.1 -p 15432 -U netbox -d netbox -c 'CREATE EXTENSION IF NOT EXIST
 
 ```bash
 git clone --depth 1 --branch v4.7.0-beta2 https://github.com/netbox-community/netbox.git
+git clone https://github.com/N-MultiCloud/netbox-rpc.git
+git -C netbox-rpc checkout e8d4ba3535e2b4f33125c16281a34da52b634df0
 python3.12 -m venv .venv
 .venv/bin/pip install -r netbox/requirements.txt
+.venv/bin/pip install --no-build-isolation /path/to/netbox-rpc
 .venv/bin/pip install -e /path/to/netbox-openbao
 ```
 
@@ -47,13 +50,34 @@ API_TOKEN_PEPPERS = {
 }   # v2 API tokens
 
 DEVELOPER = True          # required for makemigrations
-PLUGINS = ['netbox_openbao']
-PLUGINS_CONFIG = {'netbox_openbao': {}}
+PLUGINS = ['netbox_rpc', 'netbox_openbao']
+PLUGINS_CONFIG = {'netbox_rpc': {}, 'netbox_openbao': {}}
 ```
 
 The checkout above is the exact NetBox 4.7 beta certification target. The
 hosted compatibility gate also runs this suite on NetBox 4.6.5 so work on the
 beta cannot silently drop the supported floor.
+
+`netbox-rpc` is a required private source dependency. The hosted compatibility
+gate checks it out without persisted credentials at the immutable commit shown
+above, verifies the exact checkout SHA and installed distribution version
+`0.1.8.post1`, and only then installs netbox-openbao. The expected
+distribution version `0.1.8.post1` and source SHA must be updated together when
+the reviewed dependency source changes.
+
+The compatibility suite intentionally exercises the complete plugin under
+both NetBox versions. NetBox 4.6 and 4.7 differ in their inherited serializer
+fields, custom-action permission mapping, and bulk-list validation order. Code
+must preserve the same authorization, database rollback, and OpenBao material
+compensation guarantees even when the framework performs validation before any
+item is created or creates an earlier item before a later item fails.
+
+When `NETBOX_SOURCE_DIR` is supplied, the harness requires a clean checkout at
+the expected commit and runs against an archive of that verified commit. It
+never executes modified or untracked framework source. Its virtual environment
+is always created beneath the harness's unique validated work root;
+`NETBOX_VENV_DIR` is intentionally unsupported because an externally supplied
+path cannot be a safe recursive cleanup target.
 
 NetBox validates `SECRET_KEY` and each `API_TOKEN_PEPPERS` value at startup;
 both examples deliberately exceed the 50-character minimum. Without

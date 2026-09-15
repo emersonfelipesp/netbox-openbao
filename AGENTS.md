@@ -27,9 +27,13 @@ estate still runs 4.6.5 while `netbox-nms` supports 4.5.8–4.7.99. Keeping the
 4.6 floor preserves a common installable version today without preventing the
 exact 4.7 beta source gate.
 
-**Every 4.6/4.7 difference lives in `netbox_openbao/compat.py`** — read its
-docstring before adding a version check anywhere else, and add it there if you
-must add one. See [Verified 4.7 facts](#verified-47-facts).
+**Every runtime 4.6/4.7 difference lives in `netbox_openbao/compat.py`** — read
+its docstring before adding a runtime version check anywhere else, and add it
+there if you must add one. Migration-state differences are the exception: keep
+them self-contained in the migration graph and derive inherited field state
+from the running NetBox core, as migrations `0006` and `0014` do. Never import
+runtime compatibility helpers from a migration. See
+[Verified 4.7 facts](#verified-47-facts).
 
 **Python 3.12+, PostgreSQL 15+ with `ltree`, Redis 6+.**
 
@@ -127,6 +131,14 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
    and is passed conditionally.
 8. GFK idiom: `to='contenttypes.ContentType'`, `on_delete=models.PROTECT`,
    `related_name='+'`.
+9. NetBox 4.6 and 4.7 differ in inherited serializer fields, custom-action
+   permission mapping, and bulk-list validation order. Compatibility tests must
+   accept either no provisional secret write or an exactly compensated write,
+   while requiring identical authorization and final database/backend state.
+10. The exact-source harness rejects a dirty `NETBOX_SOURCE_DIR`, tests an
+    archive of the verified commit, and owns its virtual environment beneath
+    the unique validated work root. Do not restore `NETBOX_VENV_DIR` or a
+    recursive delete of caller-selected paths.
 
 
 ## Quick-add SSH password auth

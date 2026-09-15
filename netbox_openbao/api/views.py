@@ -81,7 +81,7 @@ from netbox_openbao.synchronization import lock_material_subject, lock_material_
 
 from .authentication_views import AuthenticationAdministrationMixin
 from .automation import AutomationResolveRequestSerializer, AutomationResolveResponseSerializer
-from .permissions import ClusterActionPermissions, SecretActionPermissions
+from .permissions import ClusterActionPermissions, ProcedureActionPermissions, SecretActionPermissions
 from .serializers import (
     ConfirmClusterActionSerializer,
     CredentialAccessLogSerializer,
@@ -185,10 +185,17 @@ class SecretEngineViewSet(NetBoxModelViewSet):
             'checked': timezone.now(),
         })
 
-    @action(detail=True, methods=['post'], url_path='run-procedure')
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='run-procedure',
+        permission_classes=[ProcedureActionPermissions],
+    )
     def run_procedure(self, request, pk=None):
         """Dispatch an audited OpenBao RPC procedure against the engine host device."""
-        engine = get_object_or_404(self.queryset.restrict(request.user, 'change'), pk=pk)
+        engine = get_object_or_404(SecretEngine.objects.annotate(credential_count=Count('credentials')), pk=pk)
+        if not request.user.has_perm('netbox_openbao.change_secretengine', engine):
+            raise PermissionDenied('Change permission is required for this OpenBao engine.')
         serializer = RunProcedureSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
@@ -987,7 +994,37 @@ class CredentialViewSet(NetBoxModelViewSet):
         the whole operation — and so the post-save permission check happens
         inside that compensated region.
         """
-        payload = serializer.validated_data.pop('secret_data', None)
+        if getattr(serializer, 'many', False):
+            try:
+                instances = []
+                for attributes in serializer.validated_data:
+                    payload = attributes.pop('secret_data') if 'secret_data' in attributes else None
+                    credential_type = attributes['credential_type']
+
+                    def persist(metadata, *, attributes=attributes):
+                        instance = serializer.child.create({**attributes, **metadata})
+                        self._conform(instance)
+                        return instance
+
+                    credential, _ = store_credential(
+                        persist,
+                        credential_type,
+                        payload,
+                        cas=0,
+                        user=self.request.user,
+                        request=self.request,
+                        target_policy=attributes.get('policy'),
+                        prelocked=True,
+                    )
+                    instances.append(credential)
+            except ObjectDoesNotExist:
+                raise PermissionDenied() from None
+            serializer.instance = instances
+            return
+
+        payload = None
+        if 'secret_data' in serializer.validated_data:
+            payload = serializer.validated_data.pop('secret_data')
         credential_type = serializer.validated_data['credential_type']
 
         def persist(metadata):
@@ -1046,7 +1083,9 @@ class CredentialViewSet(NetBoxModelViewSet):
             request=self.request,
         )
 
-        payload = serializer.validated_data.pop('secret_data', None)
+        payload = None
+        if 'secret_data' in serializer.validated_data:
+            payload = serializer.validated_data.pop('secret_data')
 
         if not payload:
             try:

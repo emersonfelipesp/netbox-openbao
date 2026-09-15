@@ -335,7 +335,7 @@ def prepare_material(credential_type, payload):
 @material_operation
 @sensitive_variables()
 def store_credential(persist, credential_type, payload, *, cas=0, user=None, request=None, action=None,
-                     subject=None, promote=True, target_policy=None):
+                     subject=None, promote=True, target_policy=None, prelocked=False):
     """
     Persist a credential row and its material as one unit.
 
@@ -356,6 +356,8 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
             which is what stops a create silently overwriting an existing
             secret at a colliding path. Pass the current `kv_version` when
             updating.
+        prelocked (bool): The enclosing bulk operation already declared and
+            locked the complete material graph before its first write.
 
     Returns `(credential, version)`.
     """
@@ -365,7 +367,8 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
 
     fingerprint = derive_key_fingerprint(credential_type, cleaned)
 
-    lock_material_subject(subject, target_policy)
+    if not prelocked:
+        lock_material_subject(subject, target_policy)
     credential = persist(metadata)
     refresh_material_selectors(credential)
     owner = current_material_transaction()

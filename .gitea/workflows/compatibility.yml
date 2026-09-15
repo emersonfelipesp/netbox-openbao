@@ -14,8 +14,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: netbox-openbao-compatibility-${{ github.ref }}
-  cancel-in-progress: true
+  # Redis database numbers are fixed per matrix leg. Serialize every ref so a
+  # feature dispatch cannot overlap a main push and share cache or RQ state.
+  group: netbox-openbao-compatibility
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -54,10 +56,19 @@ jobs:
       REDIS_PORT: "6379"
       REDIS_DATABASE: ${{ matrix.redis_db }}
       REDIS_CACHE_DATABASE: ${{ matrix.redis_cache_db }}
+      NETBOX_RPC_SHA: e8d4ba3535e2b4f33125c16281a34da52b634df0
     steps:
       - name: Checkout
         uses: https://git.nmulti.cloud/actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          persist-credentials: false
+
+      - name: Checkout RPC dependency
+        uses: https://git.nmulti.cloud/actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: N-MultiCloud/netbox-rpc
+          ref: e8d4ba3535e2b4f33125c16281a34da52b634df0
+          path: .deps/netbox-rpc
           persist-credentials: false
 
       - name: Provision isolated compatibility databases
@@ -146,6 +157,7 @@ jobs:
         shell: bash
         env:
           PYTHON_BIN: ${{ steps.interpreter.outputs.python_bin }}
+          NETBOX_RPC_SOURCE_DIR: ${{ github.workspace }}/.deps/netbox-rpc
           UV_CACHE_DIR: ${{ steps.toolchain.outputs.uv_cache }}
           UV_PYTHON_INSTALL_DIR: ${{ steps.toolchain.outputs.uv_python }}
         run: bash .github/ci/netbox-source-test.sh

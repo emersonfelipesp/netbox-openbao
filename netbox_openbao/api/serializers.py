@@ -581,7 +581,11 @@ class OpenBaoProcedureRunSerializer(NetBoxModelSerializer):
         model = OpenBaoProcedureRun
         fields = (
             'id', 'url', 'display_url', 'display', 'engine', 'procedure_name', 'initiated_by',
-            'rpc_execution_id', 'status', 'result', 'error_message', 'comments', 'tags', 'custom_fields',
+            'rpc_execution_id', 'status', 'result', 'error_message',
+        ) + tuple(
+            name for name in ('comments', 'tags', 'custom_fields')
+            if any(field.name == name for field in OpenBaoProcedureRun._meta.get_fields())
+        ) + (
             'created', 'last_updated',
         )
         brief_fields = ('id', 'url', 'display', 'procedure_name', 'status')

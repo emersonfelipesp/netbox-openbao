@@ -5,6 +5,7 @@ from uuid import uuid4
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
+from netbox.models.mixins import OwnerMixin
 
 
 class AdministrationFoundationMigrationTest(TransactionTestCase):
@@ -152,3 +153,33 @@ class AuthenticationAdministrationMigrationTest(TransactionTestCase):
             },
             {"succeeded": "succeeded", "failed": "failed", "authorized": "authorized"},
         )
+
+
+class OpenBaoClusterOwnerStateMigrationTest(TransactionTestCase):
+    """Prove the cluster owner state follows the installed NetBox release."""
+
+    migrate_from = ("netbox_openbao", "0013_authentication_administration_permissions")
+    migrate_to = ("netbox_openbao", "0014_align_cluster_owner_related_name")
+
+    @staticmethod
+    def _migrate(targets):
+        executor = MigrationExecutor(connection)
+        executor.migrate(targets)
+        return executor
+
+    def setUp(self):
+        super().setUp()
+        executor = MigrationExecutor(connection)
+        self.latest_targets = executor.loader.graph.leaf_nodes()
+        self.addCleanup(self._migrate, self.latest_targets)
+        self._migrate([self.migrate_from])
+
+    def test_owner_related_name_matches_netbox_core(self):
+        executor = self._migrate([self.migrate_to])
+        apps = executor.loader.project_state([self.migrate_to]).apps
+        Cluster = apps.get_model("netbox_openbao", "OpenBaoCluster")
+
+        expected = OwnerMixin._meta.get_field("owner").remote_field.related_name
+        actual = Cluster._meta.get_field("owner").remote_field.related_name
+
+        self.assertEqual(actual, expected)

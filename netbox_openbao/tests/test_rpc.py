@@ -44,10 +44,18 @@ def _make_procedure(name: str = 'service.openbao.1.health'):
 
 
 def _grant_rpc_execute(user) -> None:
-    from django.contrib.auth.models import Permission
+    from django.contrib.contenttypes.models import ContentType
+    from netbox_rpc.models import RPCProcedure
+    from users.models import ObjectPermission
 
-    permission = Permission.objects.get(codename='execute_rpcprocedure', content_type__app_label='netbox_rpc')
-    user.user_permissions.add(permission)
+    permission = ObjectPermission.objects.create(
+        name=f'OpenBao RPC execution {user.pk}',
+        actions=['execute'],
+    )
+    permission.users.add(user)
+    permission.object_types.add(ContentType.objects.get_for_model(RPCProcedure))
+    if hasattr(user, '_object_perm_cache'):
+        del user._object_perm_cache
 
 
 class DispatchOpenBaoProcedureTest(OpenBaoTestCase):
@@ -209,7 +217,7 @@ class RunProcedureAPITest(APITestCase):
             **self.header,
         )
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 400, response.data)
         self.assertIn('params', response.data)
 
     @patch('netbox_openbao.api.views.dispatch_openbao_procedure')
@@ -243,7 +251,7 @@ class RunProcedureAPITest(APITestCase):
             **self.header,
         )
 
-        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.status_code, 202, response.data)
         self.assertEqual(response.data['procedure_name'], 'service.openbao.1.health')
         mock_dispatch.assert_called_once()
 
@@ -262,7 +270,7 @@ class RunProcedureAPITest(APITestCase):
             **self.header,
         )
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 400, response.data)
         self.assertIn('host_device', response.data)
 
     def test_run_procedure_missing_permission_is_403(self):

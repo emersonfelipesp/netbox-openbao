@@ -14,6 +14,8 @@ render no material, because "returned 403" and "leaked nothing" are different
 claims and only the second one matters if the first regresses.
 """
 
+from copy import deepcopy
+
 from django.db import transaction
 from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
@@ -854,6 +856,27 @@ class ConstrainedPermissionTest(_GateFixture, APITestCase):
             'A refused create left material behind in OpenBao.',
         )
 
+    def test_a_constrained_bulk_create_is_403_and_strands_no_material(self):
+        self.grant('view')
+        self.grant('add', {'policy__slug': 'lab'})
+        before_store = deepcopy(FakeBackend.store)
+
+        response = self.client.post(
+            self.list_url,
+            [{
+                'name': 'bulk-sneaky',
+                'credential_type': 'password',
+                'policy': self.policy.pk,
+                'secret_data': {'password': 'x'},
+            }],
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Credential.objects.filter(name='bulk-sneaky').exists())
+        self.assertEqual(FakeBackend.store, before_store)
+
     def test_a_constrained_change_cannot_move_a_credential_out_of_scope(self):
         self.grant('view')
         self.grant('change', {'policy__slug': 'production'})
@@ -1035,6 +1058,7 @@ class BulkMaterialWriteTest(_GateFixture, APITestCase):
 
     def test_bulk_create_failure_preserves_native_error_and_compensates_prior_write(self):
         self.add_permissions('netbox_openbao.add_credential', 'netbox_openbao.view_credentialpolicy')
+        before_store = deepcopy(FakeBackend.store)
         response = self.client.post(
             self.list_url,
             [{'name': 'Provisional batch item', 'credential_type': 'password', 'policy': self.policy.pk,
@@ -1045,4 +1069,9 @@ class BulkMaterialWriteTest(_GateFixture, APITestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Credential.objects.filter(name='Provisional batch item').exists())
-        self.assertTrue(FakeBackend.delete_calls)
+        self.assertEqual(FakeBackend.store, before_store)
+        if FakeBackend.delete_calls:
+            self.assertEqual(len(FakeBackend.delete_calls), 1)
+            path, versions = FakeBackend.delete_calls[0]
+            self.assertTrue(path.startswith('netbox/credentials/'))
+            self.assertEqual(versions, (1,))

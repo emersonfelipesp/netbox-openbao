@@ -279,6 +279,7 @@ class QuickAddViewTest(_QuickAddBase):
             'username': 'admin',
             'policy': self.policy.pk,
             'source': 'generate',
+            'auth_method': 'keypair',
             'key_type': 'ed25519',
             'port': 22,
             'create_service': 'on',

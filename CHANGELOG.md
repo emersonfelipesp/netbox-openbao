@@ -132,6 +132,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The exact-source NetBox 4.6.5 and 4.7.0-beta2 compatibility gate now checks
+  out the private `netbox-rpc` dependency at an immutable commit, verifies its
+  source SHA and installed `0.1.8.post1` distribution, and installs it before
+  netbox-openbao. The protected-branch gate no longer asks the public package
+  index for an unpublished runtime dependency or certifies a source revision
+  that predates the credential-authority contract. The OpenBao cluster owner
+  field now records the running NetBox release's reverse-relation state,
+  preventing a false pending migration on NetBox 4.6 while retaining NetBox
+  4.7 behavior. The plugin now declares the Pydantic runtime used by the RPC
+  integration, maps procedure dispatch to change permission on the existing
+  engine, uses NetBox object-permission restrictions for RPC execution and
+  approval, tolerates the model serializer fields available in each supported
+  NetBox release, and preserves secret compensation across both versions'
+  bulk-create validation order. The harness rejects dirty NetBox inputs, tests
+  an archive of the verified commit, and creates its virtual environment only
+  beneath the validated unique work root. Constrained bulk creates now return
+  HTTP 403 and leave neither database rows nor secret material behind.
+
 - **The shared Django settings cache has been removed.** A concurrent fill
   could restore stale security controls after another process committed and
   invalidated the old entry, while a cache outage made every configuration read
