@@ -139,3 +139,8 @@ class ExplorerExecuteSerializer(StrictSerializer):
 
     def validate_body(self, value):
         return _safe(validate_bounded_json, value)
+
+
+class EngineJourneyExecuteSerializer(ExplorerExecuteSerializer):
+    journey_id = serializers.RegexField(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$", max_length=100)
+    operation_key = None

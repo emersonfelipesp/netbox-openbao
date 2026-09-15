@@ -341,6 +341,11 @@ view/add/change/delete permissions:
 | `execute_secret_operations_openbaocluster` | Execute reviewed non-destructive mounted writes |
 | `delete_secret_operations_openbaocluster` | Delete or destroy mounted resources after confirmation |
 | `reveal_secret_operations_openbaocluster` | Execute reads whose response may contain material |
+| `reveal_kv_secrets_openbaocluster` / `manage_kv_secrets_openbaocluster` / `destroy_kv_versions_openbaocluster` | Separate KV reads, ordinary mutations, and destructive version lifecycle |
+| `use_transit_openbaocluster` / `manage_transit_keys_openbaocluster` / `delete_transit_keys_openbaocluster` | Transit cryptographic use, key management, and key deletion |
+| `generate_database_credentials_openbaocluster` / `manage_database_roles_openbaocluster` / `delete_database_resources_openbaocluster` / `rotate_database_credentials_openbaocluster` | Database credential generation, configuration, deletion, and guarded rotation/reset |
+| `issue_ssh_credentials_openbaocluster` / `manage_ssh_roles_openbaocluster` / `delete_ssh_roles_openbaocluster` | SSH credential/signing operations, role management, and role deletion |
+| `generate_totp_codes_openbaocluster` / `manage_totp_keys_openbaocluster` / `delete_totp_keys_openbaocluster` | TOTP code use, key management, and key deletion |
 
 `view_openbaocluster` alone does not grant discovery. Both UI and API queries
 use `RestrictedQuerySet.restrict()`, so NetBox object-permission constraints
@@ -402,8 +407,9 @@ The baseline includes cluster session and bootstrap, Raft storage, API
 exploration, auth methods, MFA, engine lifecycle, generic mounted engines, KV,
 transit/database/SSH/TOTP, PKI, Kubernetes, policies, identity, OIDC,
 namespaces, leases, tools, and UI configuration. A family marked `planned` is
-not implemented. The `cluster-session`, `auth-methods`, and `mfa` families are
-complete through the request-scoped authentication workspace. Completion
+not implemented. The `cluster-session`, `auth-methods`, `mfa`, `kv`, and
+`common-engines` families are complete through request-scoped typed
+workspaces. Completion
 requires a Web UI, REST API, authorization, auditing, direct/broker behavior,
 hostile-input tests, and live OpenBao/browser evidence.
 

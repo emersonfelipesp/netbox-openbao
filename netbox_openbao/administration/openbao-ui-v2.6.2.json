@@ -366,7 +366,29 @@
       ],
       "capability": "KV v1/v2 data, metadata and versions",
       "owner_issue": 67,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "secrets.backend.metadata": "Typed KV v2 metadata read, update, and guarded whole-history deletion journeys cover custom metadata and per-version state without persisting values.",
+        "secrets.backend.diff": "A request-scoped KV v2 comparison performs two exact version reads and returns both bounded no-store responses without storing either value.",
+        "secrets.backend.versions": "Typed KV v1 and v2 read, write, patch, delete, undelete, destroy, metadata, and mount-configuration journeys cover version lifecycle with dedicated permissions and exact destructive confirmations."
+      },
+      "evidence": {
+        "secrets.backend.metadata": {
+          "implementation": ["netbox_openbao/administration/engine_journeys.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html", "netbox_openbao/static/netbox_openbao/secret_engine_administration.js"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_live.py"]
+        },
+        "secrets.backend.diff": {
+          "implementation": ["netbox_openbao/administration/engine_journeys.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/static/netbox_openbao/secret_engine_administration.js"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_browser.py"]
+        },
+        "secrets.backend.versions": {
+          "implementation": ["netbox_openbao/administration/engine_journeys.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_live.py"]
+        }
+      }
     },
     {
       "id": "common-engines",
@@ -378,7 +400,35 @@
       ],
       "capability": "Transit, database, SSH and TOTP journeys",
       "owner_issue": 67,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "secrets.backend.credentials": "Typed database dynamic/static credential and SSH credential journeys return generated material once under dedicated permissions and no-store handling.",
+        "secrets.backend.sign": "Typed transit signing and verification plus SSH CA signing journeys expose schema-declared inputs through mount-bound reviewed operations.",
+        "secrets.backend.actions": "Typed transit cryptographic actions, database rotation/reset, SSH lookup/verification, and TOTP generation/validation cover reviewed engine-specific actions.",
+        "secrets.backend.overview": "Mount-aware catalogs expose reviewed transit keys, database connections and roles, SSH roles, and TOTP keys only when both runtime schema and object permissions allow them."
+      },
+      "evidence": {
+        "secrets.backend.credentials": {
+          "implementation": ["netbox_openbao/administration/engine_journeys.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html", "netbox_openbao/static/netbox_openbao/secret_engine_administration.js"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_live.py"]
+        },
+        "secrets.backend.sign": {
+          "implementation": ["netbox_openbao/administration/engine_journeys.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/static/netbox_openbao/secret_engine_administration.js"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_live.py"]
+        },
+        "secrets.backend.actions": {
+          "implementation": ["netbox_openbao/administration/engine_journeys.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_live.py"]
+        },
+        "secrets.backend.overview": {
+          "implementation": ["netbox_openbao/administration/engine_journeys.py", "netbox_openbao/api/engine_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html"],
+          "tests": ["netbox_openbao/tests/test_engine_administration.py", "netbox_openbao/tests/test_engine_administration_browser.py"]
+        }
+      }
     },
     {
       "id": "pki",

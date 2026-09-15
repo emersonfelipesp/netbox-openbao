@@ -10,6 +10,10 @@ from rest_framework.response import Response
 
 from netbox_openbao.administration import get_administration_backend
 from netbox_openbao.administration.audit import AdministrationAuditError, log_administration
+from netbox_openbao.administration.engine_journeys import (
+    engine_journey_catalog,
+    resolve_engine_journey,
+)
 from netbox_openbao.administration.engines import (
     RESERVED_MOUNT_PATHS,
     classify_explorer_operations,
@@ -25,6 +29,7 @@ from netbox_openbao.models import SecretEngine
 from .engine_serializers import (
     DisableSecretEngineSerializer,
     EnableSecretEngineSerializer,
+    EngineJourneyExecuteSerializer,
     ExplorerExecuteSerializer,
     ReadSecretEngineSerializer,
     RemountSecretEngineSerializer,
@@ -65,9 +70,7 @@ class SecretEngineAdministrationMixin:
         backend, document = self._engine_document(cluster)
         expected_operation_id = ENGINE_LIFECYCLE_OPERATIONS.get((method, path_template))
         if expected_operation_id is None or not any(
-            item.method == method
-            and item.path_template == path_template
-            and item.operation_id == expected_operation_id
+            item.method == method and item.path_template == path_template and item.operation_id == expected_operation_id
             for item in document.operations
         ):
             raise OpenBaoConflict("OpenBao does not advertise the reviewed operation.")
@@ -108,11 +111,16 @@ class SecretEngineAdministrationMixin:
 
     @staticmethod
     def _unknown_mutation_response():
-        response = _no_store(Response({
-            "outcome": "unknown",
-            "audit_status": "preflight-only",
-            "message": "OpenBao may have accepted the request. Do not retry; verify current state first.",
-        }, status=status.HTTP_503_SERVICE_UNAVAILABLE))
+        response = _no_store(
+            Response(
+                {
+                    "outcome": "unknown",
+                    "audit_status": "preflight-only",
+                    "message": "OpenBao may have accepted the request. Do not retry; verify current state first.",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        )
         response["X-OpenBao-Operation-Outcome"] = "unknown"
         response["X-OpenBao-Audit-Status"] = "preflight-only"
         return response
@@ -493,6 +501,182 @@ class SecretEngineAdministrationMixin:
             audit_complete = False
         response = self._mutation_response(
             {"operation": operation.as_dict(), "data": result},
+            audit_complete=audit_complete,
+        )
+        return _no_store(response)
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="secret-engine-journeys",
+        permission_classes=[ClusterActionPermissions],
+    )
+    def secret_engine_journeys(self, request, pk=None):
+        cluster = self._cluster(request, pk, "view_secret_engines")
+        try:
+            backend, document = self._engine_document(cluster)
+            mounts = backend.list_secret_engines()
+            journeys = tuple(
+                item
+                for item in engine_journey_catalog(document, mounts)
+                if request.user.has_perm(item["required_permission"], cluster)
+            )
+            self._audit(
+                cluster,
+                request,
+                "secret-engine-journey-catalog",
+                risk="read",
+                method="GET",
+                path="/sys/internal/specs/openapi",
+                digest=document.digest,
+            )
+        except (AdministrationAuditError, OpenBaoError) as exc:
+            self._backend_failure(request, cluster, "secret-engine-journey-catalog", exc, risk_level="read")
+        return _no_store(Response({"capability_digest": document.digest, "journeys": journeys}))
+
+    def _prepare_engine_journey(self, request, cluster, data):
+        backend, document = self._engine_document(cluster)
+        if data["capability_digest"] != document.digest:
+            raise OpenBaoConflict("The OpenBao capability document changed; reload the journey catalog.")
+        mounts = backend.list_secret_engines()
+        journey, operation = resolve_engine_journey(document, mounts, data["mount_path"], data["journey_id"])
+        if not request.user.has_perm(journey.required_permission, cluster):
+            raise PermissionDenied("The first-class engine journey permission is required.")
+        if set(data["query"]) & dict(journey.fixed_query).keys():
+            raise ValidationError("The request cannot override a fixed first-class journey query parameter.")
+        path = compile_operation_path(
+            operation.path_template,
+            data["mount_path"],
+            data["resource_path"],
+            data["path_parameters"],
+        )
+        if journey.journey_id == "kv2.diff":
+            self._validate_journey_fields(operation, {**data, "query": {}})
+            self._validate_kv_diff_query(data["query"])
+        else:
+            self._validate_journey_fields(operation, data)
+        if journey.confirmation_prefix:
+            expected = f"{journey.confirmation_prefix} {path} ON {cluster.slug}"
+            if data["confirmation"] != expected:
+                raise ValidationError("The exact first-class journey confirmation is required.")
+        return backend, document, journey, operation, path
+
+    @staticmethod
+    def _validate_journey_fields(operation, data):
+        if set(data["query"]) - set(operation.query_parameters):
+            raise ValidationError("The request contains an undeclared query parameter.")
+        if not set(operation.required_query_parameters) <= set(data["query"]):
+            raise ValidationError("The request omits a required query parameter.")
+        if set(data["body"]) - set(operation.body_fields):
+            raise ValidationError("The request contains an undeclared body field.")
+        if not set(operation.required_body_fields) <= set(data["body"]):
+            raise ValidationError("The request omits a required body field.")
+        validate_declared_field_types(data["query"], operation.query_parameter_types)
+        validate_declared_field_types(data["body"], operation.body_field_types)
+        validate_declared_field_types(data["path_parameters"], operation.path_parameter_types)
+
+    @staticmethod
+    def _validate_kv_diff_query(query):
+        if set(query) != {"from_version", "to_version"}:
+            raise ValidationError("KV diff requires exactly from_version and to_version.")
+        versions = (query["from_version"], query["to_version"])
+        if any(isinstance(version, bool) or not isinstance(version, int) or version < 1 for version in versions):
+            raise ValidationError("KV diff versions must be positive integers.")
+        if versions[0] == versions[1]:
+            raise ValidationError("KV diff versions must be different.")
+
+    @staticmethod
+    def _run_engine_journey(backend, journey, operation, path, data):
+        if journey.journey_id != "kv2.diff":
+            return backend.execute_mounted_operation(
+                operation.method,
+                path,
+                query={**data["query"], **dict(journey.fixed_query)},
+                body=data["body"],
+            )
+        before = backend.execute_mounted_operation(
+            "GET", path, query={"version": data["query"]["from_version"]}, body={}
+        )
+        after = backend.execute_mounted_operation("GET", path, query={"version": data["query"]["to_version"]}, body={})
+        return {
+            "from_version": data["query"]["from_version"],
+            "to_version": data["query"]["to_version"],
+            "before": before,
+            "after": after,
+        }
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="secret-engine-journeys/execute",
+        permission_classes=[ClusterActionPermissions],
+        renderer_classes=[JSONRenderer],
+    )
+    @sensitive_variables()
+    def execute_secret_engine_journey(self, request, pk=None):
+        cluster = self._cluster(request, pk, "view_secret_engines")
+        data = self._serializer(EngineJourneyExecuteSerializer, request, cluster)
+        raw_request = getattr(request, "_request", request)
+        raw_request.sensitive_post_parameters = "__ALL__"
+        try:
+            backend, document, journey, operation, path = self._prepare_engine_journey(request, cluster, data)
+            log_administration(
+                cluster,
+                request.user,
+                action=f"engine-journey-{journey.journey_id}-authorized",
+                operation_id=journey.journey_id,
+                risk_level=journey.risk_level,
+                method=journey.method,
+                path_template=journey.path_template,
+                reason=data["reason"],
+                capability_digest=document.digest,
+                outcome="authorized",
+                success=True,
+                status_code=202,
+                message="Authorized a reviewed first-class OpenBao engine journey.",
+                request=request,
+                require_durable=True,
+            )
+            result = self._run_engine_journey(backend, journey, operation, path, data)
+        except CapabilitySchemaError as exc:
+            raise ValidationError(str(exc)) from None
+        except OpenBaoMutationUnknown:
+            self._record_unknown(
+                cluster,
+                request,
+                journey.journey_id,
+                risk=journey.risk_level,
+                method=journey.method,
+                path=journey.path_template,
+                digest=document.digest,
+                reason=data["reason"],
+            )
+            return self._unknown_mutation_response()
+        except (AdministrationAuditError, OpenBaoError) as exc:
+            self._backend_failure(
+                request,
+                cluster,
+                "secret-engine-journey-execute",
+                exc,
+                reason=data["reason"],
+                risk_level=journey.risk_level if "journey" in locals() else "write",
+            )
+        audit_complete = True
+        try:
+            self._audit(
+                cluster,
+                request,
+                f"engine-journey-{journey.journey_id}",
+                risk=journey.risk_level,
+                method=journey.method,
+                path=journey.path_template,
+                digest=document.digest,
+                reason=data["reason"],
+            )
+        except AdministrationAuditError:
+            audit_complete = False
+        response = self._mutation_response(
+            {"journey": journey.as_dict(), "data": result},
             audit_complete=audit_complete,
         )
         return _no_store(response)

@@ -60,9 +60,7 @@ _RESOURCE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+~-]{0,199}$")
 _SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,499}$")
 _MIGRATION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
 _DURATION_RE = re.compile(r"^(?:0|[1-9][0-9]{0,18})(?:ns|us|µs|ms|s|m|h|d)?$")
-_MOUNTED_TEMPLATE_RE = re.compile(
-    r"^/\{secret_mount_path\}(?:/[A-Za-z0-9_.:@+~-]+|/\{[A-Za-z][A-Za-z0-9_]{0,63}\})*$"
-)
+_MOUNTED_TEMPLATE_RE = re.compile(r"^/\{secret_mount_path\}(?:/[A-Za-z0-9_.:@+~-]+|/\{[A-Za-z][A-Za-z0-9_]{0,63}\})*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +74,7 @@ class SecretEngineMount:
     default_lease_ttl: int = 0
     max_lease_ttl: int = 0
     plugin_version: str = ""
+    kv_version: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -155,8 +154,14 @@ def normalize_secret_engine_mounts(payload: Any) -> tuple[SecretEngineMount, ...
             raise CapabilitySchemaError("OpenBao returned invalid secret-engine metadata.")
         path = normalize_mount_path(raw_path)
         config = raw_mount.get("config") or {}
+        options = raw_mount.get("options") or {}
         if not isinstance(config, dict):
             raise CapabilitySchemaError("OpenBao returned invalid secret-engine metadata.")
+        if not isinstance(options, dict):
+            raise CapabilitySchemaError("OpenBao returned invalid secret-engine metadata.")
+        raw_kv_version = options.get("version", "") if raw_mount.get("type") == "kv" else ""
+        if not isinstance(raw_kv_version, str) or raw_kv_version not in {"", "1", "2"}:
+            raise CapabilitySchemaError("OpenBao returned invalid KV engine metadata.")
         mounts.append(
             SecretEngineMount(
                 path=path,
@@ -168,6 +173,7 @@ def normalize_secret_engine_mounts(payload: Any) -> tuple[SecretEngineMount, ...
                 default_lease_ttl=_public_integer(config.get("default_lease_ttl", 0), "default lease TTL"),
                 max_lease_ttl=_public_integer(config.get("max_lease_ttl", 0), "maximum lease TTL"),
                 plugin_version=_public_text(raw_mount.get("plugin_version", ""), "plugin version", 100),
+                kv_version=int(raw_kv_version) if raw_kv_version else 0,
             )
         )
     return tuple(sorted(mounts, key=lambda mount: mount.path))
@@ -264,8 +270,10 @@ def _validate_mount_config(value: Any) -> None:
 def _validate_tune_fields(value: dict[str, Any]) -> None:
     string_fields = {"description", "listing_visibility", "token_type", "plugin_version", "plugin_name"}
     list_fields = {
-        "audit_non_hmac_request_keys", "audit_non_hmac_response_keys",
-        "passthrough_request_headers", "allowed_response_headers",
+        "audit_non_hmac_request_keys",
+        "audit_non_hmac_response_keys",
+        "passthrough_request_headers",
+        "allowed_response_headers",
         "allowed_managed_keys",
     }
     for name in string_fields & value.keys():
@@ -294,8 +302,10 @@ def _validate_string_list(value: Any) -> None:
 
 def _validate_user_lockout_config(value: Any) -> None:
     allowed = {
-        "lockout_counter_reset_duration", "lockout_threshold",
-        "lockout_duration", "lockout_disable",
+        "lockout_counter_reset_duration",
+        "lockout_threshold",
+        "lockout_duration",
+        "lockout_disable",
     }
     if not isinstance(value, dict) or set(value) - allowed:
         raise CapabilitySchemaError("The secret-engine user lockout configuration is invalid.")
@@ -376,10 +386,7 @@ def _generic_template(operation: DiscoveredOperation) -> bool:
     if operation.family != "mounted-secrets" or not _MOUNTED_TEMPLATE_RE.fullmatch(operation.path_template):
         return False
     placeholders = set(re.findall(r"\{([A-Za-z][A-Za-z0-9_]{0,63})\}", operation.path_template))
-    return (
-        set(operation.path_parameters) == placeholders
-        and set(operation.required_path_parameters) == placeholders
-    )
+    return set(operation.path_parameters) == placeholders and set(operation.required_path_parameters) == placeholders
 
 
 def classify_explorer_operations(document: CapabilityDocument) -> tuple[ExplorerOperation, ...]:

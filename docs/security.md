@@ -13,6 +13,21 @@ properties below are what make that defensible, and each is enforced
 structurally — by a type, a constraint, or an absent column — rather than by a
 convention the next contributor has to remember.
 
+The secrets-engine administration workspace applies the same absence-of-custody
+rule to first-class KV, transit, database, SSH, and TOTP journeys. Runtime
+OpenAPI can prove that an exact reviewed operation exists, but it cannot invent
+an executable journey, permission, risk classification, destructive
+confirmation, or response class. Results are inserted as text, returned with
+`Cache-Control: no-store`, cleared after five minutes or `pagehide`, and never
+written to a model, cache, session, task, URL, exception, or audit record. The
+audit contains only actor, cluster, operation metadata, capability digest,
+reason, outcome, and status. Separate permissions isolate material reads,
+ordinary management, credential generation, cryptographic use, and destructive
+key/version lifecycle.
+Journey request fields that can contain material are cleared after successful
+or failed execution, explicit clearing, five-minute expiry, and `pagehide`;
+autocomplete and spellcheck are disabled for those controls.
+
 Each is covered by a test in `netbox_openbao/tests/test_security.py`. If you
 change one, that test should fail; if it doesn't, the test is wrong.
 

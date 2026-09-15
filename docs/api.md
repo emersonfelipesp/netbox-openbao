@@ -29,6 +29,8 @@ internal automation resolution receipts have no CRUD endpoint.
 | `POST /clusters/{id}/secret-engines/disable/` | Disable a mount under separate permission and exact confirmation |
 | `GET /clusters/{id}/secret-operations/` | Return the classified mounted-operation catalog and current capability digest |
 | `POST /clusters/{id}/secret-operations/execute/` | Execute one reviewed mounted operation with stale-state, schema, permission, and confirmation checks |
+| `GET /clusters/{id}/secret-engine-journeys/` | Return permission-filtered KV, transit, database, SSH, and TOTP journeys proven by the live mount-specific schema |
+| `POST /clusters/{id}/secret-engine-journeys/execute/` | Execute one typed journey with stale-digest, mount/version, field, permission, audit, and exact-confirmation checks |
 | `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/` | Singleton runtime configuration; deletion is refused while any credential exists and requires the standard `OpenBaoSettings` model permissions |
 | `GET/POST /engines/` | Secret engines |
 | `GET /engines/{id}/health/` | Probe and record engine status |

@@ -4,11 +4,33 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clearJourneyInputs,
   createMaterialExpiry,
   destructiveConfirmation,
+  journeyConfirmation,
   parseJsonObject,
   replaceSelectOptions,
 } from "../../static/netbox_openbao/secret_engine_administration.js";
+
+test("journey input clearing removes material and restores empty JSON envelopes", () => {
+  const fields = new Map([
+    ["openbao-journey-resource", { value: "sensitive/path" }],
+    ["openbao-journey-reason", { value: "operator reason" }],
+    ["openbao-journey-confirmation", { value: "exact confirmation" }],
+    ["openbao-journey-path", { value: '{"name":"sensitive"}' }],
+    ["openbao-journey-query", { value: '{"token":"sensitive"}' }],
+    ["openbao-journey-body", { value: '{"plaintext":"sensitive"}' }],
+  ]);
+
+  clearJourneyInputs({ getElementById: (id) => fields.get(id) });
+
+  assert.equal(fields.get("openbao-journey-resource").value, "");
+  assert.equal(fields.get("openbao-journey-reason").value, "");
+  assert.equal(fields.get("openbao-journey-confirmation").value, "");
+  assert.equal(fields.get("openbao-journey-path").value, "{}");
+  assert.equal(fields.get("openbao-journey-query").value, "{}");
+  assert.equal(fields.get("openbao-journey-body").value, "{}");
+});
 
 test("material expiry resets from each successful response and can be cancelled", () => {
   let nextId = 0;
@@ -53,6 +75,19 @@ test("destructive confirmations bind the advertised method and compiled mount pa
     "POST /secret/destroy/team/database ON primary",
   );
   assert.equal(destructiveConfirmation({ ...operation, risk_level: "write" }, "secret", "x", "primary"), "");
+});
+
+test("first-class journey confirmation matches the server path compiler", () => {
+  const journey = {
+    confirmation_prefix: "DELETE DATABASE ROLE",
+    mount_path: "database",
+    path_template: "/{secret_mount_path}/roles/{name}",
+  };
+  assert.equal(
+    journeyConfirmation(journey, "", { name: "team@app+blue" }, "primary"),
+    "DELETE DATABASE ROLE /database/roles/team@app+blue ON primary",
+  );
+  assert.equal(journeyConfirmation({ ...journey, confirmation_prefix: "" }, "", {}, "primary"), "");
 });
 
 test("dynamic options synchronize an enhanced select", () => {

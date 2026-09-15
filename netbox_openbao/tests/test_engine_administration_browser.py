@@ -27,9 +27,9 @@ class SecretEngineAdministrationBrowserTest(StaticLiveServerTestCase):
         super().setUp()
         suffix = uuid4().hex[:10]
         self.user = get_user_model().objects.create_superuser(
-            username=f"issue66-browser-{suffix}",
+            username=f"issue67-browser-{suffix}",
             email="browser@example.invalid",
-            password="issue66-browser-password",
+            password="issue67-browser-password",
         )
         self.cluster = OpenBaoCluster.objects.create(
             name=f"Browser cluster {suffix}",
@@ -50,7 +50,7 @@ class SecretEngineAdministrationBrowserTest(StaticLiveServerTestCase):
     def _login(self, page):
         page.goto(f"{self.live_server_url}/login/", wait_until="networkidle")
         page.locator('input[name="username"]').fill(self.user.username)
-        page.locator('input[name="password"]').fill("issue66-browser-password")
+        page.locator('input[name="password"]').fill("issue67-browser-password")
         page.locator('button[type="submit"]').click()
         page.wait_for_load_state("networkidle")
 
@@ -83,11 +83,41 @@ class SecretEngineAdministrationBrowserTest(StaticLiveServerTestCase):
             )
             self.assertEqual(unlabeled, [])
 
+            page.get_by_role("button", name="Load available journeys").click()
+            journey = page.locator("#openbao-journey-key")
+            page.wait_for_function(
+                "() => Object.values(document.getElementById('openbao-journey-key').tomselect.options)"
+                ".some(option => option.text.includes('Read secret version'))"
+            )
+            read_journey_key = journey.evaluate(
+                "select => Object.entries(select.tomselect.options)"
+                ".find(([, option]) => option.text.includes('Read secret version'))[0]"
+            )
+            journey.evaluate(
+                "(select, value) => { select.tomselect.setValue(value); select.dispatchEvent(new Event('change')); }",
+                read_journey_key,
+            )
+            page.locator("#openbao-journey-resource").fill("team/journey")
+            page.locator("#openbao-journey-reason").fill("Exercise first-class material handling.")
+            self.backend.material_response = "first-class-canary"
+            journey_execution_path = "secret-engine-journeys/execute/"
+            with page.expect_response(lambda response: response.url.endswith(journey_execution_path)) as execution:
+                page.get_by_role("button", name="Run engine task").click()
+            self.assertTrue(execution.value.ok, execution.value.text())
+            page.locator("#openbao-journey-result").get_by_text("first-class-canary").wait_for()
+            self.assertEqual(page.locator("#openbao-journey-resource").input_value(), "")
+            self.assertEqual(page.locator("#openbao-journey-reason").input_value(), "")
+            self.assertEqual(page.locator("#openbao-journey-body").input_value(), "{}")
+            page.locator("#openbao-journey-body").evaluate(
+                '(field) => { field.value = \'{"plaintext":"manual-clear-canary"}\'; }'
+            )
+            page.locator("#openbao-journey-form").get_by_role("button", name="Clear results").click()
+            self.assertEqual(page.locator("#openbao-journey-result").inner_text(), "No result.")
+            self.assertEqual(page.locator("#openbao-journey-body").input_value(), "{}")
+
             page.get_by_role("button", name="Load classified operations").click()
             operation = page.locator("#openbao-operation-key")
-            read_operation_key = (
-                "secret_mount_path :: kv-read-data-path :: GET /{secret_mount_path}/data/{path}"
-            )
+            read_operation_key = "secret_mount_path :: kv-read-data-path :: GET /{secret_mount_path}/data/{path}"
             page.wait_for_function(
                 "value => Object.hasOwn(document.getElementById('openbao-operation-key').tomselect.options, value)",
                 arg=read_operation_key,

@@ -1,8 +1,9 @@
 # Administer OpenBao secret engines
 
 The secret-engine workspace gives NetBox operators a cluster-scoped Web UI and
-REST API for OpenBao 2.6.x mount lifecycle and the initial reviewed KV v2
-mounted operations. It
+REST API for OpenBao 2.6.x mount lifecycle, first-class KV v1/v2, transit,
+database, SSH, and TOTP journeys, and the reviewed generic mounted-operation
+fallback. It
 uses the cluster's configured service identity; an OpenBao token is never sent
 to the browser or accepted from an API caller.
 
@@ -22,6 +23,22 @@ permissions required for the operator's role:
 | `execute_secret_operations_openbaocluster` | Run reviewed non-destructive writes |
 | `delete_secret_operations_openbaocluster` | Delete or destroy mounted resources |
 | `reveal_secret_operations_openbaocluster` | Run reads whose response can contain secret material |
+| `reveal_kv_secrets_openbaocluster` | Browse and read KV data, metadata, versions, and diffs |
+| `manage_kv_secrets_openbaocluster` | Write, patch, undelete, and configure KV data |
+| `destroy_kv_versions_openbaocluster` | Delete or irreversibly destroy KV versions and metadata |
+| `use_transit_openbaocluster` | Encrypt, decrypt, rewrap, sign, verify, hash, HMAC, and generate random data |
+| `manage_transit_keys_openbaocluster` | Create, configure, and rotate transit keys |
+| `delete_transit_keys_openbaocluster` | Delete transit keys after exact confirmation |
+| `generate_database_credentials_openbaocluster` | Generate dynamic or static database credentials |
+| `manage_database_roles_openbaocluster` | Manage database connections, dynamic roles, and static roles |
+| `delete_database_resources_openbaocluster` | Delete database connections, dynamic roles, and static roles after exact confirmation |
+| `rotate_database_credentials_openbaocluster` | Rotate root/static credentials or reset a connection after confirmation |
+| `issue_ssh_credentials_openbaocluster` | Issue OTP credentials, sign keys, and use SSH lookup/verification |
+| `manage_ssh_roles_openbaocluster` | Manage SSH roles |
+| `delete_ssh_roles_openbaocluster` | Delete SSH roles after exact confirmation |
+| `generate_totp_codes_openbaocluster` | Generate and validate TOTP codes |
+| `manage_totp_keys_openbaocluster` | Create and inspect TOTP keys |
+| `delete_totp_keys_openbaocluster` | Delete TOTP keys after exact confirmation |
 
 The OpenBao service policy remains a separate authorization boundary. A NetBox
 permission does not grant an upstream capability that the service identity
@@ -41,6 +58,30 @@ and mounted-path registry. Choose a live
 non-system mount, complete the displayed resource, query, and body fields, and
 provide an operational reason. Destructive operations display an exact
 confirmation that binds the HTTP method, compiled path, and cluster slug.
+
+Prefer **First-class engine journeys** when the task appears there. The catalog
+is the intersection of a static OpenBao 2.6.2 journey registry, the selected
+mount's exact runtime OpenAPI operations, its KV version when applicable, and
+the current user's object-constrained permission. It includes:
+
+- KV v1/v2 browse, read, write, patch, metadata, configuration, version diff,
+  delete, undelete, and irreversible destroy operations;
+- transit key lifecycle plus encrypt, decrypt, rewrap, sign, verify, hash,
+  HMAC, and random generation;
+- database connection, dynamic-role, static-role, credential, rotation, and
+  reset operations;
+- SSH role, OTP credential, CA signing, lookup, public-key, and verification
+  operations; and
+- TOTP key, code-generation, and validation operations.
+
+KV diff reads two explicitly selected positive versions during one request and
+returns both values for operator comparison. It does not persist either value.
+Browse and list journeys fix the upstream `list=true` query themselves; callers
+cannot override it. If two valid mount names collapse to the same OpenBao
+OpenAPI parameter name, such as `team-db` and `team_db`, the typed catalog
+omits both mounts and execution fails closed until the collision is removed.
+Destructive journeys require the dedicated engine permission and the exact
+confirmation displayed after the mount and resource path are compiled.
 
 Explorer results may contain secret material. Copy required values directly to
 approved custody and select **Clear result**. The page also clears the result
@@ -63,6 +104,8 @@ POST /api/plugins/openbao/clusters/{id}/secret-engines/remount-status/
 POST /api/plugins/openbao/clusters/{id}/secret-engines/disable/
 GET  /api/plugins/openbao/clusters/{id}/secret-operations/
 POST /api/plugins/openbao/clusters/{id}/secret-operations/execute/
+GET  /api/plugins/openbao/clusters/{id}/secret-engine-journeys/
+POST /api/plugins/openbao/clusters/{id}/secret-engine-journeys/execute/
 ```
 
 The execution request must echo the latest catalog's `capability_digest` and
@@ -89,6 +132,25 @@ Never retry a mutation after a transport or response-parsing failure. Its
 upstream outcome may be unknown; refresh the mount or resource state and
 reconcile it first.
 
+First load `secret-engine-journeys/`, retain its `capability_digest`, and select
+one returned `journey_id` with its returned `mount_path`. The execution route
+reloads the runtime schema, rejects a stale digest or cross-mount journey,
+validates only schema-declared typed fields, checks the journey's dedicated
+permission, and compiles the path server-side.
+
+```json
+{
+  "journey_id": "transit.encrypt",
+  "capability_digest": "<64 lowercase hexadecimal characters>",
+  "mount_path": "transit",
+  "resource_path": "",
+  "path_parameters": {"name": "payments"},
+  "query": {},
+  "body": {"plaintext": "Ym91bmRlZC1pbnB1dA=="},
+  "reason": "Encrypt an application payload"
+}
+```
+
 ## Compatibility and limitations
 
 The reviewed execution contract starts at OpenBao 2.6.2 and accepts only the
@@ -96,6 +158,7 @@ The reviewed execution contract starts at OpenBao 2.6.2 and accepts only the
 DELETE operations for KV and plugin-style mounted schemas when their templates,
 required path parameters, query parameters, and bodies satisfy the reviewed
 grammar. Merely advertised operations outside that grammar remain display-only.
-Engine-specific guided journeys such as KV version history, PKI issuance,
-database credentials, transit signing, and Kubernetes credentials remain
-optimized typed workspaces layered over the generic reach.
+KV, transit, database, SSH, and TOTP are first-class typed journeys. PKI and
+Kubernetes credentials remain planned typed workspaces; their reviewed generic
+mounted operations remain available when the runtime schema and permissions
+admit them.

@@ -14,6 +14,34 @@ export function destructiveConfirmation(operation, mount, resource, clusterSlug)
   return `${operation.method} ${path} ON ${clusterSlug}`;
 }
 
+export function journeyConfirmation(journey, resource, pathParameters, clusterSlug) {
+  if (!journey?.confirmation_prefix) return "";
+  let path = journey.path_template.replace("{secret_mount_path}", encodeURIComponent(journey.mount_path));
+  if (path.includes("{path}")) {
+    const encodedResource = resource.split("/").map(encodePathValue).join("/");
+    path = path.replace("{path}", encodedResource);
+  }
+  Object.entries(pathParameters).forEach(([name, value]) => {
+    path = path.replace(`{${name}}`, encodePathValue(String(value)));
+  });
+  return `${journey.confirmation_prefix} ${path} ON ${clusterSlug}`;
+}
+
+function encodePathValue(value) {
+  return encodeURIComponent(value).replace(/%3A/gi, ":").replace(/%40/gi, "@").replace(/%2B/gi, "+");
+}
+
+export function clearJourneyInputs(scope = document) {
+  ["resource", "reason", "confirmation"].forEach((name) => {
+    const field = scope.getElementById(`openbao-journey-${name}`);
+    if (field) field.value = "";
+  });
+  ["path", "query", "body"].forEach((name) => {
+    const field = scope.getElementById(`openbao-journey-${name}`);
+    if (field) field.value = "{}";
+  });
+}
+
 export function createMaterialExpiry({ setTimer = setTimeout, clearTimer = clearTimeout, ttlMs = 300000 } = {}) {
   let timer = null;
   return {
@@ -69,8 +97,11 @@ function bootstrap() {
   const csrf = root.querySelector("input[name=csrfmiddlewaretoken]")?.value || "";
   const status = document.getElementById("openbao-engine-status");
   const result = document.getElementById("openbao-operation-result");
+  const journeyResult = document.getElementById("openbao-journey-result");
   let capabilityDigest = "";
   let operations = new Map();
+  let journeyDigest = "";
+  let journeys = new Map();
   const materialExpiry = createMaterialExpiry();
 
   function message(text, failed = false) {
@@ -135,6 +166,92 @@ function bootstrap() {
     }
     catch (error) { message(error.message, true); }
   }));
+
+  listen(document.getElementById("openbao-journey-refresh"), "click", async () => {
+    try {
+      const payload = await request("secret-engine-journeys/");
+      journeyDigest = payload.capability_digest;
+      journeys = new Map(payload.journeys.map((journey, index) => [String(index), journey]));
+      const select = document.getElementById("openbao-journey-key");
+      replaceSelectOptions(select, payload.journeys.map((journey, index) => ({
+        value: String(index),
+        text: `${journey.mount_path} · ${journey.group} · ${journey.label}`,
+      })));
+      document.getElementById("openbao-journey-catalog").textContent =
+        `${payload.journeys.length} permission-filtered, runtime-advertised journeys are available.`;
+      select.dispatchEvent(new Event("change"));
+      message("Loaded the first-class engine journey catalog.");
+    } catch (error) { message(error.message, true); }
+  });
+
+  listen(document.getElementById("openbao-journey-key"), "change", (event) => {
+    const journey = journeys.get(event.currentTarget.value);
+    if (!journey) return;
+    document.getElementById("openbao-journey-summary").textContent =
+      `${journey.method} ${journey.path_template} · ${journey.risk_level} · ${journey.response_class}`;
+    document.getElementById("openbao-journey-resource-field").hidden = !journey.path_template.includes("{path}");
+    const named = journey.path_parameters.filter((name) => !["secret_mount_path", "path"].includes(name));
+    document.getElementById("openbao-journey-path-field").hidden = named.length === 0;
+    document.getElementById("openbao-journey-path-help").textContent = named.length
+      ? `Required keys: ${named.join(", ")}.` : "";
+    const diff = journey.journey_id === "kv2.diff";
+    const fixedQuery = new Map(journey.fixed_query || []);
+    const availableQuery = journey.query_parameter_types.filter(([name]) => !fixedQuery.has(name));
+    document.getElementById("openbao-journey-query-field").hidden = !diff && availableQuery.length === 0;
+    document.getElementById("openbao-journey-query-help").textContent = diff
+      ? "Required integer keys: from_version and to_version."
+      : [
+          fixedQuery.size ? `Fixed: ${[...fixedQuery].map(([name, value]) => `${name}=${value}`).join(", ")}.` : "",
+          availableQuery.length ? `Allowed: ${availableQuery.map(([name, type]) => `${name} (${type})`).join(", ")}.` : "",
+        ].filter(Boolean).join(" ");
+    document.getElementById("openbao-journey-body-field").hidden = journey.body_fields.length === 0;
+    document.getElementById("openbao-journey-body-help").textContent = journey.body_fields.length
+      ? `Allowed: ${journey.body_field_types.map(([name, type]) => `${name} (${type})`).join(", ")}. ` +
+        `Required: ${journey.required_body_fields.join(", ") || "none"}.`
+      : "";
+    document.getElementById("openbao-journey-confirmation-field").hidden = !journey.confirmation_prefix;
+    document.getElementById("openbao-journey-confirmation").required = Boolean(journey.confirmation_prefix);
+    updateJourneyConfirmation();
+  });
+
+  function updateJourneyConfirmation() {
+    const journey = journeys.get(document.getElementById("openbao-journey-key")?.value);
+    if (!journey?.confirmation_prefix) return;
+    try {
+      const resource = document.getElementById("openbao-journey-resource").value;
+      const pathParameters = parseJsonObject(document.getElementById("openbao-journey-path").value, "Path parameters");
+      const confirmation = journeyConfirmation(journey, resource, pathParameters, root.dataset.clusterSlug);
+      document.getElementById("openbao-journey-confirmation-help").textContent = `Enter exactly: ${confirmation}`;
+    } catch (_error) {
+      document.getElementById("openbao-journey-confirmation-help").textContent =
+        "Enter valid path-parameter JSON to calculate the exact confirmation.";
+    }
+  }
+
+  listen(document.getElementById("openbao-journey-resource"), "input", updateJourneyConfirmation);
+  listen(document.getElementById("openbao-journey-path"), "input", updateJourneyConfirmation);
+
+  listen(document.getElementById("openbao-journey-form"), "submit", async (event) => {
+    event.preventDefault();
+    const journey = journeys.get(document.getElementById("openbao-journey-key").value);
+    try {
+      if (!journey || !journeyDigest) throw new Error("Reload the engine journey catalog before execution.");
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      fields.journey_id = journey.journey_id;
+      fields.mount_path = journey.mount_path;
+      fields.capability_digest = journeyDigest;
+      fields.query = parseJsonObject(fields.query, "Query");
+      fields.body = parseJsonObject(fields.body, "Body");
+      fields.path_parameters = parseJsonObject(fields.path_parameters, "Path parameters");
+      const payload = await request("secret-engine-journeys/execute/", {
+        method: "POST", body: JSON.stringify(fields),
+      });
+      journeyResult.textContent = JSON.stringify(payload, null, 2);
+      scheduleMaterialClear();
+      message("The first-class engine task completed. Clear the result after use.");
+    } catch (error) { journeyResult.textContent = "No result."; message(error.message, true); }
+    finally { clearJourneyInputs(); }
+  });
 
   listen(document.getElementById("openbao-operation-refresh"), "click", async () => {
     try {
@@ -213,10 +330,12 @@ function bootstrap() {
   function clearResult() {
     materialExpiry.cancel();
     if (result) result.textContent = "No result.";
+    if (journeyResult) journeyResult.textContent = "No result.";
+    clearJourneyInputs();
     const details = document.getElementById("openbao-engine-details");
     if (details) details.textContent = "No mount metadata loaded.";
   }
-  listen(document.getElementById("openbao-result-clear"), "click", clearResult);
+  document.querySelectorAll(".openbao-result-clear").forEach((button) => listen(button, "click", clearResult));
   window.addEventListener("pagehide", clearResult);
   refreshMounts();
 }

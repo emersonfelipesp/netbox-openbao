@@ -80,6 +80,18 @@ require their dedicated object permissions, reasons, and exact confirmations.
 See `docs/how-to/administer-openbao-authentication.md`.
 
 **Secrets-engine administration uses a classified, mount-scoped contract.**
+First-class KV v1/v2, transit, database, SSH, and TOTP journeys are defined in
+`administration/engine_journeys.py`. A journey is executable only when its
+static operation ID, method, path template, engine type, KV version, dedicated
+permission, risk, and response class match the current mount-specific OpenAPI
+document. Never derive a journey, permission, risk, confirmation, or response
+class from runtime schema alone. KV diffs perform two request-scoped exact
+version reads and never persist either value. Generated database credentials,
+SSH certificates or OTPs, transit outputs, TOTP codes, and KV values remain
+request-scoped and `no-store`.
+Fail closed when distinct mount names map to the same OpenAPI mount-parameter
+identifier. First-class browse/list journeys must fix `list=true` server-side;
+the caller may not override it.
 Runtime OpenAPI discovery may admit only reviewed `(method, path template,
 operation ID)` tuples whose path begins with the fixed `{secret_mount_path}`
 placeholder and contains reviewed literal or bounded parameter segments. It

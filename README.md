@@ -238,7 +238,8 @@ now has cluster inventory, bounded runtime capability discovery, dedicated
 permissions, metadata-only audit, guarded bootstrap and seal operations, HA and
 Raft state, peer-removal safety, and bounded authenticated snapshot recovery.
 Its pinned OpenBao 2.6.2 parity manifest records Raft storage, secrets-engine
-lifecycle, and the classified API explorer as complete. Mounted operation
+lifecycle, the classified API explorer, KV v1/v2, transit, database, SSH, and
+TOTP administration as complete. Mounted operation
 execution covers runtime-advertised GET, LIST, POST, PUT, PATCH, and DELETE
 templates that satisfy the reviewed grammar, schema, authorization, and
 material-handling contract, including external plugin-style schemas.
@@ -254,8 +255,7 @@ claimed more than the design delivers and has been corrected above.
 
 Deliberately not yet here:
 
-- Dynamic secrets (database and cloud credential engines), which are a
-  different lifecycle rather than a bigger version of this one
+- Cloud credential engines and the remaining typed dynamic-secret families
 - Complete NetBox-native replacement of the built-in OpenBao Web UI. Cluster,
   authentication, MFA, storage, secrets-engine lifecycle, and bounded generic
   mounted operations are present; the parity manifest identifies the remaining
