@@ -60,11 +60,11 @@ class OpenBaoAdministrationLogTable(NetBoxTable):
         fields = (
             'id', 'cluster', 'cluster_name_snapshot', 'user', 'username_snapshot', 'action',
             'operation_id', 'risk_level', 'method', 'path_template', 'source_ip', 'reason',
-            'request_id', 'capability_digest', 'success', 'status_code', 'message', 'timestamp',
+            'request_id', 'capability_digest', 'outcome', 'success', 'status_code', 'message', 'timestamp',
         )
         default_columns = (
             'timestamp', 'cluster_name_snapshot', 'username_snapshot', 'action',
-            'risk_level', 'success', 'status_code',
+            'risk_level', 'outcome', 'success', 'status_code',
         )
 
 

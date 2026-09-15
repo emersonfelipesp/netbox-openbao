@@ -21,6 +21,7 @@ from pathlib import Path
 from django.test import TestCase, TransactionTestCase
 
 import netbox_openbao
+from netbox_openbao.administration.backends import AdministrationBackend
 from netbox_openbao.backends import BACKENDS, SecretBackend, get_backend
 from netbox_openbao.backends.exceptions import (
     OpenBaoAuthError,
@@ -228,7 +229,7 @@ class BackendContractTest(TestCase):
     that all three shipped backends happened to implement it.
     """
 
-    def test_every_method_the_plugin_calls_is_abstract(self):
+    def test_every_method_the_plugin_calls_is_declared_by_a_backend_contract(self):
         """
         The guard that would have caught the original defect.
 
@@ -236,13 +237,15 @@ class BackendContractTest(TestCase):
         omission it exists to detect.
         """
         called = _methods_called_on_backends()
-        undeclared = called - set(SecretBackend.__abstractmethods__)
+        declared = set(SecretBackend.__abstractmethods__) | set(vars(AdministrationBackend))
+        undeclared = called - declared
 
         self.assertEqual(
             undeclared, set(),
-            f'The plugin calls {sorted(undeclared)} on a backend, but SecretBackend does not '
-            f'declare them. A third-party backend would import, instantiate, pass every '
-            f'abstract-method check, and then fail at the call site. Add @abstractmethod.',
+            f'The plugin calls {sorted(undeclared)} on a backend, but neither SecretBackend '
+            f'nor AdministrationBackend declares them. A third-party backend would import, '
+            f'instantiate, pass every contract check, and then fail at the call site. Add the '
+            f'method to the appropriate backend contract.',
         )
 
     def test_the_scan_finds_known_call_sites(self):

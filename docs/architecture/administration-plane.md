@@ -8,7 +8,8 @@ same inventory, object permissions, audit correlation, and API conventions as
 the rest of their infrastructure.
 
 This page describes the security and compatibility foundation plus the
-implemented initialization, unseal, seal, and Raft-storage journeys. The
+implemented authentication, MFA, initialization, unseal, seal, and
+Raft-storage journeys. The
 cluster-bootstrap parity family remains `foundation` because guarded Raft join
 is assigned to issue #70. This page does **not** claim that every OpenBao
 operation is executable yet. Runtime discovery remains display-only unless a
@@ -84,6 +85,110 @@ Broker health uses the existing broker transport. Capability discovery through
 the broker fails closed until the broker advertises an equivalent bounded
 administration contract. The plugin never silently bypasses broker isolation by
 calling OpenBao directly.
+
+## Authentication administration boundary
+
+Authentication administration has two independent authorization layers. The
+NetBox user must hold the dedicated, object-constrained action permission for
+the requested cluster. The cluster's OpenBao service identity must separately
+hold the exact upstream capability. Neither identity is substituted for the
+other: NetBox permissions do not mint OpenBao credentials, and the cluster
+service token is never placed in the user's browser.
+
+The executable registry is fixed to the reviewed OpenBao 2.6.2 contract. It
+contains auth mount lifecycle, method configuration, typed token, userpass,
+AppRole, Kubernetes, JWT/OIDC, LDAP, and certificate resources, AppRole RoleID
+and SecretID operations, request-scoped login, direct OIDC, token self/accessor
+operations, and TOTP/Duo/Okta/PingID methods and login enforcements. Runtime
+OpenAPI discovery proves that the named reviewed operation exists and supplies
+the capability digest for audit correlation. It never supplies an executable
+path, input field, output field, permission, risk class, or renderer. Unknown
+fields and response shapes fail closed.
+
+Direct transport constructs every upstream URL from a static template plus a
+validated mount or resource segment. Redirects are disabled. Submitted
+self-service tokens are placed in the header of one request and do not mutate
+the pooled session or the cluster service client's cached token. Broker mode
+inherits unsupported methods from the administration contract and therefore
+fails closed until the broker explicitly implements the same fixed surface.
+
+## Token and authentication material custody
+
+Passwords, JWTs, tokens, RoleIDs, SecretIDs, MFA request IDs and passcodes,
+provider secrets, PingID settings, OIDC state and nonces, and TOTP provisioning
+material have no persistence path. Request serializers declare material fields
+write-only where the shape is explicit; advanced method payloads pass through a
+static field registry whose material markers drive response redaction. Backend
+objects use redacted representations. Responses containing material use only
+the JSON renderer plus `no-store`, and audit records contain fixed summaries
+rather than request or response values.
+
+NetBox does not establish an OpenBao browser session. A successful login or
+renewal returns a token once, but later NetBox requests do not inherit it.
+Closing the page clears browser memory but does not revoke an OpenBao token;
+revocation is a separate, confirmed upstream operation. This distinction keeps
+token lifetime under OpenBao policy and makes logout semantics explicit rather
+than implying that a NetBox session controls an OpenBao lease.
+
+## Direct OIDC flow
+
+```mermaid
+sequenceDiagram
+    participant U as Operator browser
+    participant N as NetBox
+    participant B as OpenBao
+    participant I as Identity provider
+    U->>N: CSRF-protected start (mount, role, reason)
+    N->>B: POST /auth/{mount}/oidc/auth_url with callback and nonce
+    B-->>N: HTTPS auth URL, state, poll interval
+    N-->>U: no-store response and signed short-lived envelope
+    U->>I: Open validated auth URL in a separate tab
+    I->>B: Provider callback directly to OpenBao
+    U->>N: Poll with in-memory state, nonce, and envelope
+    N->>N: Verify age, user, cluster, mount, and both digests
+    N->>B: POST /auth/{mount}/oidc/poll
+    B-->>N: One-shot token or MFA requirement
+    N-->>U: no-store one-shot response
+```
+
+The callback is the exact OpenBao API URL
+`/v1/auth/{mount}/oidc/callback` for the root namespace or
+`/v1/{namespace}/auth/{mount}/oidc/callback` for a safely encoded nested
+namespace; provider authorization codes never reach a NetBox route. The
+namespace must be carried in the URL because the identity provider cannot add
+`X-Vault-Namespace`. Authorization URLs must be HTTPS, except for explicit
+loopback development addresses, must contain no user information or fragment,
+and must carry exactly the state OpenBao returned. The signed envelope expires
+after five minutes and binds digests rather than retaining raw state or nonce
+on the server. JavaScript keeps the values in a closure only, never in
+`localStorage`, `sessionStorage`, a cookie, or a URL. The local controller also
+expires after five minutes and clears on successful polling, an invalid or
+expired envelope response, or `pagehide`; ordinary visibility changes preserve
+it during provider handoff. OpenBao consumes state after a successful poll,
+providing the final replay boundary. Client callback and device modes are not
+executable through this contract. NetBox also rejects roles that disable
+direct-mode confirmation or enable verbose OIDC token and claim logging.
+
+## MFA control plane
+
+MFA methods and login enforcements use static OpenBao 2.6.2 per-provider
+schemas. TOTP setup returns its URI and a validated PNG barcode once.
+Administrator setup is explicitly
+entity-scoped and uses the cluster service identity; self-setup uses an
+explicitly submitted OpenBao token only for one
+`/identity/mfa/method/totp/generate` request. Self-reset looks up that submitted
+token's entity and then uses the service identity's fixed administrator-destroy
+path; no caller-supplied entity can cross that boundary. Provider API tokens, shared keys,
+and settings files are accepted only as bounded write-only fields. Login
+responses normalize either a token or a bounded MFA requirement; MFA validation
+accepts only a bounded map of method IDs to values and returns the completed
+token once.
+
+Deleting a method, enforcement, or entity TOTP setup requires a dedicated
+permission, reason, and cluster-specific confirmation. Operators must preserve
+an alternate login path while changing enforcement because neither NetBox nor
+OpenBao can atomically prove that a future external identity-provider login
+will succeed.
 
 ## Cluster lifecycle state machine
 
@@ -180,6 +285,17 @@ view/add/change/delete permissions:
 | `download_raft_snapshot_openbaocluster` | Stream a Raft snapshot to the operator |
 | `restore_raft_snapshot_openbaocluster` | Perform a normal snapshot restore |
 | `force_restore_raft_snapshot_openbaocluster` | Bypass the normal seal-consistency check during restore |
+| `view_authentication_openbaocluster` | View authentication and MFA metadata and the workspace |
+| `manage_auth_methods_openbaocluster` | Enable, configure, tune, and remount auth methods |
+| `disable_auth_methods_openbaocluster` | Disable an auth method after confirmation |
+| `manage_auth_resources_openbaocluster` | Manage reviewed method-specific resources |
+| `delete_auth_resources_openbaocluster` | Delete typed resources and destroy SecretIDs |
+| `issue_auth_material_openbaocluster` | Issue one-shot AppRole SecretIDs |
+| `authenticate_openbaocluster` | Run request-scoped login, OIDC polling, and MFA validation |
+| `manage_tokens_openbaocluster` | Look up and renew submitted tokens or accessors |
+| `revoke_tokens_openbaocluster` | Revoke submitted tokens or accessors after confirmation |
+| `manage_mfa_openbaocluster` | Manage MFA methods, TOTP setup, and enforcements |
+| `delete_mfa_openbaocluster` | Delete MFA state after confirmation |
 
 `view_openbaocluster` alone does not grant discovery. Both UI and API queries
 use `RestrictedQuerySet.restrict()`, so NetBox object-permission constraints
@@ -194,24 +310,44 @@ source IP, request ID, action, reviewed path template, risk, status, capability
 digest, and a fixed safe message. It has no field for authentication material,
 request bodies, response bodies, or backend diagnostics.
 
-Mutation preflight records use a durable outermost database transaction. An
+Mutation preflight records use a durable outermost database transaction and
+carry the explicit `authorized` outcome. An
 ambient `ATOMIC_REQUESTS` or application transaction therefore fails closed
 before OpenBao is contacted. If OpenBao accepts a mutation but the completion
 record fails, the response remains successful and explicitly reports
 `accepted-audit-incomplete`; clients must verify state and must not retry.
+Transport loss after dispatch and accepted responses that fail bounded parsing
+return `outcome: unknown` with `audit_status: preflight-only`; the follow-up
+metadata audit also records `unknown`. Clients must reconcile state and must not
+retry. Browser-side loss before a response can be validated uses
+`audit_status: unconfirmed`, because the client cannot prove a preflight record
+exists, and preserves that warning even if a reconciliation refresh fails.
 
 The Web UI and API administration responses send `Cache-Control: no-store` and
 the corresponding legacy cache headers. Backend failures become the fixed
 message `OpenBao administration is unavailable.` and never include server text.
-The audit API and UI are read-only.
+The audit API and UI are read-only. Authentication material shown in the Web UI
+is inserted with `textContent`; validated TOTP PNG bytes use a fixed
+`data:image/png;base64,` image source. Material is automatically cleared after
+five minutes or on `pagehide`, while an ordinary visibility change preserves
+it for authenticator handoff. The bounded direct
+OIDC state remains in the current tab's JavaScript closure while the operator
+uses the provider tab; both the local controller and the signed server envelope
+expire after five minutes. Successful polling, an invalid or expired envelope,
+and `pagehide` also clear the controller. The browser code contains no generic
+HTML insertion, browser storage, automatic polling, or mutation retry path.
 
 ## Parity baseline
 
 `netbox_openbao/administration/openbao-ui-v2.6.2.json` is the checked-in parity
 manifest for stable OpenBao 2.6.2. It records the upstream UI route families,
-the intended capability, implementation status, and owning work item. The
+the intended capability, implementation status, and owning work item. Every
+complete family requires an equivalence statement and existing implementation,
+UI, and test evidence for every upstream route key. The equivalence and
+evidence key sets must exactly match `upstream_routes`, so adding or removing a
+route cannot leave a complete family green without route-specific proof. The
 strict checker rejects drift in the baseline, shape, status vocabulary, route
-ownership, or duplicate family identifiers:
+ownership, evidence, or duplicate family identifiers:
 
 ```bash
 python scripts/check_openbao_ui_parity.py
@@ -221,9 +357,10 @@ The baseline includes cluster session and bootstrap, Raft storage, API
 exploration, auth methods, MFA, engine lifecycle, generic mounted engines, KV,
 transit/database/SSH/TOTP, PKI, Kubernetes, policies, identity, OIDC,
 namespaces, leases, tools, and UI configuration. A family marked `planned` is
-not implemented. Completion requires its Web UI, REST API, authorization,
-auditing, direct/broker behavior, hostile-input tests, and live OpenBao/browser
-evidence.
+not implemented. The `cluster-session`, `auth-methods`, and `mfa` families are
+complete through the request-scoped authentication workspace. Completion
+requires a Web UI, REST API, authorization, auditing, direct/broker behavior,
+hostile-input tests, and live OpenBao/browser evidence.
 
 ## Network placement
 
@@ -239,3 +376,4 @@ or native authentication integrations; they must never automate either Web UI.
 - [OpenBao UI configuration](https://openbao.org/docs/configuration/ui/)
 - [OpenBao HTTP API](https://openbao.org/api-docs/)
 - [OpenBao 2.6.2 release](https://github.com/openbao/openbao/releases/tag/v2.6.2)
+- [Authentication and MFA runbook](../how-to/administer-openbao-authentication.md)

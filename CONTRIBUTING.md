@@ -52,7 +52,8 @@ python manage.py test netbox_openbao --noinput
 ```
 
 The Vault and broker suites skip cleanly when their addresses are unset; see
-[`docs/development.md`](docs/development.md) for both.
+[`docs/development.md`](docs/development.md) for both, plus the required auth
+mounts and the opt-in Playwright workspace gate.
 
 ## What a change is expected to bring with it
 

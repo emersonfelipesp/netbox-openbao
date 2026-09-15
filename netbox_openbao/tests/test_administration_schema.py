@@ -1,7 +1,9 @@
 """Fail-closed capability discovery and parity-manifest tests."""
 
+import json
 from copy import deepcopy
 from unittest import TestCase
+from unittest.mock import patch
 
 from netbox_openbao.administration.parity import BASELINE_VERSION, load_parity_manifest
 from netbox_openbao.administration.schema import CapabilitySchemaError, normalize_openapi_document
@@ -160,6 +162,37 @@ class ParityManifestTest(TestCase):
     def test_manifest_loader_returns_an_independent_document(self):
         first = load_parity_manifest()
         second = deepcopy(load_parity_manifest())
-        second['families'][0]['status'] = 'complete'
+        second['families'][0]['status'] = 'mutation-canary'
 
         self.assertNotEqual(first, second)
+
+    def test_complete_family_requires_existing_evidence_paths(self):
+        manifest = load_parity_manifest()
+        manifest['families'][0]['evidence']['auth']['tests'] = ['netbox_openbao/tests/not-present.py']
+
+        with patch('pathlib.Path.read_text', return_value=json.dumps(manifest)):
+            with self.assertRaisesRegex(ValueError, 'evidence paths'):
+                load_parity_manifest()
+
+    def test_complete_family_requires_equivalence_and_all_evidence_groups(self):
+        manifest = load_parity_manifest()
+        manifest['families'][0].pop('equivalence')
+
+        with patch('pathlib.Path.read_text', return_value=json.dumps(manifest)):
+            with self.assertRaisesRegex(ValueError, 'family entry'):
+                load_parity_manifest()
+
+    def test_complete_family_requires_exact_route_equivalence_and_evidence_mappings(self):
+        missing = load_parity_manifest()
+        missing['families'][0]['upstream_routes'].append('new-upstream-route')
+        with patch('pathlib.Path.read_text', return_value=json.dumps(missing)):
+            with self.assertRaisesRegex(ValueError, 'route equivalence mappings'):
+                load_parity_manifest()
+
+        extra = load_parity_manifest()
+        extra['families'][0]['evidence']['removed-upstream-route'] = deepcopy(
+            extra['families'][0]['evidence']['auth']
+        )
+        with patch('pathlib.Path.read_text', return_value=json.dumps(extra)):
+            with self.assertRaisesRegex(ValueError, 'route evidence mappings'):
+                load_parity_manifest()

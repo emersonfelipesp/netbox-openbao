@@ -10,4 +10,9 @@
       <i class="mdi mdi-api"></i> Capabilities
     </a>
   {% endif %}
+  {% if perms.netbox_openbao.view_authentication_openbaocluster %}
+    <a class="btn btn-primary" href="{% url 'plugins:netbox_openbao:openbaocluster_authentication' pk=object.pk %}">
+      <i class="mdi mdi-account-key"></i> Authentication
+    </a>
+  {% endif %}
 {% endblock controls %}

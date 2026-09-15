@@ -16,6 +16,7 @@ __all__ = (
     'OpenBaoConflict',
     'OpenBaoError',
     'OpenBaoNotFound',
+    'OpenBaoMutationUnknown',
     'OpenBaoUnavailable',
 )
 
@@ -58,3 +59,9 @@ class OpenBaoUnavailable(OpenBaoError):
     """The instance is unreachable, sealed, or failed TLS verification."""
 
     default_message = 'OpenBao is unreachable or sealed.'
+
+
+class OpenBaoMutationUnknown(OpenBaoUnavailable):
+    """A mutation was dispatched, but its final OpenBao outcome is unknown."""
+
+    default_message = 'OpenBao may have accepted the request; verify state before retrying.'

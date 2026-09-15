@@ -113,6 +113,81 @@ Normal and force restore use different URLs and different permissions. Transfer
 errors have unknown outcome and are never retried automatically. See the
 [cluster administration runbook](how-to/administer-openbao-cluster.md).
 
+## Authentication and MFA administration
+
+Authentication actions are cluster-scoped under:
+
+```text
+/api/plugins/openbao/clusters/<cluster-id>/
+```
+
+Every response is `no-store`. POST and DELETE requests require the standard
+NetBox write token or a CSRF-protected NetBox session plus the dedicated
+`OpenBaoCluster` object permission. Mutations include a `reason`; destructive
+actions also require the exact `confirmation` documented in the
+[authentication runbook](how-to/administer-openbao-authentication.md).
+
+| Relative route | Methods | Purpose |
+|---|---|---|
+| `auth-methods/` | GET, POST | List or enable reviewed auth mounts |
+| `auth-methods/<mount>/` | GET, POST, DELETE | Read, tune, or disable a mount |
+| `auth-remount/` | POST | Begin an asynchronous auth remount |
+| `auth-remount/<migration-id>/` | GET | Read remount status |
+| `auth-config/<mount>/` | GET, POST | Read or write a method's reviewed configuration |
+| `auth-resources/<mount>/<family>/[<name>/]` | GET, POST, DELETE | Typed resource list/read/write/delete |
+| `auth-approle/<mount>/<role>/role-id/` | GET, POST | Read or assign an AppRole RoleID |
+| `auth-approle/<mount>/<role>/secret-id/` | POST | Issue one SecretID |
+| `auth-approle/<mount>/<role>/secret-id-accessor/` | POST, DELETE | Look up or destroy by accessor |
+| `auth-login/<mount>/` | POST | Run one request-scoped login |
+| `auth-oidc/<mount>/start/` | POST | Start direct OIDC and return an in-memory polling contract |
+| `auth-oidc/<mount>/poll/` | POST | Complete direct OIDC after validating the signed envelope |
+| `auth-mfa/validate/` | POST | Complete a login MFA challenge |
+| `auth-mfa/methods/` | GET | List MFA methods |
+| `auth-mfa/methods/<type>/[<method-id>/]` | POST, GET, DELETE | Create, read, update, or delete TOTP/Duo/Okta/PingID configuration |
+| `auth-mfa/totp/<method-id>/self/` | POST | Generate one-shot TOTP setup with a submitted request-scoped token |
+| `auth-mfa/totp/<method-id>/self/reset/` | POST | Derive the submitted token's entity and reset its TOTP setup after exact confirmation |
+| `auth-mfa/totp/<method-id>/entities/<entity-id>/` | POST, DELETE | Generate or destroy entity TOTP setup |
+| `auth-mfa/enforcements/[<name>/]` | GET, POST, DELETE | List, read, write, or delete login enforcements |
+| `auth-tokens/<operation>/` | POST | Look up, renew, or revoke self tokens and accessors |
+
+Advanced configuration and resource writes use this envelope:
+
+```json
+{
+  "reason": "CHG-1234: update the corporate OIDC role",
+  "payload": {
+    "role_type": "oidc",
+    "user_claim": "sub",
+    "allowed_redirect_uris": [
+      "https://bao.example.net:8200/v1/auth/oidc/oidc/callback"
+    ]
+  }
+}
+```
+
+The server accepts only fields and types in its static OpenBao 2.6.2 registry.
+Runtime OpenAPI schemas are display-only. Passwords, JWTs, tokens, RoleIDs,
+SecretIDs, provider secrets, MFA codes, and OIDC challenges are never persisted
+or audited. A successful login, renewal, SecretID issue, MFA validation, or
+TOTP setup returns material once; the client must custody or discard it
+immediately. OIDC `oauth2_metadata` values (`access_token`, `id_token`, and
+`refresh_token`) are treated as one-shot material rather than ordinary identity
+metadata.
+
+JWT/OIDC role writes reject `oidc_disable_confirmation` and
+`verbose_oidc_logging`; existing direct roles with either setting enabled
+cannot start through NetBox. Namespaced direct callbacks use
+`/v1/<namespace>/auth/<mount>/oidc/callback` so the identity-provider request
+arrives in the same OpenBao namespace without relying on a request header.
+
+Mutation transport loss after dispatch, or an accepted response that fails
+bounded parsing, returns HTTP 503 with `outcome: unknown`, `audit_status:
+preflight-only`, and a fixed do-not-retry instruction. Clients must reconcile
+the fixed upstream path before deciding whether another request is required.
+If browser transport or response parsing fails before the API payload can be
+validated, the Web UI reports `outcome: unknown` with `audit_status:
+unconfirmed`; it does not infer that a preflight audit committed.
+
 ## Writing material
 
 `secret_data` is accepted on create and update and is **write-only** — it never

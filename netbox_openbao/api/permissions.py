@@ -28,6 +28,7 @@ class SecretActionPermissions(TokenPermissions):
     perms_map = {
         **TokenPermissions.perms_map,
         'POST': ['%(app_label)s.view_%(model_name)s'],
+        'DELETE': ['%(app_label)s.view_%(model_name)s'],
     }
 
 

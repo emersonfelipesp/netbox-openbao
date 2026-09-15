@@ -6,15 +6,13 @@ from runpy import run_path
 
 
 def main() -> None:
-    module = run_path(
-        Path(__file__).parents[1] / 'netbox_openbao' / 'administration' / 'parity.py'
-    )
-    manifest = module['load_parity_manifest']()
+    module = run_path(Path(__file__).parents[1] / "netbox_openbao" / "administration" / "parity.py")
+    manifest = module["load_parity_manifest"]()
     print(
         f"OpenBao UI parity manifest {manifest['baseline']}: "
-        f"{len(manifest['families'])} capability families valid"
+        f"{len(manifest['families'])} capability families valid; complete families are evidence-backed"
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

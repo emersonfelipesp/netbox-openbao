@@ -107,6 +107,17 @@ class OpenBaoCluster(PrimaryModel):
             ('download_raft_snapshot', 'Download an OpenBao Raft snapshot'),
             ('restore_raft_snapshot', 'Restore an OpenBao Raft snapshot'),
             ('force_restore_raft_snapshot', 'Force restore an OpenBao Raft snapshot'),
+            ('view_authentication', 'View OpenBao authentication and MFA configuration'),
+            ('manage_auth_methods', 'Enable, configure, tune, and remount OpenBao auth methods'),
+            ('disable_auth_methods', 'Disable OpenBao auth methods'),
+            ('manage_auth_resources', 'Manage OpenBao auth method resources'),
+            ('delete_auth_resources', 'Delete OpenBao auth method resources'),
+            ('issue_auth_material', 'Issue one-shot OpenBao authentication material'),
+            ('authenticate', 'Use OpenBao authentication and MFA flows'),
+            ('manage_tokens', 'Look up and renew OpenBao tokens'),
+            ('revoke_tokens', 'Revoke OpenBao tokens'),
+            ('manage_mfa', 'Manage OpenBao MFA methods and login enforcements'),
+            ('delete_mfa', 'Delete OpenBao MFA methods, secrets, and login enforcements'),
         )
 
     def __str__(self):
@@ -150,6 +161,17 @@ class OpenBaoAdministrationLog(models.Model):
     reason = models.TextField(blank=True, verbose_name=_('reason'))
     request_id = models.CharField(max_length=64, blank=True, verbose_name=_('request ID'))
     capability_digest = models.CharField(max_length=64, blank=True, verbose_name=_('capability digest'))
+    outcome = models.CharField(
+        max_length=32,
+        choices=(
+            ('authorized', _('Authorized')),
+            ('succeeded', _('Succeeded')),
+            ('failed', _('Failed')),
+            ('unknown', _('Unknown')),
+        ),
+        default='succeeded',
+        verbose_name=_('outcome'),
+    )
     success = models.BooleanField(default=True, verbose_name=_('success'))
     status_code = models.PositiveSmallIntegerField(null=True, blank=True, verbose_name=_('status code'))
     message = models.CharField(

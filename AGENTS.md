@@ -58,6 +58,23 @@ outcome, and any mutation whose preflight audit did not commit. The bootstrap,
 HA, recovery, and incident procedures are in
 `docs/how-to/administer-openbao-cluster.md`.
 
+**Authentication and MFA administration never creates an OpenBao browser
+session in NetBox.** The executable surface is the static OpenBao 2.6.2
+registry in `administration/authentication.py`; runtime OpenAPI may prove that
+a named reviewed operation exists but may never supply a path, field,
+permission, or response parser. Keep passwords, JWTs, tokens, RoleIDs,
+SecretIDs, provider credentials, MFA values, OIDC state/nonces, and TOTP setup
+material out of models, Django sessions, caches, tasks, URLs, logs, exceptions,
+and browser storage. Direct OIDC callbacks terminate at OpenBao, polling uses a
+short-lived signed user/cluster/mount/state/nonce envelope, and material is
+returned once with `no-store`. Submitted tokens are request-scoped and never
+replace the cluster service identity. TOTP self-reset must derive the entity
+from token lookup and must never accept a caller-selected entity. Mutation
+transport or parsing uncertainty returns an explicit unknown outcome and must
+never be retried automatically. Destructive auth/MFA/token operations
+require their dedicated object permissions, reasons, and exact confirmations.
+See `docs/how-to/administer-openbao-authentication.md`.
+
 ## The rule that matters most
 
 > **Secret material must never become a model field, a form field bound to an

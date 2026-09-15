@@ -81,7 +81,24 @@ export NETBOX_OPENBAO_TEST_TOKEN=devroot
 They are skipped when `NETBOX_OPENBAO_TEST_ADDR` is unset, so the suite still
 runs anywhere. The same variables enable the administration
 capability-discovery integration test, which performs a read-only request and
-persists no OpenBao response body.
+persists no OpenBao response body. Authentication administration integration
+tests additionally require enabled `userpass`, `approle`, and `jwt` mounts and
+exercise bounded test resources that they remove in `finally` blocks.
+
+The authentication workspace also has an opt-in Playwright test. Install the
+matching browser package and Chromium, then run the focused class:
+
+```bash
+python -m pip install playwright==1.60.0
+python -m playwright install chromium
+python manage.py test \
+  netbox_openbao.tests.test_authentication_administration_browser
+```
+
+The class is skipped when Playwright is unavailable. It covers the rendered
+workspace at desktop and 390 px widths, accessible label associations,
+metadata reads, one-shot login clearing, direct OIDC state custody, MFA reads,
+and exact destructive confirmation guidance.
 
 ## Migrations
 

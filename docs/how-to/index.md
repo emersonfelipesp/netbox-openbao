@@ -12,6 +12,13 @@ gets you to a working result.
     Bootstrap, unseal, HA, Raft peers, authenticated snapshots, and guarded
     disaster recovery without retaining custody material.
 
+-   :material-account-key: **[Administer OpenBao authentication and MFA](administer-openbao-authentication.md)**
+
+    ---
+
+    Manage auth mounts, typed resources, direct OIDC, one-shot tokens, and MFA
+    without creating an OpenBao browser session in NetBox.
+
 -   :material-key-plus: **[Grant a device SSH access](../quick-add-ssh.md)**
 
     ---

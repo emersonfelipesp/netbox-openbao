@@ -1,0 +1,77 @@
+#openbao-authentication {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#openbao-authentication h2,
+#openbao-authentication h3 {
+  text-wrap: balance;
+}
+
+#openbao-authentication .text-pretty {
+  text-wrap: pretty;
+}
+
+.openbao-auth-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.openbao-auth-card {
+  border-radius: 0.75rem;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 1px 2px -1px rgba(0, 0, 0, 0.06),
+    0 2px 4px rgba(0, 0, 0, 0.04);
+}
+
+.openbao-auth-card > .card-header:first-child {
+  border-radius: 0.75rem 0.75rem 0 0;
+}
+
+.openbao-tactile {
+  min-height: 40px;
+  transition-property: transform, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.openbao-tactile:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.openbao-tabular,
+#openbao-auth-methods td:nth-child(4),
+#openbao-auth-methods td:nth-child(5) {
+  font-variant-numeric: tabular-nums;
+}
+
+#openbao-auth-result {
+  max-height: 32rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.openbao-auth-qr {
+  width: min(20rem, 100%);
+  height: auto;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+@media (prefers-color-scheme: dark) {
+  .openbao-auth-card {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .openbao-tactile {
+    transition-duration: 0ms;
+  }
+
+  .openbao-tactile:active:not(:disabled) {
+    transform: none;
+  }
+}

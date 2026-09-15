@@ -292,9 +292,9 @@ class OpenBaoAdministrationLogSerializer(BaseModelSerializer):
             'id', 'url', 'display', 'cluster', 'cluster_name_snapshot', 'cluster_slug_snapshot',
             'user', 'username_snapshot', 'action', 'operation_id', 'risk_level', 'method',
             'path_template', 'source_ip', 'reason', 'request_id', 'capability_digest',
-            'success', 'status_code', 'message', 'timestamp',
+            'outcome', 'success', 'status_code', 'message', 'timestamp',
         )
-        brief_fields = ('id', 'url', 'display', 'action', 'risk_level', 'success', 'timestamp')
+        brief_fields = ('id', 'url', 'display', 'action', 'risk_level', 'outcome', 'success', 'timestamp')
         read_only_fields = fields
 
 

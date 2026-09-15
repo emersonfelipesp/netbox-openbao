@@ -1,0 +1,283 @@
+{% extends 'generic/object.html' %}
+{% load static %}
+
+{% block title %}{{ object }} — Authentication and MFA{% endblock %}
+
+{% block head %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static 'netbox_openbao/authentication_administration.css' %}">
+{% endblock head %}
+
+{% block content %}
+  <div id="openbao-authentication" data-api-base="{{ api_base }}" data-cluster-slug="{{ object.slug }}">
+    {% csrf_token %}
+    <div class="alert alert-warning text-pretty" role="alert">
+      OpenBao tokens, passwords, JWTs, SecretIDs, MFA codes, OIDC state, and TOTP setup material are request-scoped.
+      Copy required material to an approved custody system, then clear it. This page never stores it.
+    </div>
+
+    <div class="openbao-auth-grid">
+      <section class="card border-0 openbao-auth-card">
+        <h2 class="card-header">Auth methods</h2>
+        <div class="card-body">
+          <div class="d-flex gap-2 align-items-center mb-3">
+            <button class="btn btn-primary openbao-tactile" id="openbao-refresh-methods" type="button">Refresh methods</button>
+            <span class="text-secondary text-pretty">OpenBao 2.6.2 reviewed mounts only.</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead><tr><th>Path</th><th>Type</th><th>Description</th><th>Default TTL</th><th>Maximum TTL</th></tr></thead>
+              <tbody id="openbao-auth-methods"><tr><td colspan="5">Load methods to begin.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {% if perms.netbox_openbao.manage_auth_methods_openbaocluster %}
+        <section class="card border-0 openbao-auth-card">
+          <h2 class="card-header">Mount lifecycle</h2>
+          <form class="card-body openbao-auth-form" data-operation="enable-method">
+            <h3 class="h5">Enable an auth method</h3>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">Mount path</label><input class="form-control" name="mount_path" maxlength="128" required></div>
+              <div class="col-md-4"><label class="form-label">Method</label><select class="form-select" name="method_type"><option>userpass</option><option>approle</option><option>kubernetes</option><option>jwt</option><option>oidc</option><option>ldap</option><option>radius</option><option>cert</option></select></div>
+              <div class="col-md-4"><label class="form-label">Description</label><input class="form-control" name="description" maxlength="1000"></div>
+              <div class="col-12"><label class="form-label">Reviewed advanced fields</label><textarea class="form-control font-monospace" name="advanced_payload" rows="3">{}</textarea></div>
+              <div class="col-12"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Enable method</button>
+          </form>
+          <hr class="m-0">
+          <form class="card-body openbao-auth-form" data-operation="tune-method">
+            <h3 class="h5">Tune a mount</h3>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">Mount path</label><input class="form-control" name="mount_path" maxlength="128" required></div>
+              <div class="col-md-4"><label class="form-label">Default TTL (seconds)</label><input class="form-control openbao-tabular" name="default_lease_ttl" type="number" min="0"></div>
+              <div class="col-md-4"><label class="form-label">Maximum TTL (seconds)</label><input class="form-control openbao-tabular" name="max_lease_ttl" type="number" min="0"></div>
+              <div class="col-md-8"><label class="form-label">Description</label><input class="form-control" name="description" maxlength="1000"></div>
+              <div class="col-md-4"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+              <div class="col-12"><label class="form-label">Reviewed advanced tuning fields</label><textarea class="form-control font-monospace" name="advanced_payload" rows="3">{}</textarea></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Apply tuning</button>
+          </form>
+          <hr class="m-0">
+          <form class="card-body openbao-auth-form" data-operation="remount-method">
+            <h3 class="h5">Remount an auth method</h3>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">Source path</label><input class="form-control" name="source" required></div>
+              <div class="col-md-4"><label class="form-label">Destination path</label><input class="form-control" name="destination" required></div>
+              <div class="col-md-4"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Start remount</button>
+          </form>
+          {% if perms.netbox_openbao.disable_auth_methods_openbaocluster %}
+            <hr class="m-0">
+            <form class="card-body openbao-auth-form" data-operation="disable-method">
+              <h3 class="h5 text-danger">Disable an auth method</h3>
+              <div class="row g-3">
+                <div class="col-md-4"><label class="form-label">Mount path</label><input class="form-control" name="mount_path" required></div>
+                <div class="col-md-4"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+                <div class="col-md-4"><label class="form-label">Type exactly: <code>DISABLE AUTH &lt;mount&gt; ON {{ object.slug }}</code></label><input class="form-control" name="confirmation" autocomplete="off" required></div>
+              </div>
+              <button class="btn btn-danger mt-3 openbao-tactile" type="submit">Disable method</button>
+            </form>
+          {% endif %}
+        </section>
+      {% endif %}
+
+      <section class="card border-0 openbao-auth-card">
+          <h2 class="card-header">Method configuration and resources</h2>
+          <form class="card-body openbao-auth-form" data-operation="auth-config">
+            <h3 class="h5">Read or write method configuration</h3>
+            <div class="row g-3">
+              <div class="col-md-3"><label class="form-label">Operation</label><select class="form-select" name="config_operation"><option>read</option>{% if perms.netbox_openbao.manage_auth_methods_openbaocluster %}<option>write</option>{% endif %}</select></div>
+              <div class="col-md-3"><label class="form-label">Mount path</label><input class="form-control" name="mount_path" required></div>
+              <div class="col-md-6"><label class="form-label">Reviewed JSON fields (write only)</label><textarea class="form-control font-monospace" name="payload" rows="4">{}</textarea></div>
+              <div class="col-12"><label class="form-label">Reason (write only)</label><input class="form-control" name="reason" maxlength="1000"></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Run configuration operation</button>
+          </form>
+          <hr class="m-0">
+          <form class="card-body openbao-auth-form" data-operation="auth-resource">
+            <h3 class="h5">List, read, write, or delete a typed resource</h3>
+            <div class="row g-3">
+              <div class="col-md-3"><label class="form-label">Operation</label><select class="form-select" name="resource_operation"><option>list</option><option>read</option>{% if perms.netbox_openbao.manage_auth_resources_openbaocluster %}<option>write</option>{% endif %}{% if perms.netbox_openbao.delete_auth_resources_openbaocluster %}<option>delete</option>{% endif %}</select></div>
+              <div class="col-md-3"><label class="form-label">Mount path</label><input class="form-control" name="mount_path" required></div>
+              <div class="col-md-3"><label class="form-label">Resource family</label><select class="form-select" name="resource_key"><option>token-roles</option><option>userpass-users</option><option>approle-roles</option><option>kubernetes-roles</option><option>jwt-roles</option><option>ldap-groups</option><option>ldap-users</option><option>radius-users</option><option>certificates</option><option>certificate-crls</option></select></div>
+              <div class="col-md-3"><label class="form-label">Name (not used for list)</label><input class="form-control" name="name"></div>
+              <div class="col-md-8"><label class="form-label">Reviewed JSON fields (write only)</label><textarea class="form-control font-monospace" name="payload" rows="4">{}</textarea></div>
+              <div class="col-md-4"><label class="form-label">Reason (write/delete)</label><input class="form-control" name="reason" maxlength="1000"></div>
+              <div class="col-12"><label class="form-label">Confirmation (delete only)</label><input class="form-control" name="confirmation" maxlength="400" autocomplete="off" aria-describedby="openbao-resource-confirmation"><small class="form-text" id="openbao-resource-confirmation">Select delete and enter a name to show the exact phrase.</small></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Run resource operation</button>
+          </form>
+          <hr class="m-0">
+            <form class="card-body openbao-auth-form" data-operation="approle-secret-id">
+              <h3 class="h5">AppRole SecretID</h3>
+              <div class="row g-3">
+                <div class="col-md-3"><label class="form-label">Operation</label><select class="form-select" name="secret_id_operation"><option>read-role-id</option><option>lookup</option>{% if perms.netbox_openbao.manage_auth_resources_openbaocluster %}<option>write-role-id</option>{% endif %}{% if perms.netbox_openbao.issue_auth_material_openbaocluster %}<option>issue</option>{% endif %}{% if perms.netbox_openbao.delete_auth_resources_openbaocluster %}<option>destroy</option>{% endif %}</select></div>
+                <div class="col-md-3"><label class="form-label">AppRole mount</label><input class="form-control" name="mount_path" required></div>
+                <div class="col-md-3"><label class="form-label">Role name</label><input class="form-control" name="role_name" required></div>
+                <div class="col-md-3"><label class="form-label">Accessor (lookup/destroy)</label><input class="form-control" name="accessor" type="password" autocomplete="off"></div>
+                <div class="col-md-4"><label class="form-label">Custom RoleID (write only)</label><input class="form-control" name="role_id" type="password" autocomplete="off"></div>
+                <div class="col-md-8"><label class="form-label">Issue fields</label><textarea class="form-control font-monospace" name="payload" rows="3">{}</textarea></div>
+                <div class="col-md-4"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+                <div class="col-12"><label class="form-label">Destroy confirmation: <code>DESTROY APPROLE SECRET ID ON {{ object.slug }}</code></label><input class="form-control" name="confirmation" autocomplete="off"></div>
+              </div>
+              <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Run SecretID operation</button>
+            </form>
+        </section>
+
+      {% if perms.netbox_openbao.authenticate_openbaocluster %}
+        <section class="card border-0 openbao-auth-card">
+          <h2 class="card-header">Request-scoped login</h2>
+          <form class="card-body openbao-auth-form" data-operation="login" autocomplete="off">
+            <div class="row g-3">
+              <div class="col-md-3"><label class="form-label">Mount path</label><input class="form-control" name="mount_path" required></div>
+              <div class="col-md-3"><label class="form-label">Method</label><select class="form-select" name="method_type"><option>userpass</option><option>ldap</option><option>radius</option><option>jwt</option><option>approle</option><option>kubernetes</option><option>token</option></select></div>
+              <div class="col-md-3"><label class="form-label">Username</label><input class="form-control" name="username" autocomplete="off"></div>
+              <div class="col-md-3"><label class="form-label">Role</label><input class="form-control" name="role" autocomplete="off"></div>
+              <div class="col-md-4"><label class="form-label">Password</label><input class="form-control" name="password" type="password" autocomplete="new-password"></div>
+              <div class="col-md-4"><label class="form-label">JWT or Kubernetes JWT</label><textarea class="form-control" name="jwt" rows="2" autocomplete="off"></textarea></div>
+              <div class="col-md-4"><label class="form-label">Existing token</label><input class="form-control" name="token" type="password" autocomplete="off"></div>
+              <div class="col-md-6"><label class="form-label">AppRole RoleID</label><input class="form-control" name="role_id" type="password" autocomplete="off"></div>
+              <div class="col-md-6"><label class="form-label">AppRole SecretID</label><input class="form-control" name="secret_id" type="password" autocomplete="off"></div>
+              <div class="col-12"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Authenticate once</button>
+          </form>
+          <hr class="m-0">
+          <form class="card-body openbao-auth-form" data-operation="oidc-start">
+            <h3 class="h5">Direct OIDC</h3>
+            <p class="text-secondary text-pretty">The identity-provider callback goes directly to OpenBao. State and nonce remain in this tab's memory only.</p>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">OIDC mount</label><input class="form-control" name="mount_path" required></div>
+              <div class="col-md-4"><label class="form-label">Role</label><input class="form-control" name="role" required></div>
+              <div class="col-md-4"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+            </div>
+            <div class="d-flex gap-2 mt-3">
+              <button class="btn btn-primary openbao-tactile" type="submit">Open identity provider</button>
+              <button class="btn btn-outline-primary openbao-tactile" id="openbao-oidc-poll" type="button" disabled>Poll completion</button>
+            </div>
+          </form>
+        </section>
+      {% endif %}
+
+      <section class="card border-0 openbao-auth-card">
+          <h2 class="card-header">MFA administration</h2>
+          <form class="card-body openbao-auth-form" data-operation="mfa-method">
+            <div class="row g-3">
+              <div class="col-md-3"><label class="form-label">Operation</label><select class="form-select" name="mfa_operation"><option>list</option><option>read</option>{% if perms.netbox_openbao.manage_mfa_openbaocluster %}<option>create</option><option>update</option>{% endif %}</select></div>
+              <div class="col-md-3"><label class="form-label">Type</label><select class="form-select" name="method_type"><option>totp</option><option>duo</option><option>okta</option><option>pingid</option></select></div>
+              <div class="col-md-6"><label class="form-label">Method ID (read/update)</label><input class="form-control" name="method_id"></div>
+              <div class="col-md-8"><label class="form-label">Reviewed JSON fields (create/update)</label><textarea class="form-control font-monospace" name="payload" rows="4">{}</textarea></div>
+              <div class="col-md-4"><label class="form-label">Reason (create/update)</label><input class="form-control" name="reason" maxlength="1000"></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Save MFA method</button>
+          </form>
+          <hr class="m-0">
+          <form class="card-body openbao-auth-form" data-operation="mfa-enforcement">
+            <div class="row g-3">
+              <div class="col-md-3"><label class="form-label">Operation</label><select class="form-select" name="enforcement_operation"><option>list</option><option>read</option>{% if perms.netbox_openbao.manage_mfa_openbaocluster %}<option>write</option>{% endif %}</select></div>
+              <div class="col-md-3"><label class="form-label">Enforcement name (read/write)</label><input class="form-control" name="name"></div>
+              <div class="col-md-6"><label class="form-label">Reviewed JSON fields (write)</label><textarea class="form-control font-monospace" name="payload" rows="4">{"mfa_method_ids": []}</textarea></div>
+              <div class="col-12"><label class="form-label">Reason (write)</label><input class="form-control" name="reason" maxlength="1000"></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Save login enforcement</button>
+          </form>
+          {% if perms.netbox_openbao.authenticate_openbaocluster %}<hr class="m-0">
+          <form class="card-body openbao-auth-form" data-operation="mfa-totp-self" autocomplete="off">
+            <h3 class="h5">Enroll the submitted token's entity in TOTP</h3>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">Method ID</label><input class="form-control" name="method_id" required></div>
+              <div class="col-md-4"><label class="form-label">Current OpenBao token</label><input class="form-control" name="token" type="password" autocomplete="off" required></div>
+              <div class="col-md-4"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Generate my TOTP setup</button>
+          </form>
+          <hr class="m-0">
+          <form class="card-body openbao-auth-form" data-operation="mfa-totp-self-reset" autocomplete="off">
+            <h3 class="h5">Restart my TOTP enrollment</h3>
+            <p class="text-secondary text-pretty">The entity is derived from the submitted token. This cannot reset another entity.</p>
+            <div class="row g-3">
+              <div class="col-md-3"><label class="form-label">Method ID</label><input class="form-control" name="method_id" required></div>
+              <div class="col-md-3"><label class="form-label">Current OpenBao token</label><input class="form-control" name="token" type="password" autocomplete="off" required></div>
+              <div class="col-md-3"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+              <div class="col-md-3"><label class="form-label">Type exactly: <code>RESET MY TOTP ON {{ object.slug }}</code></label><input class="form-control" name="confirmation" autocomplete="off" required></div>
+            </div>
+            <button class="btn btn-danger mt-3 openbao-tactile" type="submit">Reset my TOTP setup</button>
+          </form>
+          {% endif %}
+          {% if perms.netbox_openbao.manage_mfa_openbaocluster %}<hr class="m-0">
+          <form class="card-body openbao-auth-form" data-operation="mfa-totp">
+            <h3 class="h5">TOTP entity setup</h3>
+            <div class="row g-3">
+              <div class="col-md-3"><label class="form-label">Operation</label><select class="form-select" name="totp_operation"><option>generate</option>{% if perms.netbox_openbao.delete_mfa_openbaocluster %}<option>destroy</option>{% endif %}</select></div>
+              <div class="col-md-3"><label class="form-label">Method ID</label><input class="form-control" name="method_id" required></div>
+              <div class="col-md-3"><label class="form-label">Entity ID</label><input class="form-control" name="entity_id" required></div>
+              <div class="col-md-3"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+              <div class="col-12"><label class="form-label">Destroy confirmation: <code>DESTROY TOTP FOR &lt;entity-id&gt; ON {{ object.slug }}</code></label><input class="form-control" name="confirmation" autocomplete="off"></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Run TOTP operation</button>
+          </form>
+          {% endif %}
+          {% if perms.netbox_openbao.delete_mfa_openbaocluster %}
+            <hr class="m-0">
+            <form class="card-body openbao-auth-form" data-operation="mfa-delete">
+              <h3 class="h5 text-danger">Delete MFA configuration</h3>
+              <div class="row g-3">
+                <div class="col-md-3"><label class="form-label">Kind</label><select class="form-select" name="delete_kind"><option>method</option><option>enforcement</option></select></div>
+                <div class="col-md-3"><label class="form-label">Method type</label><select class="form-select" name="method_type"><option>totp</option><option>duo</option><option>okta</option><option>pingid</option></select></div>
+                <div class="col-md-3"><label class="form-label">Method ID or enforcement name</label><input class="form-control" name="identifier" required></div>
+                <div class="col-md-3"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+                <div class="col-12"><label class="form-label">Exact confirmation</label><input class="form-control" name="confirmation" autocomplete="off" required aria-describedby="openbao-mfa-confirmation"><small class="form-text" id="openbao-mfa-confirmation">Enter an identifier to show the exact phrase.</small></div>
+              </div>
+              <button class="btn btn-danger mt-3 openbao-tactile" type="submit">Delete MFA configuration</button>
+            </form>
+          {% endif %}
+        </section>
+
+      {% if perms.netbox_openbao.authenticate_openbaocluster %}
+        <section class="card border-0 openbao-auth-card">
+          <h2 class="card-header">Complete MFA challenge</h2>
+          <form class="card-body openbao-auth-form" data-operation="mfa-validate" autocomplete="off">
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">MFA request ID</label><input class="form-control" name="mfa_request_id" type="password" autocomplete="off" required></div>
+              <div class="col-md-8"><label class="form-label">MFA payload by method ID</label><textarea class="form-control font-monospace" name="mfa_payload" rows="3" autocomplete="off" required>{}</textarea></div>
+              <div class="col-12"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Validate MFA once</button>
+          </form>
+        </section>
+      {% endif %}
+
+      {% if perms.netbox_openbao.manage_tokens_openbaocluster or perms.netbox_openbao.revoke_tokens_openbaocluster %}
+        <section class="card border-0 openbao-auth-card">
+          <h2 class="card-header">Token administration</h2>
+          <form class="card-body openbao-auth-form" data-operation="token" autocomplete="off">
+            <div class="row g-3">
+              <div class="col-md-3"><label class="form-label">Operation</label><select class="form-select" name="token_operation">{% if perms.netbox_openbao.manage_tokens_openbaocluster %}<option>lookup-self</option><option>renew-self</option><option>lookup-accessor</option><option>renew-accessor</option>{% endif %}{% if perms.netbox_openbao.revoke_tokens_openbaocluster %}<option>revoke-self</option><option>revoke-accessor</option>{% endif %}</select></div>
+              <div class="col-md-3"><label class="form-label">Token (self operations)</label><input class="form-control" name="token" type="password" autocomplete="off"></div>
+              <div class="col-md-3"><label class="form-label">Accessor</label><input class="form-control" name="accessor" type="password" autocomplete="off"></div>
+              <div class="col-md-3"><label class="form-label">Renew increment (seconds)</label><input class="form-control openbao-tabular" name="increment" type="number" min="0"></div>
+              <div class="col-md-6"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+              <div class="col-md-6"><label class="form-label">Confirmation (revoke: <code>REVOKE TOKEN ON {{ object.slug }}</code>)</label><input class="form-control" name="confirmation" autocomplete="off"></div>
+            </div>
+            <button class="btn btn-primary mt-3 openbao-tactile" type="submit">Run token operation</button>
+          </form>
+        </section>
+      {% endif %}
+    </div>
+
+    <section class="card border-0 openbao-auth-card mt-3" aria-live="polite">
+      <h2 class="card-header d-flex justify-content-between align-items-center"><span>One-shot result</span><button class="btn btn-sm btn-outline-secondary openbao-tactile" id="openbao-clear-result" type="button">Clear now</button></h2>
+      <img class="card-body d-none openbao-auth-qr" id="openbao-auth-qr" alt="TOTP enrollment QR code">
+      <pre class="card-body mb-0 d-none" id="openbao-auth-result"></pre>
+      <p class="card-body mb-0 text-secondary text-pretty" id="openbao-auth-empty">No result is retained. Material is cleared automatically after five minutes or when this page is closed.</p>
+    </section>
+  </div>
+{% endblock content %}
+
+{% block javascript %}
+  <script type="module" src="{% static 'netbox_openbao/authentication_administration.js' %}"></script>
+{% endblock javascript %}

@@ -80,6 +80,7 @@ class OpenBaoAdministrationLogPanel(panels.ObjectAttributesPanel):
     reason = attrs.TextAttr('reason')
     request_id = attrs.TextAttr('request_id', label=_('Request ID'), style='font-monospace')
     capability_digest = attrs.TextAttr('capability_digest', label=_('Capability digest'), style='font-monospace')
+    outcome = attrs.TextAttr('outcome')
     success = attrs.BooleanAttr('success')
     status_code = attrs.NumericAttr('status_code', label=_('Status code'))
     message = attrs.TextAttr('message')

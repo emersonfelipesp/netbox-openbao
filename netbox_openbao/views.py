@@ -79,6 +79,7 @@ __all__ = (
     'OpenBaoAdministrationLogView',
     'OpenBaoClusterBulkDeleteView',
     'OpenBaoClusterAdministrationView',
+    'OpenBaoClusterAuthenticationView',
     'OpenBaoClusterCapabilitiesView',
     'OpenBaoClusterDeleteView',
     'OpenBaoClusterEditView',
@@ -230,6 +231,43 @@ class OpenBaoClusterAdministrationView(ObjectPermissionRequiredMixin, View):
             },
             'return_url': cluster.get_absolute_url(),
         }, status=503 if error else 200)
+        return _never_store(response)
+
+
+@register_model_view(OpenBaoCluster, 'authentication')
+class OpenBaoClusterAuthenticationView(ObjectPermissionRequiredMixin, View):
+    """Render the request-scoped authentication and MFA workspace."""
+
+    queryset = OpenBaoCluster.objects.all()
+    template_name = 'netbox_openbao/openbaocluster_authentication.html'
+
+    def get_required_permission(self):
+        return 'netbox_openbao.view_authentication_openbaocluster'
+
+    def get(self, request, pk):
+        cluster = get_object_or_404(self.queryset.restrict(request.user, 'view_authentication'), pk=pk)
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action='authentication-administration-ui',
+                operation_id='authentication-workspace',
+                risk_level='read',
+                success=True,
+                status_code=200,
+                message='Rendered the request-scoped authentication administration workspace.',
+                request=request,
+            )
+        except AdministrationAuditError:
+            raise PermissionDenied(_('OpenBao administration access could not be audited.')) from None
+        response = render(request, self.template_name, {
+            'object': cluster,
+            'api_base': reverse(
+                'plugins-api:netbox_openbao-api:openbaocluster-detail',
+                args=[cluster.pk],
+            ),
+            'return_url': cluster.get_absolute_url(),
+        })
         return _never_store(response)
 
 
