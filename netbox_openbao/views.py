@@ -80,6 +80,7 @@ __all__ = (
     'OpenBaoClusterBulkDeleteView',
     'OpenBaoClusterAdministrationView',
     'OpenBaoClusterAuthenticationView',
+    'OpenBaoClusterAccessView',
     'OpenBaoClusterSecretEnginesView',
     'OpenBaoClusterCapabilitiesView',
     'OpenBaoClusterDeleteView',
@@ -267,6 +268,42 @@ class OpenBaoClusterAuthenticationView(ObjectPermissionRequiredMixin, View):
                 'plugins-api:netbox_openbao-api:openbaocluster-detail',
                 args=[cluster.pk],
             ),
+            'return_url': cluster.get_absolute_url(),
+        })
+        return _never_store(response)
+
+
+@register_model_view(OpenBaoCluster, 'access')
+class OpenBaoClusterAccessView(ObjectPermissionRequiredMixin, View):
+    """Render the request-scoped policy, identity, OIDC, and namespace workspace."""
+
+    queryset = OpenBaoCluster.objects.all()
+    template_name = 'netbox_openbao/openbaocluster_access.html'
+
+    def get_required_permission(self):
+        return 'netbox_openbao.view_access_openbaocluster'
+
+    def get(self, request, pk):
+        cluster = get_object_or_404(self.queryset.restrict(request.user, 'view_access'), pk=pk)
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action='access-administration-ui',
+                operation_id='access-workspace',
+                risk_level='read',
+                success=True,
+                status_code=200,
+                message='Rendered the request-scoped access administration workspace.',
+                request=request,
+            )
+        except (AdministrationAuditError, DatabaseError):
+            raise PermissionDenied(_('OpenBao administration audit is unavailable.')) from None
+        response = render(request, self.template_name, {
+            'object': cluster,
+            'api_base': reverse(
+                'plugins-api:netbox_openbao-api:openbaocluster-access-resources', args=[cluster.pk]
+            ).removesuffix('access-resources/'),
             'return_url': cluster.get_absolute_url(),
         })
         return _never_store(response)

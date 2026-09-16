@@ -496,7 +496,23 @@
       ],
       "capability": "Policy lifecycle",
       "owner_issue": 69,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "policies": "A runtime-advertised, permission-filtered catalog covers ACL and password policy indexes without accepting runtime-defined execution paths.",
+        "policy": "Typed ACL and password policy read, write, delete, and password generation operations cover the upstream policy editor and test flow."
+      },
+      "evidence": {
+        "policies": {
+          "implementation": ["netbox_openbao/administration/access.py", "netbox_openbao/api/access_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_access.html", "netbox_openbao/static/netbox_openbao/access_administration.js"],
+          "tests": ["netbox_openbao/tests/test_access_administration.py", "netbox_openbao/tests/test_access_administration_live.py"]
+        },
+        "policy": {
+          "implementation": ["netbox_openbao/administration/access.py", "netbox_openbao/administration/backends.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_access.html"],
+          "tests": ["netbox_openbao/tests/test_access_administration_live.py", "netbox_openbao/tests/test_access_administration_browser.py"]
+        }
+      }
     },
     {
       "id": "identity",
@@ -506,7 +522,23 @@
       ],
       "capability": "Entities, groups, aliases and merge",
       "owner_issue": 69,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "access.identity": "Typed entity and group lifecycle, membership, and guarded entity merge cover the upstream identity resource workspace.",
+        "access.identity.aliases": "Typed entity and group alias lifecycle preserves canonical UUID and mount-accessor references."
+      },
+      "evidence": {
+        "access.identity": {
+          "implementation": ["netbox_openbao/administration/access.py", "netbox_openbao/api/access_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_access.html"],
+          "tests": ["netbox_openbao/tests/test_access_administration.py", "netbox_openbao/tests/test_access_administration_live.py"]
+        },
+        "access.identity.aliases": {
+          "implementation": ["netbox_openbao/administration/access.py"],
+          "ui": ["netbox_openbao/static/netbox_openbao/access_administration.js"],
+          "tests": ["netbox_openbao/tests/test_access_administration_live.py", "netbox_openbao/tests/test_access_administration_browser.py"]
+        }
+      }
     },
     {
       "id": "oidc",
@@ -519,7 +551,41 @@
       ],
       "capability": "OIDC resources and authorization",
       "owner_issue": 69,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "access.oidc.clients": "Typed client lifecycle returns client credentials only as request-scoped material under a dedicated permission.",
+        "access.oidc.keys": "Typed signing-key lifecycle and guarded rotation cover the upstream key workspace.",
+        "access.oidc.assignments": "Typed entity and group assignment lifecycle covers the upstream assignment workspace.",
+        "access.oidc.providers": "Typed provider lifecycle covers allowed clients, issuer, and supported scopes.",
+        "access.oidc.scopes": "Typed scope lifecycle treats templates as inert bounded data."
+      },
+      "evidence": {
+        "access.oidc.clients": {
+          "implementation": ["netbox_openbao/administration/access.py", "netbox_openbao/api/access_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_access.html", "netbox_openbao/static/netbox_openbao/access_administration.js"],
+          "tests": ["netbox_openbao/tests/test_access_administration.py", "netbox_openbao/tests/test_access_administration_browser.py", "netbox_openbao/tests/test_access_administration_live.py"]
+        },
+        "access.oidc.keys": {
+          "implementation": ["netbox_openbao/administration/access.py"],
+          "ui": ["netbox_openbao/static/netbox_openbao/access_administration.js"],
+          "tests": ["netbox_openbao/tests/test_access_administration_live.py"]
+        },
+        "access.oidc.assignments": {
+          "implementation": ["netbox_openbao/administration/access.py"],
+          "ui": ["netbox_openbao/static/netbox_openbao/access_administration.js"],
+          "tests": ["netbox_openbao/tests/test_access_administration_live.py"]
+        },
+        "access.oidc.providers": {
+          "implementation": ["netbox_openbao/administration/access.py"],
+          "ui": ["netbox_openbao/static/netbox_openbao/access_administration.js"],
+          "tests": ["netbox_openbao/tests/test_access_administration_live.py"]
+        },
+        "access.oidc.scopes": {
+          "implementation": ["netbox_openbao/administration/access.py"],
+          "ui": ["netbox_openbao/static/netbox_openbao/access_administration.js"],
+          "tests": ["netbox_openbao/tests/test_access_administration.py", "netbox_openbao/tests/test_access_administration_live.py"]
+        }
+      }
     },
     {
       "id": "namespaces",
@@ -528,7 +594,17 @@
       ],
       "capability": "Namespace lifecycle",
       "owner_issue": 69,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "access.namespaces": "Typed namespace list, read, create, update, and guarded removal operate only inside the OpenBaoCluster namespace boundary."
+      },
+      "evidence": {
+        "access.namespaces": {
+          "implementation": ["netbox_openbao/administration/access.py", "netbox_openbao/administration/backends.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_access.html"],
+          "tests": ["netbox_openbao/tests/test_access_administration.py", "netbox_openbao/tests/test_access_administration_live.py", "netbox_openbao/tests/test_access_administration_browser.py"]
+        }
+      }
     },
     {
       "id": "leases",

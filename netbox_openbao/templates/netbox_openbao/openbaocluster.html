@@ -15,6 +15,11 @@
       <i class="mdi mdi-account-key"></i> Authentication
     </a>
   {% endif %}
+  {% if perms.netbox_openbao.view_access_openbaocluster %}
+    <a class="btn btn-primary" href="{% url 'plugins:netbox_openbao:openbaocluster_access' pk=object.pk %}">
+      <i class="mdi mdi-shield-account"></i> Policies and identity
+    </a>
+  {% endif %}
   {% if perms.netbox_openbao.view_secret_engines_openbaocluster %}
     <a class="btn btn-primary" href="{% url 'plugins:netbox_openbao:openbaocluster_secret_engines' pk=object.pk %}">
       <i class="mdi mdi-database-key"></i> Secret engines

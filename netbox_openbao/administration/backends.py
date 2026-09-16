@@ -18,6 +18,7 @@ from netbox_openbao.backends.exceptions import (
 from netbox_openbao.backends.openbao import OpenBaoBackend
 from netbox_openbao.choices import BackendChoices
 
+from .access import normalize_access_response
 from .authentication import (
     AuthenticationResult,
     AuthMount,
@@ -296,6 +297,17 @@ class AdministrationBackend(ABC):
 
     def token_operation(self, operation: str, payload: dict) -> AuthenticationResult | dict | None:
         del operation, payload
+        raise self._unsupported()
+
+    def execute_access_operation(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict,
+        material: bool = False,
+    ) -> dict:
+        del method, path, payload, material
         raise self._unsupported()
 
     @staticmethod
@@ -961,6 +973,46 @@ class DirectAdministrationBackend(AdministrationBackend):
             response.close()
             return None
         raise BackendConfigurationError("The token operation is unsupported.")
+
+    @sensitive_variables()
+    def execute_access_operation(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict,
+        material: bool = False,
+    ) -> dict:
+        if method not in {"GET", "LIST", "POST", "DELETE"} or not path.startswith(
+            ("/sys/policies/", "/identity/", "/sys/namespaces")
+        ):
+            raise BackendConfigurationError("The access-control operation is outside the reviewed contract.")
+
+        def normalizer(value):
+            return normalize_access_response(value, material=material)
+
+        if method == "LIST":
+            return self._normalize(normalizer, self._request_list_json(path))
+        kwargs = {}
+        if method == "POST":
+            kwargs["json"] = payload
+        response = self._request(method, path, authenticated=True, expected=(200, 204), **kwargs)
+        if method in {"POST", "DELETE"}:
+            try:
+                if response.status_code == 204:
+                    response.close()
+                    return {}
+                result = self._response_json(response)
+                return self._normalize_mutation(normalizer, result)
+            except OpenBaoMutationUnknown:
+                raise
+            except (CapabilitySchemaError, OpenBaoUnavailable):
+                raise OpenBaoMutationUnknown() from None
+        if response.status_code == 204:
+            response.close()
+            return {}
+        result = self._response_json(response)
+        return self._normalize(normalizer, result)
 
     @staticmethod
     def _normalize(normalizer, payload):

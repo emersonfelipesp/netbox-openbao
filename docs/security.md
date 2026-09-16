@@ -345,7 +345,28 @@ markup from a value would let material containing HTML execute in the
 operator's session — `test_fragment_uses_no_innerhtml` enforces that by
 substring so it cannot creep back.
 
-## 14. An operator-defined type cannot execute code or leak material
+## 14. Access administration is a closed registry
+
+Policy, identity, OIDC, and namespace requests are admitted only when a static
+OpenBao 2.6.2 operation matches the current runtime method and literal path
+shape. OpenAPI cannot supply executable fields or permissions. Policy and OIDC
+template text is bounded and transported as inert data. Canonical identifiers
+reject traversal, encoded separators, and cross-namespace paths.
+
+Generated passwords and OIDC client credentials are request-scoped material.
+Metadata response normalization strips known material keys recursively unless
+the operation's static response class and the user's dedicated permission both
+allow material. Destructive operations require a fresh impact digest, exact
+confirmation, reason, and durable preflight audit. Mutation uncertainty is
+never retried automatically.
+
+Namespace seal creation is excluded from this metadata contract because
+OpenBao can return new unseal shares. `key_shares` is also stripped
+defensively. Namespace metadata replacement must be explicit, entity-merge
+impact binds all normalized merge choices, and audit evidence retains validated
+non-secret target identifiers for reconciliation without retaining payloads.
+
+## 15. An operator-defined type cannot execute code or leak material
 
 `CredentialTypeSchema` lets operators define credential types as data. Two
 limits keep that from being a privilege-escalation surface:
@@ -367,7 +388,7 @@ Schema validation errors report the failing **path**, never the value —
 `jsonschema`'s own message embeds the failing instance, which for a secret
 payload is the material.
 
-## 15. Form inputs are not echoed
+## 16. Form inputs are not echoed
 
 Secret form fields use widgets with `render_value=False`. On a validation error
 the browser gets an empty box, not the key the user just pasted — which would

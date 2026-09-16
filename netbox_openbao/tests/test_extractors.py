@@ -1,6 +1,7 @@
 """Extraction of non-secret metadata from real key material."""
 
 import datetime
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -139,8 +140,4 @@ class CertificateExtractionTest(TestCase):
 
 
 def _have_ssh_keygen():
-    try:
-        subprocess.run(['ssh-keygen', '-h'], capture_output=True, check=False)
-        return True
-    except FileNotFoundError:
-        return False
+    return shutil.which('ssh-keygen') is not None

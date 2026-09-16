@@ -27,6 +27,12 @@ def _request_context(request) -> dict:
     }
 
 
+def _target_identifiers(values) -> list[str]:
+    if not isinstance(values, (list, tuple)) or len(values) > 256:
+        raise AdministrationAuditError('OpenBao administration access could not be audited.')
+    return [_text(value, 500) for value in values]
+
+
 def log_administration(
     cluster,
     user,
@@ -38,6 +44,7 @@ def log_administration(
     path_template: str = '',
     reason: str = '',
     capability_digest: str = '',
+    target_identifiers=(),
     outcome: str = '',
     success: bool = True,
     status_code: int | None = None,
@@ -66,6 +73,7 @@ def log_administration(
                 path_template=_text(path_template, 500),
                 reason=_text(reason, 10_000),
                 capability_digest=_text(capability_digest, 64),
+                target_identifiers=_target_identifiers(target_identifiers),
                 outcome=_text(outcome or ('succeeded' if success else 'failed'), 32),
                 success=bool(success),
                 status_code=status_code,

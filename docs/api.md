@@ -248,6 +248,31 @@ If browser transport or response parsing fails before the API payload can be
 validated, the Web UI reports `outcome: unknown` with `audit_status:
 unconfirmed`; it does not infer that a preflight audit committed.
 
+## Policy, identity, OIDC, and namespace administration
+
+These cluster-scoped routes provide the permission-filtered contract used by
+the **Policies and identity** workspace:
+
+| Relative route | Method | Purpose |
+|---|---|---|
+| `access-resources/` | GET | List runtime-advertised reviewed resources and operations |
+| `access-resources/preview/` | POST | Read destructive impact and return its digest and exact confirmation |
+| `access-resources/execute/` | POST | Execute one reviewed list, read, write, delete, merge, rotation, or generation operation |
+
+Execution accepts `resource`, `operation`, an optional canonical `identifier`,
+a typed `payload`, `reason`, and the current `capability_digest`. Destructive
+operations additionally require the current `impact_digest` and exact
+`confirmation`. Every response is JSON and `no-store`. Generated passwords and
+OIDC client credentials are material responses; they require their dedicated
+object permission and are never persisted or audited. See the [access
+administration runbook](how-to/administer-openbao-access.md).
+
+Namespace writes require `custom_metadata` and replace it in full. Namespace
+seal configuration and PGP key submission are rejected because their response
+can contain unseal shares and no namespace-custody API is exposed. Durable
+mutation audit records include only validated non-secret target identifiers;
+request bodies and response bodies remain excluded.
+
 ## Writing material
 
 `secret_data` is accepted on create and update and is **write-only** — it never

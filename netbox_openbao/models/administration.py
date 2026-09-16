@@ -167,6 +167,19 @@ class OpenBaoCluster(PrimaryModel):
             ("manage_kubernetes_roles", "Manage OpenBao Kubernetes secrets-engine roles"),
             ("delete_kubernetes_roles", "Delete OpenBao Kubernetes secrets-engine roles"),
             ("generate_k8s_credentials", "Generate OpenBao Kubernetes credentials"),
+            ("view_access", "View OpenBao policies, identity, OIDC, and namespaces"),
+            ("manage_policies", "Create and update OpenBao policies"),
+            ("delete_policies", "Delete OpenBao policies"),
+            ("generate_passwords", "Generate passwords from OpenBao password policies"),
+            ("manage_identity", "Create and update OpenBao identity resources"),
+            ("delete_identity", "Delete OpenBao identity resources"),
+            ("merge_identity", "Merge OpenBao identity entities"),
+            ("manage_oidc", "Create and update OpenBao OIDC resources"),
+            ("reveal_oidc_client_secrets", "Read generated OpenBao OIDC client credentials"),
+            ("delete_oidc", "Delete OpenBao OIDC resources"),
+            ("rotate_oidc_keys", "Rotate OpenBao OIDC signing keys"),
+            ("manage_namespaces", "Create and update OpenBao namespaces"),
+            ("delete_namespaces", "Delete OpenBao namespaces"),
         )
 
     def __str__(self):
@@ -210,6 +223,12 @@ class OpenBaoAdministrationLog(models.Model):
     reason = models.TextField(blank=True, verbose_name=_("reason"))
     request_id = models.CharField(max_length=64, blank=True, verbose_name=_("request ID"))
     capability_digest = models.CharField(max_length=64, blank=True, verbose_name=_("capability digest"))
+    target_identifiers = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name=_("target identifiers"),
+        help_text=_("Validated non-secret resource identifiers used to reconcile the operation."),
+    )
     outcome = models.CharField(
         max_length=32,
         choices=(

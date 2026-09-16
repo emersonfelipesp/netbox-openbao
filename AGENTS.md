@@ -79,6 +79,20 @@ never be retried automatically. Destructive auth/MFA/token operations
 require their dedicated object permissions, reasons, and exact confirmations.
 See `docs/how-to/administer-openbao-authentication.md`.
 
+**Policy, identity, OIDC, and namespace administration is a closed static
+registry.** Runtime OpenAPI may prove that a reviewed OpenBao 2.6.2 method and
+literal path shape exists, but it may never supply an executable path, field,
+permission, risk class, or response parser. Keep policy and template documents
+as inert bounded data. Preserve canonical UUID, accessor, name, and namespace
+identifiers; namespace operations accept one child segment relative to the
+cluster's fixed namespace header and never accept a caller override. Generated
+passwords and OIDC client credentials remain request-scoped material with
+dedicated object permissions and `no-store`; metadata reads strip material
+recursively. Delete, merge, key rotation, and namespace removal require fresh
+impact previews, exact confirmations, reasons, and durable preflight audits.
+Mutation uncertainty must never be retried automatically. See
+`docs/how-to/administer-openbao-access.md`.
+
 **Secrets-engine administration uses a classified, mount-scoped contract.**
 First-class KV v1/v2, transit, database, SSH, TOTP, PKI, and Kubernetes journeys are defined in
 `administration/engine_journeys.py`. A journey is executable only when its

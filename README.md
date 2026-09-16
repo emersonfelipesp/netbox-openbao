@@ -79,6 +79,10 @@ test in `netbox_openbao/tests/test_security.py`:
   enumerate policy rules; it never reaches a log, a traceback, or a response.
 - **Every access is audited** — who, when, from where, and whether it
   succeeded. Never the value.
+- **OpenBao administration is typed and permissioned.** Cluster, auth/MFA,
+  secret-engine, policy, identity, OIDC, and namespace operations use static
+  reviewed contracts intersected with runtime capability discovery. The Web UI
+  and REST API never become a generic privileged proxy.
 
 ## Requirements
 

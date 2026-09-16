@@ -253,6 +253,15 @@ OpenBao-aware load balancer. Redirects to a reported leader are intentionally
 not followed. Complete operational procedures are in the
 [cluster administration runbook](how-to/administer-openbao-cluster.md).
 
+The **Policies and identity** tab exposes the reviewed policy, identity, OIDC,
+and namespace registry. Runtime OpenAPI may prove that a static operation is
+present, but it cannot add a path, request field, permission, or response
+classification. Grant the dedicated cluster object permissions separately and
+scope the OpenBao service identity to the same fixed paths. Namespace
+administration is relative to `OpenBaoCluster.namespace`; an operation cannot
+override that boundary. See the [access administration
+runbook](how-to/administer-openbao-access.md).
+
 ## Policy tiers and defence in depth
 
 A `CredentialPolicy` is not just a label. It maps onto a real OpenBao policy and

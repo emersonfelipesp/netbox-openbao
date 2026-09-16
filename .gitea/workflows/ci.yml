@@ -71,6 +71,8 @@ jobs:
           set -euo pipefail
           node --check netbox_openbao/static/netbox_openbao/cluster_administration.js
           node --check netbox_openbao/static/netbox_openbao/authentication_administration.js
+          node --check netbox_openbao/static/netbox_openbao/secret_engine_administration.js
+          node --check netbox_openbao/static/netbox_openbao/access_administration.js
           node --test netbox_openbao/tests/js/*.test.js
 
       - name: Build the distribution

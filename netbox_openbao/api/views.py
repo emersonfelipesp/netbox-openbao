@@ -79,6 +79,7 @@ from netbox_openbao.services import (
 )
 from netbox_openbao.synchronization import lock_material_subject, lock_material_subjects
 
+from .access_views import AccessAdministrationMixin
 from .authentication_views import AuthenticationAdministrationMixin
 from .automation import AutomationResolveRequestSerializer, AutomationResolveResponseSerializer
 from .engine_views import SecretEngineAdministrationMixin
@@ -216,6 +217,7 @@ class SecretEngineViewSet(NetBoxModelViewSet):
 
 
 class OpenBaoClusterViewSet(
+    AccessAdministrationMixin,
     SecretEngineAdministrationMixin,
     AuthenticationAdministrationMixin,
     NetBoxModelViewSet,

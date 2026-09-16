@@ -396,6 +396,31 @@ expire after five minutes. Successful polling, an invalid or expired envelope,
 and `pagehide` also clear the controller. The browser code contains no generic
 HTML insertion, browser storage, automatic polling, or mutation retry path.
 
+## Policy, identity, OIDC, and namespace contract
+
+`administration/access.py` is the executable OpenBao 2.6.2 registry for ACL and
+password policies, identity entities, groups and aliases, OIDC clients, keys,
+assignments, providers and scopes, and namespaces. Runtime OpenAPI must match
+the fixed method and literal path shape before an operation is advertised. The
+only protocol normalization is OpenBao's list representation: most list routes
+advertise `GET` with required `list=true` while accepting `LIST`, and the
+namespace index advertises `GET` while accepting `LIST`. Runtime schemas never
+become executable request contracts.
+
+Canonical names, UUIDs, accessors, URLs, maps, and lists are validated before a
+path or request body is compiled. Policy and template languages remain inert
+strings. The cluster supplies the origin, service identity, TLS policy, and
+namespace header; callers cannot override them. Namespace names are one child
+segment relative to that fixed boundary.
+
+Every mutation writes a durable preflight audit before backend access. Delete,
+merge, rotation, and namespace removal also bind a fresh impact digest and
+exact confirmation to the current capability digest. Generated passwords and
+OIDC client credentials are material response classes, while metadata reads
+recursively remove known material keys. Transport or bounded-parsing
+uncertainty after mutation dispatch returns an unknown outcome and forbids
+automatic retry.
+
 ## Parity baseline
 
 `netbox_openbao/administration/openbao-ui-v2.6.2.json` is the checked-in parity
@@ -417,7 +442,8 @@ exploration, auth methods, MFA, engine lifecycle, generic mounted engines, KV,
 transit/database/SSH/TOTP, PKI, Kubernetes, policies, identity, OIDC,
 namespaces, leases, tools, and UI configuration. A family marked `planned` is
 not implemented. The `cluster-session`, `auth-methods`, `mfa`, `kv`,
-`common-engines`, `pki`, and `kubernetes` families are complete through
+`common-engines`, `pki`, `kubernetes`, `policies`, `identity`, `oidc`, and
+`namespaces` families are complete through
 request-scoped typed workspaces. Completion
 requires a Web UI, REST API, authorization, auditing, direct/broker behavior,
 hostile-input tests, and live OpenBao/browser evidence.
@@ -437,3 +463,4 @@ or native authentication integrations; they must never automate either Web UI.
 - [OpenBao HTTP API](https://openbao.org/api-docs/)
 - [OpenBao 2.6.2 release](https://github.com/openbao/openbao/releases/tag/v2.6.2)
 - [Authentication and MFA runbook](../how-to/administer-openbao-authentication.md)
+- [Policy, identity, OIDC, and namespace runbook](../how-to/administer-openbao-access.md)

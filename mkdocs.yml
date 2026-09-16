@@ -157,6 +157,7 @@ nav:
       - Administer an OpenBao cluster: how-to/administer-openbao-cluster.md
       - Administer OpenBao authentication and MFA: how-to/administer-openbao-authentication.md
       - Administer OpenBao secret engines: how-to/administer-openbao-secret-engines.md
+      - Administer OpenBao policies, identity, OIDC, and namespaces: how-to/administer-openbao-access.md
       - Use HashiCorp Vault: how-to/use-vault.md
       - Migrate from netbox-secrets: migration-from-netbox-secrets.md
       - Report on expiry: how-to/expiry-reporting.md

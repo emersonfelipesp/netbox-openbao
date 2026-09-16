@@ -19,6 +19,13 @@ gets you to a working result.
     Manage auth mounts, typed resources, direct OIDC, one-shot tokens, and MFA
     without creating an OpenBao browser session in NetBox.
 
+-   :material-account-group: **[Administer OpenBao policies, identity, OIDC, and namespaces](administer-openbao-access.md)**
+
+    ---
+
+    Manage access-control resources through typed, permissioned operations with
+    impact previews and request-scoped generated material.
+
 -   :material-key-plus: **[Grant a device SSH access](../quick-add-ssh.md)**
 
     ---

@@ -1,0 +1,88 @@
+{% extends 'generic/object.html' %}
+{% load static %}
+
+{% block title %}{{ object }} — Policies and identity{% endblock %}
+
+{% block head %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static 'netbox_openbao/access_administration.css' %}">
+{% endblock head %}
+
+{% block content %}
+  <div id="openbao-access" data-api-base="{{ api_base }}" data-cluster-slug="{{ object.slug }}">
+    {% csrf_token %}
+    <div class="alert alert-warning text-pretty" role="alert">
+      Policy documents and templates are handled as inert data. OIDC client credentials are request-scoped material:
+      transfer them to approved custody, then clear the result. This workspace never stores operation bodies or results.
+    </div>
+
+    <div class="openbao-access-layout">
+      <section class="card border-0 openbao-access-card" aria-labelledby="openbao-access-heading">
+        <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <div>
+            <h2 class="h4 mb-1 text-balance" id="openbao-access-heading">Access administration</h2>
+            <p class="mb-0 text-secondary text-pretty">OpenBao 2.6.2 reviewed policy, identity, OIDC, and namespace contracts.</p>
+          </div>
+          <button class="btn btn-outline-primary openbao-access-action" id="openbao-access-refresh" type="button">Refresh contract</button>
+        </div>
+
+        <form class="card-body" id="openbao-access-form" autocomplete="off">
+          <div class="row g-3">
+            <div class="col-lg-4">
+              <label class="form-label" for="openbao-access-resource">Resource</label>
+              <select class="form-select" id="openbao-access-resource" name="resource" required></select>
+            </div>
+            <div class="col-lg-4">
+              <label class="form-label" for="openbao-access-operation">Operation</label>
+              <select class="form-select" id="openbao-access-operation" name="operation" required></select>
+            </div>
+            <div class="col-lg-4" id="openbao-access-identifier-group">
+              <label class="form-label" for="openbao-access-identifier">Canonical identifier</label>
+              <input class="form-control font-monospace" id="openbao-access-identifier" name="identifier" maxlength="500">
+              <small class="form-text" id="openbao-access-identifier-help">Select a resource and operation.</small>
+            </div>
+            <div class="col-12">
+              <div class="openbao-access-fields" id="openbao-access-fields" aria-live="polite"></div>
+            </div>
+            <div class="col-12">
+              <label class="form-label" for="openbao-access-reason">Reason</label>
+              <input class="form-control" id="openbao-access-reason" name="reason" minlength="3" maxlength="1000" required>
+            </div>
+          </div>
+
+          <div class="openbao-impact d-none mt-4" id="openbao-access-impact" aria-live="polite">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+              <h3 class="h5 mb-0 text-balance">Current impact preview</h3>
+              <span class="badge text-bg-warning">Required before destructive execution</span>
+            </div>
+            <pre class="openbao-access-output mb-3" id="openbao-access-impact-output"></pre>
+            <label class="form-label" for="openbao-access-confirmation">Exact confirmation</label>
+            <div class="font-monospace text-secondary mb-2" id="openbao-access-confirmation-hint"></div>
+            <input class="form-control font-monospace" id="openbao-access-confirmation" name="confirmation" maxlength="500">
+          </div>
+
+          <div class="d-flex flex-wrap gap-2 mt-4">
+            <button class="btn btn-outline-warning openbao-access-action d-none" id="openbao-access-preview" type="button">Preview impact</button>
+            <button class="btn btn-primary openbao-access-action" id="openbao-access-submit" type="submit">Run reviewed operation</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="card border-0 openbao-access-card openbao-result-card" aria-labelledby="openbao-access-result-heading">
+        <div class="card-header d-flex justify-content-between align-items-center gap-2">
+          <div>
+            <h2 class="h4 mb-1 text-balance" id="openbao-access-result-heading">Request-scoped result</h2>
+            <p class="mb-0 text-secondary text-pretty">Cleared after five minutes or any contract transition.</p>
+          </div>
+          <button class="btn btn-outline-secondary openbao-access-action" id="openbao-access-clear" type="button">Clear</button>
+        </div>
+        <div class="card-body">
+          <div class="alert d-none" id="openbao-access-status" role="status" aria-live="polite"></div>
+          <pre class="openbao-access-output" id="openbao-access-result">No result.</pre>
+          <button class="btn btn-outline-primary openbao-access-action d-none mt-3" id="openbao-access-download" type="button">Download current result</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script src="{% static 'netbox_openbao/access_administration.js' %}" type="module"></script>
+{% endblock content %}
