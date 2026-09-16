@@ -238,8 +238,8 @@ now has cluster inventory, bounded runtime capability discovery, dedicated
 permissions, metadata-only audit, guarded bootstrap and seal operations, HA and
 Raft state, peer-removal safety, and bounded authenticated snapshot recovery.
 Its pinned OpenBao 2.6.2 parity manifest records Raft storage, secrets-engine
-lifecycle, the classified API explorer, KV v1/v2, transit, database, SSH, and
-TOTP administration as complete. Mounted operation
+lifecycle, the classified API explorer, KV v1/v2, transit, database, SSH,
+TOTP, PKI, and Kubernetes administration as complete. Mounted operation
 execution covers runtime-advertised GET, LIST, POST, PUT, PATCH, and DELETE
 templates that satisfy the reviewed grammar, schema, authorization, and
 material-handling contract, including external plugin-style schemas.

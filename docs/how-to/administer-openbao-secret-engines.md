@@ -2,7 +2,7 @@
 
 The secret-engine workspace gives NetBox operators a cluster-scoped Web UI and
 REST API for OpenBao 2.6.x mount lifecycle, first-class KV v1/v2, transit,
-database, SSH, and TOTP journeys, and the reviewed generic mounted-operation
+database, SSH, TOTP, PKI, and Kubernetes journeys, and the reviewed generic mounted-operation
 fallback. It
 uses the cluster's configured service identity; an OpenBao token is never sent
 to the browser or accepted from an API caller.
@@ -39,6 +39,19 @@ permissions required for the operator's role:
 | `generate_totp_codes_openbaocluster` | Generate and validate TOTP codes |
 | `manage_totp_keys_openbaocluster` | Create and inspect TOTP keys |
 | `delete_totp_keys_openbaocluster` | Delete TOTP keys after exact confirmation |
+| `view_pki_openbaocluster` | Read PKI configuration, issuers, keys, roles, and certificates |
+| `manage_pki_configuration_openbaocluster` | Manage PKI cluster, CRL, issuer, URL, ACME, and auto-tidy configuration |
+| `manage_pki_issuers_openbaocluster` / `delete_pki_issuers_openbaocluster` | Manage or delete PKI issuers |
+| `manage_pki_keys_openbaocluster` / `generate_pki_keys_openbaocluster` / `delete_pki_keys_openbaocluster` | Import/manage, generate, or delete PKI keys through separate grants |
+| `manage_pki_roles_openbaocluster` / `delete_pki_roles_openbaocluster` | Manage or delete PKI issuance roles |
+| `issue_pki_certificates_openbaocluster` | Issue and sign certificates and intermediate requests |
+| `revoke_pki_certificates_openbaocluster` | Revoke certificates after exact confirmation |
+| `rotate_pki_roots_openbaocluster` / `delete_pki_roots_openbaocluster` | Generate/rotate roots or delete every issuer and key through separate confirmed grants |
+| `tidy_pki_openbaocluster` | Start or cancel PKI tidy work after exact confirmation |
+| `view_kubernetes_engine_openbaocluster` | Read Kubernetes configuration and roles |
+| `manage_k8s_configuration_openbaocluster` / `delete_k8s_configuration_openbaocluster` | Configure or remove the Kubernetes connection through separate grants |
+| `manage_kubernetes_roles_openbaocluster` / `delete_kubernetes_roles_openbaocluster` | Manage or delete Kubernetes credential roles |
+| `generate_k8s_credentials_openbaocluster` | Generate request-scoped Kubernetes credentials |
 
 The OpenBao service policy remains a separate authorization boundary. A NetBox
 permission does not grant an upstream capability that the service identity
@@ -72,7 +85,11 @@ the current user's object-constrained permission. It includes:
   reset operations;
 - SSH role, OTP credential, CA signing, lookup, public-key, and verification
   operations; and
-- TOTP key, code-generation, and validation operations.
+- TOTP key, code-generation, and validation operations;
+- PKI cluster, CRL, ACME, issuer, key, role, certificate, issuance, signing,
+  legacy and multi-issuer root/intermediate, delete-all-root, revocation, and
+  tidy operations; and
+- Kubernetes connection, role, and credential-generation operations.
 
 KV diff reads two explicitly selected positive versions during one request and
 returns both values for operator comparison. It does not persist either value.
@@ -83,9 +100,15 @@ omits both mounts and execution fails closed until the collision is removed.
 Destructive journeys require the dedicated engine permission and the exact
 confirmation displayed after the mount and resource path are compiled.
 
-Explorer results may contain secret material. Copy required values directly to
-approved custody and select **Clear result**. The page also clears the result
-after five minutes and when it is left. Responses use `Cache-Control: no-store`;
+Explorer and first-class results may contain secret material. Copy required values directly to
+approved custody and select **Clear result**. PKI generation, issuance, and Kubernetes
+credential journeys expose a request-scoped **Download result** action when the
+journey returns material. The JSON file is created only after the operator clicks
+the button, its object URL is revoked immediately, and no server-side copy is retained.
+The page also clears both result surfaces and cancels the prior expiry timer
+before a journey selection, catalog reload, new request, failed request, or
+unrelated advanced operation. It clears results after five minutes and when
+the page is left. Responses use `Cache-Control: no-store`;
 the browser workspace does not use cookies, local storage, session storage, or
 URLs for material.
 
@@ -151,6 +174,47 @@ permission, and compiles the path server-side.
 }
 ```
 
+## Operate PKI safely
+
+Treat generated private keys and signed certificates as custody-bearing material.
+Download or copy them once into the approved certificate/key store, verify the
+stored copy, and clear the browser result. Do not use NetBox audit records as a
+backup: request and response bodies are deliberately excluded.
+
+Root generation and rotation, key generation, issuer/key/role deletion,
+certificate revocation, and tidy mutations require dedicated permissions and
+the exact confirmation displayed by the workspace. Before rotation, confirm
+that relying parties trust the new chain and that the previous issuer remains
+available for the intended overlap. Before revocation or tidy, capture the
+serial, issuer, reason, retention window, and expected CRL impact. OpenBao
+storage snapshots—not exported browser results—are the recovery boundary for
+issuer, key, role, certificate, and revocation state.
+
+If an issuance, rotation, revocation, or tidy response is lost, do not retry it.
+Read the issuer, key, certificate, CRL, or tidy status and reconcile the result
+first. During an incident, stop new issuance if custody is uncertain, preserve
+the relevant audit request ID, rotate or revoke through the typed journey, and
+validate CRL distribution before restoring service. Before retiring a PKI
+mount, inventory active chains and certificates, preserve required audit and
+snapshot evidence, migrate relying parties, and disable the mount only through
+the separately confirmed lifecycle action.
+
+## Operate Kubernetes credentials safely
+
+Configure the Kubernetes API endpoint, CA material, and reviewer service-account
+JWT through the typed configuration journey. Limit each OpenBao role to the
+required namespaces, service account or role rules, audiences, and TTLs. Generated
+service-account tokens are request-scoped secret material: transfer them directly
+to the intended workload or approved custody, then clear the result. They are not
+stored in NetBox, its audit log, browser storage, or URLs.
+
+If credential generation has an unknown outcome, inspect Kubernetes and OpenBao
+state before retrying. For suspected reviewer-token or generated-token exposure,
+remove or rotate the Kubernetes credential at its source, update OpenBao
+configuration, and validate a newly generated short-lived credential. Before
+retiring the integration, stop consumers, delete roles with explicit confirmation,
+remove the engine configuration, and retain only the required audit evidence.
+
 ## Compatibility and limitations
 
 The reviewed execution contract starts at OpenBao 2.6.2 and accepts only the
@@ -158,7 +222,7 @@ The reviewed execution contract starts at OpenBao 2.6.2 and accepts only the
 DELETE operations for KV and plugin-style mounted schemas when their templates,
 required path parameters, query parameters, and bodies satisfy the reviewed
 grammar. Merely advertised operations outside that grammar remain display-only.
-KV, transit, database, SSH, and TOTP are first-class typed journeys. PKI and
-Kubernetes credentials remain planned typed workspaces; their reviewed generic
-mounted operations remain available when the runtime schema and permissions
-admit them.
+KV, transit, database, SSH, TOTP, PKI, and Kubernetes are first-class typed
+journeys. Unsupported future OpenBao operations remain display-only until their
+method, path, field, authorization, confirmation, and material-handling contracts
+are reviewed.

@@ -346,6 +346,15 @@ view/add/change/delete permissions:
 | `generate_database_credentials_openbaocluster` / `manage_database_roles_openbaocluster` / `delete_database_resources_openbaocluster` / `rotate_database_credentials_openbaocluster` | Database credential generation, configuration, deletion, and guarded rotation/reset |
 | `issue_ssh_credentials_openbaocluster` / `manage_ssh_roles_openbaocluster` / `delete_ssh_roles_openbaocluster` | SSH credential/signing operations, role management, and role deletion |
 | `generate_totp_codes_openbaocluster` / `manage_totp_keys_openbaocluster` / `delete_totp_keys_openbaocluster` | TOTP code use, key management, and key deletion |
+| `view_pki_openbaocluster` / `manage_pki_configuration_openbaocluster` | PKI reads and configuration management |
+| `manage_pki_issuers_openbaocluster` / `delete_pki_issuers_openbaocluster` | PKI issuer lifecycle with separate deletion authority |
+| `manage_pki_keys_openbaocluster` / `generate_pki_keys_openbaocluster` / `delete_pki_keys_openbaocluster` | PKI key import/metadata, generation, and deletion as separate authorities |
+| `manage_pki_roles_openbaocluster` / `delete_pki_roles_openbaocluster` | PKI issuance-role lifecycle with separate deletion authority |
+| `issue_pki_certificates_openbaocluster` / `revoke_pki_certificates_openbaocluster` | Certificate issuance/signing and separately confirmed revocation |
+| `rotate_pki_roots_openbaocluster` / `delete_pki_roots_openbaocluster` / `tidy_pki_openbaocluster` | Confirmed root generation/rotation, delete-all-root state, and tidy operations |
+| `view_kubernetes_engine_openbaocluster` / `manage_k8s_configuration_openbaocluster` / `delete_k8s_configuration_openbaocluster` | Kubernetes engine reads, connection configuration, and configuration deletion |
+| `manage_kubernetes_roles_openbaocluster` / `delete_kubernetes_roles_openbaocluster` | Kubernetes role lifecycle with separate deletion authority |
+| `generate_k8s_credentials_openbaocluster` | Request-scoped Kubernetes credential generation |
 
 `view_openbaocluster` alone does not grant discovery. Both UI and API queries
 use `RestrictedQuerySet.restrict()`, so NetBox object-permission constraints
@@ -407,9 +416,9 @@ The baseline includes cluster session and bootstrap, Raft storage, API
 exploration, auth methods, MFA, engine lifecycle, generic mounted engines, KV,
 transit/database/SSH/TOTP, PKI, Kubernetes, policies, identity, OIDC,
 namespaces, leases, tools, and UI configuration. A family marked `planned` is
-not implemented. The `cluster-session`, `auth-methods`, `mfa`, `kv`, and
-`common-engines` families are complete through request-scoped typed
-workspaces. Completion
+not implemented. The `cluster-session`, `auth-methods`, `mfa`, `kv`,
+`common-engines`, `pki`, and `kubernetes` families are complete through
+request-scoped typed workspaces. Completion
 requires a Web UI, REST API, authorization, auditing, direct/broker behavior,
 hostile-input tests, and live OpenBao/browser evidence.
 

@@ -59,6 +59,17 @@ export function createMaterialExpiry({ setTimer = setTimeout, clearTimer = clear
   };
 }
 
+export function clearSensitiveMaterial(materialExpiry, elements, scope = document) {
+  materialExpiry.cancel();
+  if (elements.result) elements.result.textContent = "No result.";
+  if (elements.journeyResult) elements.journeyResult.textContent = "No result.";
+  if (elements.journeyDownload) {
+    elements.journeyDownload.hidden = true;
+    elements.journeyDownload.dataset.filename = "";
+  }
+  clearJourneyInputs(scope);
+}
+
 export function replaceSelectOptions(select, options) {
   if (select.tomselect) {
     select.tomselect.clear(true);
@@ -85,6 +96,21 @@ export function replaceSelectOptions(select, options) {
   select.disabled = options.length === 0;
 }
 
+export function downloadJourneyResult(text, filename, scope = globalThis) {
+  if (!filename || !text || text === "No result.") throw new Error("No downloadable journey result is available.");
+  const blob = new scope.Blob([text], { type: "application/json;charset=utf-8" });
+  const url = scope.URL.createObjectURL(blob);
+  try {
+    const link = scope.document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.rel = "noopener";
+    link.click();
+  } finally {
+    scope.URL.revokeObjectURL(url);
+  }
+}
+
 function listen(element, eventName, handler) {
   if (element) element.addEventListener(eventName, handler);
 }
@@ -98,10 +124,12 @@ function bootstrap() {
   const status = document.getElementById("openbao-engine-status");
   const result = document.getElementById("openbao-operation-result");
   const journeyResult = document.getElementById("openbao-journey-result");
+  const journeyDownload = document.getElementById("openbao-journey-download");
   let capabilityDigest = "";
   let operations = new Map();
   let journeyDigest = "";
   let journeys = new Map();
+  let materialGeneration = 0;
   const materialExpiry = createMaterialExpiry();
 
   function message(text, failed = false) {
@@ -123,6 +151,7 @@ function bootstrap() {
   }
 
   async function refreshMounts() {
+    clearResult();
     try {
       const payload = await request("secret-engines/");
       const body = document.getElementById("openbao-engine-mounts");
@@ -149,6 +178,7 @@ function bootstrap() {
     const submitter = event.submitter;
     if (!submitter?.dataset.action) return;
     const fields = Object.fromEntries(new FormData(event.currentTarget));
+    clearResult();
     try {
       const payload = await request(submitter.dataset.action, { method: "POST", body: JSON.stringify(fields) });
       document.getElementById("openbao-engine-details").textContent = JSON.stringify(payload, null, 2);
@@ -158,6 +188,7 @@ function bootstrap() {
   document.querySelectorAll(".openbao-engine-form").forEach((form) => form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const fields = Object.fromEntries(new FormData(form));
+    clearResult();
     try {
       if (fields.configuration) fields.configuration = parseJsonObject(fields.configuration, "Configuration");
       await request(form.dataset.action, { method: "POST", body: JSON.stringify(fields) });
@@ -168,6 +199,7 @@ function bootstrap() {
   }));
 
   listen(document.getElementById("openbao-journey-refresh"), "click", async () => {
+    clearResult();
     try {
       const payload = await request("secret-engine-journeys/");
       journeyDigest = payload.capability_digest;
@@ -185,6 +217,7 @@ function bootstrap() {
   });
 
   listen(document.getElementById("openbao-journey-key"), "change", (event) => {
+    clearResult();
     const journey = journeys.get(event.currentTarget.value);
     if (!journey) return;
     document.getElementById("openbao-journey-summary").textContent =
@@ -234,9 +267,10 @@ function bootstrap() {
   listen(document.getElementById("openbao-journey-form"), "submit", async (event) => {
     event.preventDefault();
     const journey = journeys.get(document.getElementById("openbao-journey-key").value);
+    const fields = Object.fromEntries(new FormData(event.currentTarget));
+    const requestGeneration = clearResult();
     try {
       if (!journey || !journeyDigest) throw new Error("Reload the engine journey catalog before execution.");
-      const fields = Object.fromEntries(new FormData(event.currentTarget));
       fields.journey_id = journey.journey_id;
       fields.mount_path = journey.mount_path;
       fields.capability_digest = journeyDigest;
@@ -246,14 +280,30 @@ function bootstrap() {
       const payload = await request("secret-engine-journeys/execute/", {
         method: "POST", body: JSON.stringify(fields),
       });
+      if (requestGeneration !== materialGeneration) return;
       journeyResult.textContent = JSON.stringify(payload, null, 2);
+      if (journey.download_filename) {
+        journeyDownload.dataset.filename = journey.download_filename;
+        journeyDownload.hidden = false;
+      }
       scheduleMaterialClear();
       message("The first-class engine task completed. Clear the result after use.");
-    } catch (error) { journeyResult.textContent = "No result."; message(error.message, true); }
-    finally { clearJourneyInputs(); }
+    } catch (error) {
+      if (requestGeneration !== materialGeneration) return;
+      journeyResult.textContent = "No result.";
+      message(error.message, true);
+    }
+  });
+
+  listen(journeyDownload, "click", () => {
+    try {
+      downloadJourneyResult(journeyResult.textContent, journeyDownload.dataset.filename);
+      message("Prepared the request-scoped result download. Clear it after custody transfer.");
+    } catch (error) { message(error.message, true); }
   });
 
   listen(document.getElementById("openbao-operation-refresh"), "click", async () => {
+    clearResult();
     try {
       const payload = await request("secret-operations/");
       capabilityDigest = payload.capability_digest;
@@ -273,6 +323,7 @@ function bootstrap() {
   });
 
   listen(document.getElementById("openbao-operation-key"), "change", (event) => {
+    clearResult();
     const operation = operations.get(event.currentTarget.value);
     if (!operation) return;
     document.getElementById("openbao-operation-summary").textContent =
@@ -304,12 +355,16 @@ function bootstrap() {
     document.getElementById("openbao-confirmation-help").textContent = `Enter exactly: ${confirmation}`;
   }
 
-  listen(document.getElementById("openbao-operation-mount"), "change", updateConfirmationHelp);
+  listen(document.getElementById("openbao-operation-mount"), "change", () => {
+    clearResult();
+    updateConfirmationHelp();
+  });
   listen(document.getElementById("openbao-operation-resource"), "input", updateConfirmationHelp);
 
   listen(document.getElementById("openbao-operation-form"), "submit", async (event) => {
     event.preventDefault();
     const fields = Object.fromEntries(new FormData(event.currentTarget));
+    const requestGeneration = clearResult();
     try {
       fields.query = parseJsonObject(fields.query, "Query");
       fields.body = parseJsonObject(fields.body, "Body");
@@ -317,10 +372,15 @@ function bootstrap() {
       fields.capability_digest = capabilityDigest;
       if (!capabilityDigest) throw new Error("Reload the classified operation catalog before execution.");
       const payload = await request("secret-operations/execute/", { method: "POST", body: JSON.stringify(fields) });
+      if (requestGeneration !== materialGeneration) return;
       result.textContent = JSON.stringify(payload, null, 2);
       scheduleMaterialClear();
       message("The reviewed mounted operation completed. Clear the result after use.");
-    } catch (error) { result.textContent = "No result."; message(error.message, true); }
+    } catch (error) {
+      if (requestGeneration !== materialGeneration) return;
+      result.textContent = "No result.";
+      message(error.message, true);
+    }
   });
 
   function scheduleMaterialClear() {
@@ -328,12 +388,11 @@ function bootstrap() {
   }
 
   function clearResult() {
-    materialExpiry.cancel();
-    if (result) result.textContent = "No result.";
-    if (journeyResult) journeyResult.textContent = "No result.";
-    clearJourneyInputs();
+    materialGeneration += 1;
+    clearSensitiveMaterial(materialExpiry, { result, journeyResult, journeyDownload });
     const details = document.getElementById("openbao-engine-details");
     if (details) details.textContent = "No mount metadata loaded.";
+    return materialGeneration;
   }
   document.querySelectorAll(".openbao-result-clear").forEach((button) => listen(button, "click", clearResult));
   window.addEventListener("pagehide", clearResult);

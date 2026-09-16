@@ -1,7 +1,12 @@
 """Opt-in representative secrets-engine administration flows against OpenBao 2.6.2."""
 
+import base64
+import json
 import os
+import threading
+import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -21,6 +26,83 @@ TEST_DATABASE_USERNAME = os.getenv("NETBOX_OPENBAO_TEST_DATABASE_USERNAME")
 TEST_DATABASE_PASSWORD = os.getenv("NETBOX_OPENBAO_TEST_DATABASE_PASSWORD")
 
 SSH_PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBnYVUD6yQQ1tWiqqEdDkhOtoWdsFP/a+d/WKQ0i17vj issue67-live"
+
+# Pinned independently from ENGINE_JOURNEYS. This list mirrors the OpenBao
+# 2.6.2 PKI and Kubernetes UI adapters reviewed for issue #68 so an omitted
+# registry entry fails live completeness instead of disappearing from both
+# sides of the assertion.
+REQUIRED_PKI_KUBERNETES_UI_JOURNEYS = {
+    "pki.cluster-read", "pki.cluster-write", "pki.crl-read", "pki.crl-write",
+    "pki.issuers-config-read", "pki.issuers-config-write", "pki.keys-config-read",
+    "pki.keys-config-write", "pki.urls-read", "pki.urls-write", "pki.acme-read",
+    "pki.acme-write", "pki.issuers", "pki.issuer-read", "pki.issuer-write",
+    "pki.issuer-delete", "pki.issuer-import-cert", "pki.issuer-import-bundle",
+    "pki.keys", "pki.key-read", "pki.key-write", "pki.key-delete",
+    "pki.key-generate-internal", "pki.key-generate-exported", "pki.key-generate-kms",
+    "pki.key-import", "pki.roles", "pki.role-read", "pki.role-write", "pki.role-patch",
+    "pki.role-delete", "pki.certificates", "pki.revoked-certificates",
+    "pki.certificate-read", "pki.issue", "pki.sign", "pki.issuer-issue",
+    "pki.issuer-sign", "pki.revoke", "pki.root-generate", "pki.issuers-root-generate",
+    "pki.root-rotate", "pki.intermediate-generate", "pki.issuers-intermediate-generate",
+    "pki.intermediate-set-signed", "pki.intermediate-cross-sign",
+    "pki.issuer-sign-intermediate", "pki.root-delete", "pki.tidy", "pki.tidy-status",
+    "pki.tidy-cancel", "pki.auto-tidy-read", "pki.auto-tidy-write",
+    "kubernetes.check", "kubernetes.config-read", "kubernetes.config-write",
+    "kubernetes.config-delete", "kubernetes.roles", "kubernetes.role-read",
+    "kubernetes.role-write", "kubernetes.role-delete", "kubernetes.credentials",
+}
+
+
+def _token(issued_at, expiration):
+    def encode(value):
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+
+    return f"{encode({'alg': 'RS256', 'typ': 'JWT'})}.{encode({'iat': issued_at, 'exp': expiration})}.c2lnbmF0dXJl"
+
+
+class KubernetesTokenHandler(BaseHTTPRequestHandler):
+    token_requests = []
+
+    def _read_body(self):
+        length = self.headers.get("Content-Length")
+        if length is not None:
+            return self.rfile.read(int(length))
+        if self.headers.get("Transfer-Encoding", "").lower() != "chunked":
+            return b""
+        chunks = []
+        while True:
+            chunk_length = int(self.rfile.readline().split(b";", 1)[0], 16)
+            if chunk_length == 0:
+                self.rfile.readline()
+                break
+            chunks.append(self.rfile.read(chunk_length))
+            self.rfile.read(2)
+        return b"".join(chunks)
+
+    def do_POST(self):
+        if self.path != "/api/v1/namespaces/default/serviceaccounts/operator/token":
+            self.send_error(404)
+            return
+        self.__class__.token_requests.append(self._read_body())
+        issued_at = int(time.time())
+        expiration = issued_at + 120
+        payload = {
+            "apiVersion": "authentication.k8s.io/v1",
+            "kind": "TokenRequest",
+            "status": {
+                "token": _token(issued_at, expiration),
+                "expirationTimestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expiration)),
+            },
+        }
+        body = json.dumps(payload).encode()
+        self.send_response(201)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        return
 
 
 @unittest.skipUnless(
@@ -132,6 +214,122 @@ class SecretEngineAdministrationIntegrationTest(unittest.TestCase):
             if transit_enabled:
                 self.backend.disable_secret_engine(transit_mount)
             self.backend.disable_secret_engine(mount)
+
+    def test_pki_and_kubernetes_journeys_against_live_openbao(self):
+        suffix = uuid4().hex[:10]
+        pki = f"journey-pki-{suffix}"
+        kubernetes = f"journey-kubernetes-{suffix}"
+        enabled = []
+        KubernetesTokenHandler.token_requests = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), KubernetesTokenHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            for engine_type, mount in (("pki", pki), ("kubernetes", kubernetes)):
+                self.backend.enable_secret_engine(mount, {"type": engine_type})
+                enabled.append(mount)
+
+            document = self.backend.discover_capabilities()
+            mounts = self.backend.list_secret_engines()
+            catalog = engine_journey_catalog(document, mounts)
+            actual = {item["journey_id"] for item in catalog if item["mount_path"] in {pki, kubernetes}}
+            self.assertEqual(actual, REQUIRED_PKI_KUBERNETES_UI_JOURNEYS)
+
+            root = self.backend.execute_mounted_operation(
+                "POST",
+                f"/{pki}/root/generate/internal",
+                query={},
+                body={"common_name": "Issue 68 Root", "ttl": "24h"},
+            )
+            self.assertTrue(root["data"]["certificate"].startswith("-----BEGIN CERTIFICATE-----"))
+            self.backend.execute_mounted_operation(
+                "POST",
+                f"/{pki}/roles/application",
+                query={},
+                body={"allowed_domains": ["example.test"], "allow_subdomains": True, "max_ttl": "1h"},
+            )
+            certificate = self.backend.execute_mounted_operation(
+                "POST",
+                f"/{pki}/issue/application",
+                query={},
+                body={"common_name": "service.example.test", "ttl": "5m"},
+            )
+            self.assertTrue(certificate["data"]["private_key"].startswith("-----BEGIN"))
+            serial = certificate["data"]["serial_number"].replace(":", "-")
+            fetched = self.backend.execute_mounted_operation("GET", f"/{pki}/cert/{serial}", query={}, body={})
+            self.assertEqual(fetched["data"]["certificate"], certificate["data"]["certificate"])
+            self.backend.execute_mounted_operation(
+                "POST",
+                f"/{pki}/config/auto-tidy",
+                query={},
+                body={"enabled": False, "tidy_cert_store": True},
+            )
+            self.backend.execute_mounted_operation(
+                "POST",
+                f"/{pki}/config/acme",
+                query={},
+                body={"enabled": False},
+            )
+            acme = self.backend.execute_mounted_operation("GET", f"/{pki}/config/acme", query={}, body={})
+            self.assertFalse(acme["data"]["enabled"])
+            modern_root = self.backend.execute_mounted_operation(
+                "POST",
+                f"/{pki}/issuers/generate/root/internal",
+                query={},
+                body={"common_name": "Issue 68 Multi-Issuer Root", "ttl": "24h"},
+            )
+            self.assertTrue(modern_root["data"]["issuer_id"])
+            intermediate = self.backend.execute_mounted_operation(
+                "POST",
+                f"/{pki}/issuers/generate/intermediate/internal",
+                query={},
+                body={"common_name": "Issue 68 Intermediate"},
+            )
+            signed_intermediate = self.backend.execute_mounted_operation(
+                "POST",
+                f"/{pki}/issuer/{modern_root['data']['issuer_id']}/sign-intermediate",
+                query={},
+                body={"csr": intermediate["data"]["csr"], "ttl": "12h"},
+            )
+            self.assertTrue(signed_intermediate["data"]["certificate"].startswith("-----BEGIN CERTIFICATE-----"))
+
+            self.backend.execute_mounted_operation(
+                "POST",
+                f"/{kubernetes}/config",
+                query={},
+                body={
+                    "kubernetes_host": f"http://127.0.0.1:{server.server_port}",
+                    "service_account_jwt": "disposable-reviewer-token",
+                    "disable_local_ca_jwt": True,
+                },
+            )
+            self.backend.execute_mounted_operation(
+                "POST",
+                f"/{kubernetes}/roles/operator",
+                query={},
+                body={
+                    "allowed_kubernetes_namespaces": ["default"],
+                    "service_account_name": "operator",
+                    "token_default_ttl": 60,
+                    "token_max_ttl": 120,
+                },
+            )
+            credentials = self.backend.execute_mounted_operation(
+                "POST",
+                f"/{kubernetes}/creds/operator",
+                query={},
+                body={"kubernetes_namespace": "default", "ttl": 60},
+            )
+            self.assertTrue(credentials["data"]["service_account_token"])
+            self.assertEqual(credentials["data"]["service_account_name"], "operator")
+            self.assertEqual(len(KubernetesTokenHandler.token_requests), 1)
+            self.backend.execute_mounted_operation("DELETE", f"/{pki}/root", query={}, body={})
+        finally:
+            for mount in reversed(enabled):
+                self.backend.disable_secret_engine(mount)
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
     @unittest.skipUnless(
         TEST_DATABASE_URL and TEST_DATABASE_USERNAME and TEST_DATABASE_PASSWORD,

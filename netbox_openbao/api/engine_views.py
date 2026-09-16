@@ -12,6 +12,7 @@ from netbox_openbao.administration import get_administration_backend
 from netbox_openbao.administration.audit import AdministrationAuditError, log_administration
 from netbox_openbao.administration.engine_journeys import (
     engine_journey_catalog,
+    normalize_journey_path_parameters,
     resolve_engine_journey,
 )
 from netbox_openbao.administration.engines import (
@@ -544,12 +545,14 @@ class SecretEngineAdministrationMixin:
             raise PermissionDenied("The first-class engine journey permission is required.")
         if set(data["query"]) & dict(journey.fixed_query).keys():
             raise ValidationError("The request cannot override a fixed first-class journey query parameter.")
+        path_parameters = normalize_journey_path_parameters(journey, data["path_parameters"])
         path = compile_operation_path(
             operation.path_template,
             data["mount_path"],
             data["resource_path"],
-            data["path_parameters"],
+            path_parameters,
         )
+        data["path_parameters"] = path_parameters
         if journey.journey_id == "kv2.diff":
             self._validate_journey_fields(operation, {**data, "query": {}})
             self._validate_kv_diff_query(data["query"])

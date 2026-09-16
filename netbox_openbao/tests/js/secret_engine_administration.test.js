@@ -5,12 +5,34 @@ import test from "node:test";
 
 import {
   clearJourneyInputs,
+  clearSensitiveMaterial,
   createMaterialExpiry,
   destructiveConfirmation,
+  downloadJourneyResult,
   journeyConfirmation,
   parseJsonObject,
   replaceSelectOptions,
 } from "../../static/netbox_openbao/secret_engine_administration.js";
+
+test("request-scoped downloads revoke their object URL immediately", () => {
+  const calls = [];
+  const scope = {
+    Blob: class Blob { constructor(parts, options) { calls.push(["blob", parts, options]); } },
+    URL: {
+      createObjectURL: () => { calls.push(["create"]); return "blob:result"; },
+      revokeObjectURL: (url) => calls.push(["revoke", url]),
+    },
+    document: { createElement: () => ({
+      click() { calls.push(["click", this.href, this.download, this.rel]); },
+    }) },
+  };
+
+  downloadJourneyResult('{"data":{"certificate":"sensitive"}}', "certificate.json", scope);
+
+  assert.deepEqual(calls.at(-2), ["click", "blob:result", "certificate.json", "noopener"]);
+  assert.deepEqual(calls.at(-1), ["revoke", "blob:result"]);
+  assert.throws(() => downloadJourneyResult("No result.", "certificate.json", scope), /No downloadable/);
+});
 
 test("journey input clearing removes material and restores empty JSON envelopes", () => {
   const fields = new Map([
@@ -56,6 +78,36 @@ test("material expiry resets from each successful response and can be cancelled"
   expiry.schedule(() => { clearCalls += 1; });
   expiry.cancel();
   assert.deepEqual(cleared, [1, 3]);
+});
+
+test("sensitive clearing cancels expiry and removes both result surfaces and downloads", () => {
+  let cancelled = 0;
+  const fields = new Map([
+    ["openbao-journey-resource", { value: "secret" }],
+    ["openbao-journey-reason", { value: "reason" }],
+    ["openbao-journey-confirmation", { value: "confirmation" }],
+    ["openbao-journey-path", { value: '{"name":"secret"}' }],
+    ["openbao-journey-query", { value: '{"token":"secret"}' }],
+    ["openbao-journey-body", { value: '{"private_key":"secret"}' }],
+  ]);
+  const elements = {
+    result: { textContent: "generic secret" },
+    journeyResult: { textContent: "journey secret" },
+    journeyDownload: { hidden: false, dataset: { filename: "secret.json" } },
+  };
+
+  clearSensitiveMaterial(
+    { cancel: () => { cancelled += 1; } },
+    elements,
+    { getElementById: (id) => fields.get(id) },
+  );
+
+  assert.equal(cancelled, 1);
+  assert.equal(elements.result.textContent, "No result.");
+  assert.equal(elements.journeyResult.textContent, "No result.");
+  assert.equal(elements.journeyDownload.hidden, true);
+  assert.equal(elements.journeyDownload.dataset.filename, "");
+  assert.equal(fields.get("openbao-journey-body").value, "{}");
 });
 
 test("advanced engine fields accept only JSON objects", () => {

@@ -437,7 +437,27 @@
       ],
       "capability": "PKI issuers, keys, roles, certificates and tidy",
       "owner_issue": 68,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "secrets.backend.pki": "Typed PKI cluster, CRL, URL, ACME, issuer, key, role, certificate, issuance, signing, legacy and multi-issuer root/intermediate, delete-all-root, revocation, and tidy journeys cover the upstream PKI workspace with separate authorization and destructive confirmation boundaries."
+      },
+      "evidence": {
+        "secrets.backend.pki": {
+          "implementation": [
+            "netbox_openbao/administration/engine_journeys.py",
+            "netbox_openbao/api/engine_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html",
+            "netbox_openbao/static/netbox_openbao/secret_engine_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_engine_administration.py",
+            "netbox_openbao/tests/test_engine_administration_browser.py",
+            "netbox_openbao/tests/test_engine_administration_live.py"
+          ]
+        }
+      }
     },
     {
       "id": "kubernetes",
@@ -446,7 +466,27 @@
       ],
       "capability": "Kubernetes configuration, roles and credentials",
       "owner_issue": 68,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "secrets.backend.kubernetes": "Typed Kubernetes configuration, role, and request-scoped credential journeys cover the upstream Kubernetes workspace with separate authorization and material handling."
+      },
+      "evidence": {
+        "secrets.backend.kubernetes": {
+          "implementation": [
+            "netbox_openbao/administration/engine_journeys.py",
+            "netbox_openbao/api/engine_views.py"
+          ],
+          "ui": [
+            "netbox_openbao/templates/netbox_openbao/openbaocluster_secret_engines.html",
+            "netbox_openbao/static/netbox_openbao/secret_engine_administration.js"
+          ],
+          "tests": [
+            "netbox_openbao/tests/test_engine_administration.py",
+            "netbox_openbao/tests/test_engine_administration_browser.py",
+            "netbox_openbao/tests/test_engine_administration_live.py"
+          ]
+        }
+      }
     },
     {
       "id": "policies",

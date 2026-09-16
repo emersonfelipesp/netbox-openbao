@@ -14,11 +14,12 @@ structurally — by a type, a constraint, or an absent column — rather than by
 convention the next contributor has to remember.
 
 The secrets-engine administration workspace applies the same absence-of-custody
-rule to first-class KV, transit, database, SSH, and TOTP journeys. Runtime
+rule to first-class KV, transit, database, SSH, TOTP, PKI, and Kubernetes journeys. Runtime
 OpenAPI can prove that an exact reviewed operation exists, but it cannot invent
 an executable journey, permission, risk classification, destructive
 confirmation, or response class. Results are inserted as text, returned with
-`Cache-Control: no-store`, cleared after five minutes or `pagehide`, and never
+`Cache-Control: no-store`, cleared before selection changes, catalog reloads,
+new or failed requests, unrelated operations, five-minute expiry, or `pagehide`, and never
 written to a model, cache, session, task, URL, exception, or audit record. The
 audit contains only actor, cluster, operation metadata, capability digest,
 reason, outcome, and status. Separate permissions isolate material reads,
@@ -27,6 +28,9 @@ key/version lifecycle.
 Journey request fields that can contain material are cleared after successful
 or failed execution, explicit clearing, five-minute expiry, and `pagehide`;
 autocomplete and spellcheck are disabled for those controls.
+PKI and Kubernetes material downloads are created only from the currently
+rendered response after an explicit click. The browser revokes the temporary
+object URL immediately; the response and file are not persisted by NetBox.
 
 Each is covered by a test in `netbox_openbao/tests/test_security.py`. If you
 change one, that test should fail; if it doesn't, the test is wrong.

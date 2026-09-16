@@ -11,6 +11,7 @@ from netbox_openbao.administration.audit import AdministrationAuditError
 from netbox_openbao.administration.engine_journeys import (
     ENGINE_JOURNEYS,
     engine_journey_catalog,
+    normalize_journey_path_parameters,
     resolve_engine_journey,
 )
 from netbox_openbao.administration.engines import (
@@ -161,6 +162,70 @@ class EngineContractTest(TestCase):
                 "netbox_openbao.delete_database_resources_openbaocluster",
             )
         self.assertEqual(permissions["ssh.role-delete"], "netbox_openbao.delete_ssh_roles_openbaocluster")
+
+    def test_pki_and_kubernetes_journeys_have_dedicated_permissions_and_controls(self):
+        selected = {journey.journey_id: journey for journey in ENGINE_JOURNEYS}
+        self.assertEqual(
+            selected["pki.issuer-delete"].required_permission, "netbox_openbao.delete_pki_issuers_openbaocluster"
+        )
+        self.assertEqual(
+            selected["pki.key-delete"].required_permission, "netbox_openbao.delete_pki_keys_openbaocluster"
+        )
+        self.assertEqual(
+            selected["pki.key-write"].required_permission,
+            "netbox_openbao.manage_pki_keys_openbaocluster",
+        )
+        for journey_id in (
+            "pki.key-generate-internal",
+            "pki.key-generate-exported",
+            "pki.key-generate-kms",
+        ):
+            self.assertEqual(
+                selected[journey_id].required_permission,
+                "netbox_openbao.generate_pki_keys_openbaocluster",
+            )
+        self.assertEqual(
+            selected["pki.root-delete"].required_permission,
+            "netbox_openbao.delete_pki_roots_openbaocluster",
+        )
+        self.assertEqual(
+            selected["pki.issue"].required_permission, "netbox_openbao.issue_pki_certificates_openbaocluster"
+        )
+        self.assertEqual(
+            selected["kubernetes.credentials"].required_permission,
+            "netbox_openbao.generate_k8s_credentials_openbaocluster",
+        )
+        self.assertEqual(
+            selected["kubernetes.config-delete"].required_permission,
+            "netbox_openbao.delete_k8s_configuration_openbaocluster",
+        )
+        for journey_id in (
+            "pki.issuer-delete",
+            "pki.key-delete",
+            "pki.key-generate-internal",
+            "pki.root-generate",
+            "pki.root-rotate",
+            "pki.root-delete",
+            "pki.tidy",
+        ):
+            with self.subTest(journey_id=journey_id):
+                self.assertEqual(selected[journey_id].risk_level, "destructive")
+                self.assertTrue(selected[journey_id].confirmation_prefix)
+
+    def test_pki_path_contract_normalizes_serials_and_bounds_generation_modes(self):
+        selected = {journey.journey_id: journey for journey in ENGINE_JOURNEYS}
+        self.assertEqual(
+            normalize_journey_path_parameters(selected["pki.certificate-read"], {"serial": "AA:01:bC"}),
+            {"serial": "aa-01-bc"},
+        )
+        self.assertEqual(
+            normalize_journey_path_parameters(selected["pki.root-generate"], {"exported": "internal"}),
+            {"exported": "internal"},
+        )
+        for values in ({"serial": "../../root"}, {"exported": "future"}):
+            journey = selected["pki.certificate-read"] if "serial" in values else selected["pki.root-generate"]
+            with self.subTest(values=values), self.assertRaises(CapabilitySchemaError):
+                normalize_journey_path_parameters(journey, values)
 
     def test_first_class_catalog_fails_closed_on_lossy_mount_name_collision(self):
         advertised = operation("GET", "/{secret_mount_path}/data/{path}", "kv-read-data-path")
@@ -563,6 +628,50 @@ class EngineAdministrationAPITest(OpenBaoAdministrationTestCase):
             kwargs={"pk": self.cluster.pk},
         )
 
+    @patch("netbox_openbao.api.engine_views.get_administration_backend")
+    def test_pki_kms_key_generation_requires_generation_only_permission(self, get_backend):
+        advertised = operation(
+            "POST",
+            "/{secret_mount_path}/keys/generate/kms",
+            "pki-generate-kms-key",
+            body_fields=("key_name", "key_type", "key_bits"),
+            body_field_types=(("key_name", "string"), ("key_type", "string"), ("key_bits", "integer")),
+            path_parameters=("secret_mount_path",),
+            required_path_parameters=("secret_mount_path",),
+            path_parameter_types=(("secret_mount_path", "string"),),
+            mount_parameter="pki_mount_path",
+        )
+        backend = FakeEngineAdministrationBackend(self.cluster)
+        backend.mounts = normalize_secret_engine_mounts({"data": {"pki/": {"type": "pki"}}})
+        backend.discover_capabilities = lambda: capability_document(advertised)
+        get_backend.return_value = backend
+        self.add_permissions(
+            "netbox_openbao.view_openbaocluster",
+            "netbox_openbao.view_secret_engines_openbaocluster",
+            "netbox_openbao.manage_pki_keys_openbaocluster",
+        )
+        payload = {
+            "journey_id": "pki.key-generate-kms",
+            "capability_digest": "c" * 64,
+            "mount_path": "pki",
+            "body": {"key_name": "application"},
+            "reason": "Generate an isolated application issuer key",
+            "confirmation": f"GENERATE PKI KEY /pki/keys/generate/kms ON {self.cluster.slug}",
+        }
+
+        denied = self.client.post(self.url("execute-secret-engine-journey"), payload, format="json", **self.header)
+        self.assertEqual(denied.status_code, 403, denied.content)
+        self.assertEqual(backend.calls, [])
+        self.add_permissions("netbox_openbao.generate_pki_keys_openbaocluster")
+        self.user = type(self.user).objects.get(pk=self.user.pk)
+        self.client.force_login(self.user)
+        accepted = self.client.post(self.url("execute-secret-engine-journey"), payload, format="json", **self.header)
+        self.assertEqual(accepted.status_code, 200, accepted.content)
+        self.assertEqual(
+            backend.calls,
+            [("execute", "POST", "/pki/keys/generate/kms", {}, {"key_name": "application"})],
+        )
+
     def test_disable_only_operator_sees_disable_without_manage_controls(self):
         self.add_permissions(
             "netbox_openbao.view_openbaocluster",
@@ -756,6 +865,79 @@ class EngineAdministrationAPITest(OpenBaoAdministrationTestCase):
                 backend.discover_capabilities = lambda advertised=advertised: capability_document(advertised)
                 get_backend.return_value = backend
                 self.add_permissions(f"netbox_openbao.{permission}_openbaocluster")
+                response = self.client.post(
+                    self.url("execute-secret-engine-journey"),
+                    {
+                        "journey_id": journey_id,
+                        "capability_digest": "c" * 64,
+                        "mount_path": mount_path,
+                        "reason": "Verify a representative first-class journey",
+                        **inputs,
+                    },
+                    format="json",
+                    **self.header,
+                )
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(backend.calls, [expected])
+
+    @patch("netbox_openbao.api.engine_views.get_administration_backend")
+    def test_representative_pki_and_kubernetes_journeys(self, get_backend):
+        cases = (
+            (
+                "pki",
+                "pki.certificate-read",
+                "view_pki",
+                operation(
+                    "GET",
+                    "/{secret_mount_path}/cert/{serial}",
+                    "pki-read-cert",
+                    path_parameters=("secret_mount_path", "serial"),
+                    required_path_parameters=("secret_mount_path", "serial"),
+                    path_parameter_types=(("secret_mount_path", "string"), ("serial", "string")),
+                    mount_parameter="pki_mount_path",
+                ),
+                {"path_parameters": {"serial": "AA:01:bC"}},
+                ("execute", "GET", "/pki/cert/aa-01-bc", {}, {}),
+            ),
+            (
+                "kubernetes",
+                "kubernetes.credentials",
+                "generate_k8s_credentials",
+                operation(
+                    "POST",
+                    "/{secret_mount_path}/creds/{name}",
+                    "kubernetes-generate-credentials",
+                    body_fields=("kubernetes_namespace", "ttl"),
+                    required_body_fields=("kubernetes_namespace",),
+                    body_field_types=(("kubernetes_namespace", "string"), ("ttl", "integer")),
+                    path_parameters=("name", "secret_mount_path"),
+                    required_path_parameters=("name", "secret_mount_path"),
+                    path_parameter_types=(("name", "string"), ("secret_mount_path", "string")),
+                    mount_parameter="kubernetes_mount_path",
+                ),
+                {"path_parameters": {"name": "operator"}, "body": {"kubernetes_namespace": "default", "ttl": 60}},
+                (
+                    "execute",
+                    "POST",
+                    "/kubernetes/creds/operator",
+                    {},
+                    {"kubernetes_namespace": "default", "ttl": 60},
+                ),
+            ),
+        )
+        self.add_permissions(
+            "netbox_openbao.view_openbaocluster",
+            "netbox_openbao.view_secret_engines_openbaocluster",
+            *(f"netbox_openbao.{case[2]}_openbaocluster" for case in cases),
+        )
+        for mount_path, journey_id, _permission, advertised, inputs, expected in cases:
+            with self.subTest(journey_id=journey_id):
+                backend = FakeEngineAdministrationBackend(self.cluster)
+                backend.mounts = normalize_secret_engine_mounts({"data": {f"{mount_path}/": {"type": mount_path}}})
+                backend.discover_capabilities = lambda advertised=advertised: capability_document(advertised)
+                get_backend.return_value = backend
+                self.user = type(self.user).objects.get(pk=self.user.pk)
+                self.client.force_login(self.user)
                 response = self.client.post(
                     self.url("execute-secret-engine-journey"),
                     {

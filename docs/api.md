@@ -29,7 +29,7 @@ internal automation resolution receipts have no CRUD endpoint.
 | `POST /clusters/{id}/secret-engines/disable/` | Disable a mount under separate permission and exact confirmation |
 | `GET /clusters/{id}/secret-operations/` | Return the classified mounted-operation catalog and current capability digest |
 | `POST /clusters/{id}/secret-operations/execute/` | Execute one reviewed mounted operation with stale-state, schema, permission, and confirmation checks |
-| `GET /clusters/{id}/secret-engine-journeys/` | Return permission-filtered KV, transit, database, SSH, and TOTP journeys proven by the live mount-specific schema |
+| `GET /clusters/{id}/secret-engine-journeys/` | Return permission-filtered KV, transit, database, SSH, TOTP, PKI, and Kubernetes journeys proven by the live mount-specific schema |
 | `POST /clusters/{id}/secret-engine-journeys/execute/` | Execute one typed journey with stale-digest, mount/version, field, permission, audit, and exact-confirmation checks |
 | `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/` | Singleton runtime configuration; deletion is refused while any credential exists and requires the standard `OpenBaoSettings` model permissions |
 | `GET/POST /engines/` | Secret engines |
@@ -120,6 +120,23 @@ and DELETE operations only when they belong to the mounted-secrets family,
 match the reviewed `/{secret_mount_path}` grammar, declare every path placeholder
 as required and typed, and pass the request and response controls above. An
 advertised operation outside that grammar remains display-only.
+
+The PKI journey family covers cluster, CRL, issuer, URL, ACME, and auto-tidy
+configuration; issuer, key, and role lifecycle; certificate listing and reads;
+issuance and signing; legacy and multi-issuer root/intermediate generation,
+issuer-scoped intermediate signing, root rotation and delete-all-root state;
+revocation; and tidy status, start, and cancellation. Certificate serial path parameters
+accept colon- or hyphen-delimited hexadecimal serials and normalize them to the
+canonical lowercase hyphen form before path compilation. Root/key generation,
+rotation, deletion, revocation, and tidy operations retain their dedicated
+permissions and exact confirmations after runtime capability resolution.
+
+The Kubernetes journey family covers connection configuration, roles, and
+credential generation. Generated PKI and Kubernetes material is returned only
+in the current `no-store` response. Journey catalog entries may declare a
+download filename for the Web UI, but the REST representation remains JSON and
+the server does not create or retain a file. See the runbook for the complete
+permission table, custody procedure, and unknown-outcome recovery rules.
 
 ## Cluster lifecycle and Raft requests
 
