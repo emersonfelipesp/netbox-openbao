@@ -104,16 +104,14 @@ def test_release_trigger_and_target_contracts() -> None:
     assert "for attempt in 1 2 3 4 5 6" in deploy
 
 
-def test_gitea_publisher_uses_runner_supported_environment_bootstrap() -> None:
+def test_gitea_publisher_uses_isolated_target_dependencies() -> None:
     publish = PUBLISH.read_text(encoding="utf-8")
-    required_commands = (
-        "command -v uv",
-        "uv venv --python python3",
-        "uv pip install --python",
-    )
     assert "python3 -m venv" not in publish
-    for command in required_commands:
-        assert publish.count(command) == 2
+    assert "command -v uv" not in publish
+    assert "uv venv" not in publish
+    assert publish.count("python3 -m pip install --disable-pip-version-check") == 2
+    assert publish.count("--target") == 2
+    assert publish.count("PYTHONPATH=") == 3
 
 
 def test_public_publish_trigger_contract() -> None:
