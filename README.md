@@ -159,6 +159,11 @@ Full detail in [`docs/installation.md`](docs/installation.md) and
 [`docs/configuration.md`](docs/configuration.md), or on the documentation site:
 <https://emersonfelipesp.github.io/netbox-openbao/>.
 
+Release operators must use the immutable Gitea package and NMS proof-v3
+deployment path. Target IDs, release-candidate and final publication triggers,
+validation, and rollback are documented in
+[`docs/release-deployment.md`](docs/release-deployment.md).
+
 ## Using it
 
 ```bash

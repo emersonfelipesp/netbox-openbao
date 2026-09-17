@@ -167,5 +167,6 @@ nav:
   - REST API: api.md
   - OpenBao UI parity matrix: openbao-ui-parity-matrix.md
   - Automation resolution: automation-resolution.md
+  - Release, deploy, and rollback: release-deployment.md
   - Code reference: reference/
   - Development: development.md

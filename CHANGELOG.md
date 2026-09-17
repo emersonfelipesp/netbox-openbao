@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0 - 2026-09-17
+
+- Added immutable package-first Gitea publication with a canonical schema-1
+  release manifest bound to the source commit and exact wheel/sdist bytes.
+- Added reviewed `develop` staging deployment and proof-v3 NMS production
+  deployment workflows for the netbox-openbao plugin.
+- Added TestPyPI release-candidate and PyPI final publishing through distinct,
+  fail-closed GitHub event contracts.
+- Documented release, validation, production recovery, and rollback procedures.
+
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

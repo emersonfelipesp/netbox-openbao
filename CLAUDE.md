@@ -5,6 +5,17 @@ credential inventory and relationships**.
 
 Repository: <https://github.com/emersonfelipesp/netbox-openbao>.
 
+## Release and deployment contract
+
+Production is package-first. NMS target 9 publishes the exact wheel, sdist,
+and schema-1 `netbox-openbao-release-manifest`; target 20 deploys reviewed
+`develop` to staging; target 21 defaults to the exact package and retains an
+explicit canonical-main override through a claimed, signed proof-v3 request.
+RC publication is limited to direct `v*rc*` pushes and
+TestPyPI. Final PyPI publication is limited to a published GitHub Release.
+Never put secret material in package bytes, manifests, proofs, logs, receipts,
+release notes, or rollback records. Follow `docs/release-deployment.md`.
+
 ## Hard constraints
 
 **NetBox 4.6 and 4.7** (`min_version = "4.6.0"`,

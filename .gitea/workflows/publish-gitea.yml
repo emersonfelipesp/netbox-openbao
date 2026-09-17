@@ -1,0 +1,96 @@
+name: Publish immutable Gitea package (NMS target 9)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Existing release tag to publish (v0.1.0rcN, v0.1.0, or v0.1.0.postN)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netbox-openbao-package-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ github.repository == 'emersonfelipesp/netbox-openbao' && github.ref == 'refs/heads/main' }}
+    runs-on: mirror-host
+    steps:
+      - name: Checkout canonical publisher policy
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve immutable tagged source
+        id: release
+        env:
+          TAG: ${{ inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin "+refs/tags/${TAG}:refs/release-policy/candidate"
+          git fetch --force --no-tags origin "+refs/heads/main:refs/release-policy/main"
+          event=final
+          printf '%s' "$TAG" | grep -Eq 'rc[1-9][0-9]*$' && event=rc
+          python3 scripts/validate_release_ref.py --repository . --tag "$TAG" \
+            --event "$event" --github-output "$GITHUB_OUTPUT"
+
+      - name: Build exact wheel, sdist, and manifest
+        env:
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          build_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-release.XXXXXX")"
+          trap 'rm -rf -- "$build_root"' EXIT
+          git archive "$SOURCE_SHA" | tar -x -C "$build_root"
+          python3 -m venv "$build_root/.publisher"
+          "$build_root/.publisher/bin/pip" install --disable-pip-version-check \
+            'build==1.3.0' 'setuptools==80.9.0' 'twine==6.2.0'
+          "$build_root/.publisher/bin/python" -m build --outdir "$build_root/dist" "$build_root"
+          "$build_root/.publisher/bin/python" -m twine check "$build_root"/dist/*
+          python3 "$build_root/scripts/release_artifacts.py" manifest \
+            --dist "$build_root/dist" --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" --manifest "$build_root/release-manifest.json"
+          install -d -m 0700 release-transfer
+          cp "$build_root"/dist/* release-transfer/
+          cp "$build_root/release-manifest.json" release-transfer/
+
+      - name: Publish and verify immutable package bytes
+        env:
+          GITEA_PACKAGE_TOKEN: ${{ secrets.PKG_TOKEN }}
+          TWINE_USERNAME: emersonfelipesp
+          TWINE_PASSWORD: ${{ secrets.PKG_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$GITEA_PACKAGE_TOKEN"
+          python3 -m venv .publisher
+          .publisher/bin/pip install --disable-pip-version-check 'twine==6.2.0'
+          .publisher/bin/python -m twine upload --non-interactive \
+            --repository-url "${GITHUB_SERVER_URL%/}/api/packages/emersonfelipesp/pypi" \
+            release-transfer/*.whl release-transfer/*.tar.gz
+          printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \
+            curl --disable --config - --fail --silent --show-error --max-redirs 0 --retry 0 \
+            -H 'Content-Type: application/octet-stream' \
+            --upload-file release-transfer/release-manifest.json \
+            "${GITHUB_SERVER_URL%/}/api/packages/emersonfelipesp/generic/netbox-openbao-release-manifest/${VERSION}/release-manifest.json"
+          for package in netbox-openbao netbox-openbao-release-manifest; do
+            package_type=pypi
+            test "$package" = netbox-openbao-release-manifest && package_type=generic
+            printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \
+              curl --disable --config - --fail --silent --show-error --max-redirs 0 --retry 0 \
+              -X POST \
+              "${GITHUB_SERVER_URL%/}/api/v1/packages/emersonfelipesp/${package_type}/${package}/-/link/netbox-openbao"
+          done
+          verify_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-verify.XXXXXX")"
+          trap 'rm -rf -- "$verify_root"' EXIT
+          GITEA_PACKAGE_TOKEN="$GITEA_PACKAGE_TOKEN" python3 scripts/release_artifacts.py fetch-gitea \
+            --owner emersonfelipesp --repository netbox-openbao \
+            --version "$VERSION" --source-sha "$SOURCE_SHA" \
+            --dist "$verify_root/dist" --manifest "$verify_root/release-manifest.json"

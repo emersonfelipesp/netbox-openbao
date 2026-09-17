@@ -1,0 +1,269 @@
+name: Deploy netbox-openbao
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      deploy_source:
+        description: "Immutable Gitea package by default; canonical main is an explicit override"
+        required: true
+        default: latest_package
+        type: choice
+        options: [latest_package, main_branch]
+      package_version:
+        description: "Exact immutable package version (latest_package only)"
+        required: false
+        default: ""
+        type: string
+      deploy_request_id:
+        description: "Injected by NMS; never set by hand"
+        required: false
+        default: ""
+        type: string
+      deploy_request_sha256:
+        description: "Injected by NMS; never set by hand"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netbox-openbao-${{ github.event_name == 'push' && 'staging' || 'production' }}-deploy
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+    runs-on: prod-deploy
+    steps:
+      - name: Deploy reviewed develop commit to target 20
+        run: |
+          set -euo pipefail
+          printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
+          /opt/nmulticloud/deploy/bin/deploy-netbox-plugin-staging netbox-openbao "$GITHUB_SHA"
+
+  production:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: prod-deploy
+    env:
+      DEPLOY_SOURCE: ${{ inputs.deploy_source }}
+      PACKAGE_VERSION: ${{ inputs.package_version }}
+      DEPLOY_REQUEST_ID: ${{ inputs.deploy_request_id }}
+      DEPLOY_REQUEST_SHA256: ${{ inputs.deploy_request_sha256 }}
+      WORKFLOW_SHA: ${{ github.sha }}
+      DEPLOY_CONTROL_URL: ${{ vars.DEPLOY_CONTROL_URL || 'http://127.0.0.1:16001' }}
+    steps:
+      - name: Checkout canonical workflow source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Validate target 21 dispatch identity
+        run: |
+          set -euo pipefail
+          case "$DEPLOY_SOURCE" in
+            latest_package)
+              printf '%s' "$PACKAGE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(rc[1-9][0-9]*|\.post[1-9][0-9]*)?$'
+              ;;
+            main_branch) test -z "$PACKAGE_VERSION" ;;
+            *) exit 1 ;;
+          esac
+          printf '%s' "$DEPLOY_REQUEST_ID" | grep -Eq '^[a-f0-9]{32}$'
+          printf '%s' "$DEPLOY_REQUEST_SHA256" | grep -Eq '^[a-f0-9]{64}$'
+          printf '%s' "$WORKFLOW_SHA" | grep -Eq '^[a-f0-9]{40}$'
+          test "${GITHUB_RUN_ATTEMPT:-1}" = 1
+          printf '%s' "$DEPLOY_CONTROL_URL" | grep -Eq '^https?://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?$'
+
+      - name: Claim signed NMS proof v3
+        run: |
+          set -euo pipefail
+          umask 077
+          proof_root="${RUNNER_TEMP}/netbox-openbao-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$proof_root"
+          mkdir -m 0700 "$proof_root"
+          proof_path="$proof_root/claimed-proof.json"
+          echo "PROOF_ROOT=$proof_root" >> "$GITHUB_ENV"
+          echo "PROOF_PATH=$proof_path" >> "$GITHUB_ENV"
+          python3 - <<'PY' > "$proof_root/claim.json"
+          import json, os
+          owner, repository = os.environ['GITHUB_REPOSITORY'].split('/', 1)
+          print(json.dumps({
+              'owner': owner,
+              'repository': repository,
+              'request_sha256': os.environ['DEPLOY_REQUEST_SHA256'],
+              'run_attempt': 1,
+              'run_head_sha': os.environ['WORKFLOW_SHA'],
+              'run_id': int(os.environ['GITHUB_RUN_ID']),
+              'workflow_id': 'deploy-production.yml',
+          }, sort_keys=True, separators=(',', ':')))
+          PY
+          for attempt in 1 2 3 4 5 6; do
+            status="$(curl --disable --silent --show-error \
+              --noproxy '*' --proto '=http,https' --max-redirs 0 --max-time 30 --retry 0 \
+              -X POST -H 'Content-Type: application/json' --data-binary @"$proof_root/claim.json" \
+              -o "$proof_path" -w '%{http_code}' \
+              --url "${DEPLOY_CONTROL_URL}/git/deployment-proofs/${DEPLOY_REQUEST_ID}/claim")"
+            if test "$status" = 200; then
+              break
+            fi
+            retryable="$(python3 - "$proof_path" <<'PY'
+          import json, sys
+          try:
+              value = json.load(open(sys.argv[1], encoding='utf-8'))
+          except (OSError, ValueError):
+              print('false')
+          else:
+              detail = value.get('detail') if isinstance(value, dict) else None
+              print('true' if isinstance(detail, dict) and detail.get('code') == 'DEPLOYMENT_PROOF_NOT_BOUND' else 'false')
+          PY
+            )"
+            test "$status" = 409 && test "$retryable" = true && test "$attempt" -lt 6
+            sleep 2
+          done
+          test "$status" = 200
+          resolved_source="$(python3 - "$proof_path" <<'PY'
+          import json, sys
+          proof = json.load(open(sys.argv[1], encoding='utf-8'))
+          source = proof.get('request', {}).get('deploy_source')
+          if source not in {'latest_package', 'main_branch'}:
+              raise SystemExit('invalid proof deploy source')
+          print(source)
+          PY
+          )"
+          test "$resolved_source" = "$DEPLOY_SOURCE"
+          echo "RESOLVED_SOURCE=$resolved_source" >> "$GITHUB_ENV"
+
+      - name: Bind the exact package request and artifacts
+        if: ${{ env.RESOLVED_SOURCE == 'latest_package' }}
+        env:
+          GITEA_PACKAGE_TOKEN: ${{ secrets.PKG_TOKEN }}
+        run: |
+          set -euo pipefail
+          source_sha="$(python3 - "$PROOF_PATH" <<'PY'
+          import json, os, re, sys
+          proof = json.load(open(sys.argv[1], encoding='utf-8'))
+          if set(proof) != {'claimed_at_unix', 'request', 'retention_expires_at_unix', 'run', 'signature', 'state'}:
+              raise SystemExit('proof-v3 outer schema is not exact')
+          if proof['state'] != 'claimed':
+              raise SystemExit('deployment proof is not claimed')
+          request = proof['request']
+          expected = {
+              'deploy_source': 'latest_package',
+              'owner': 'emersonfelipesp',
+              'package_name': 'netbox-openbao',
+              'package_type': 'pypi',
+              'package_version': os.environ['PACKAGE_VERSION'],
+              'release_manifest_package': 'netbox-openbao-release-manifest',
+              'repository': 'netbox-openbao',
+              'target_id': 21,
+              'workflow_id': 'deploy-production.yml',
+              'workflow_ref': 'main',
+              'workflow_sha': os.environ['WORKFLOW_SHA'],
+          }
+          for field, expected_value in expected.items():
+              if request.get(field) != expected_value:
+                  raise SystemExit(f'invalid deployment request field: {field}')
+          if request.get('request_id') != os.environ['DEPLOY_REQUEST_ID']:
+              raise SystemExit('package request id differs')
+          source = request.get('package_source_sha')
+          if not isinstance(source, str) or re.fullmatch(r'[a-f0-9]{40}', source) is None:
+              raise SystemExit('invalid package source SHA')
+          if not isinstance(request.get('artifacts'), list) or len(request['artifacts']) != 2:
+              raise SystemExit('invalid package artifact inventory')
+          print(source)
+          PY
+          )"
+          python3 scripts/release_artifacts.py fetch-gitea \
+            --owner emersonfelipesp --repository netbox-openbao \
+            --version "$PACKAGE_VERSION" --source-sha "$source_sha" \
+            --dist release-dist --manifest release-manifest.json
+          python3 - "$PROOF_PATH" release-manifest.json <<'PY'
+          import hashlib, json, sys
+          request = json.load(open(sys.argv[1], encoding='utf-8'))['request']
+          raw = open(sys.argv[2], 'rb').read()
+          manifest = json.loads(raw)
+          expected = [
+              {'name': row['filename'], 'sha256': row['sha256'], 'size': row['size']}
+              for row in request['artifacts']
+          ]
+          if hashlib.sha256(raw).hexdigest() != request.get('release_manifest_sha256'):
+              raise SystemExit('release manifest digest differs from the NMS request')
+          if manifest.get('artifacts') != expected:
+              raise SystemExit('release artifact inventory differs from the NMS request')
+          PY
+
+      - name: Bind the canonical main request
+        if: ${{ env.RESOLVED_SOURCE == 'main_branch' }}
+        run: |
+          set -euo pipefail
+          python3 - "$PROOF_PATH" <<'PY'
+          import json, os, sys
+          proof = json.load(open(sys.argv[1], encoding='utf-8'))
+          if set(proof) != {'claimed_at_unix', 'request', 'retention_expires_at_unix', 'run', 'signature', 'state'}:
+              raise SystemExit('proof-v3 outer schema is not exact')
+          if proof['state'] != 'claimed':
+              raise SystemExit('deployment proof is not claimed')
+          request = proof['request']
+          expected = {
+              'deploy_source': 'main_branch',
+              'owner': 'emersonfelipesp',
+              'repository': 'netbox-openbao',
+              'target_id': 21,
+              'workflow_id': 'deploy-production.yml',
+              'workflow_ref': 'main',
+              'workflow_sha': os.environ['WORKFLOW_SHA'],
+          }
+          for field, expected_value in expected.items():
+              if request.get(field) != expected_value:
+                  raise SystemExit(f'invalid main request field: {field}')
+          if request.get('request_id') != os.environ['DEPLOY_REQUEST_ID']:
+              raise SystemExit('main request id differs')
+          if request.get('artifacts'):
+              raise SystemExit('main request must not carry artifacts')
+          for field in (
+              'package_name', 'package_type', 'package_version',
+              'package_source_sha', 'release_manifest_package',
+              'release_manifest_sha256',
+          ):
+              if request.get(field) is not None:
+                  raise SystemExit(f'main request must leave {field} null')
+          PY
+
+      - name: Deploy package through the proof-v3 helper
+        if: ${{ env.RESOLVED_SOURCE == 'latest_package' }}
+        run: |
+          set -euo pipefail
+          /opt/nmulticloud/deploy/bin/deploy-netbox-plugin-package \
+            netbox-openbao "$PACKAGE_VERSION" "$DEPLOY_REQUEST_ID" "$PROOF_PATH" \
+            "$DEPLOY_REQUEST_SHA256" "$GITHUB_RUN_ID"
+          /opt/nmulticloud/deploy/bin/healthcheck-app netbox
+
+      - name: Deploy canonical main through the proof-bound helper
+        if: ${{ env.RESOLVED_SOURCE == 'main_branch' }}
+        run: |
+          set -euo pipefail
+          /opt/nmulticloud/deploy/bin/deploy-netbox-plugin-package \
+            --main netbox-openbao "$WORKFLOW_SHA" "$DEPLOY_REQUEST_ID" \
+            "$DEPLOY_REQUEST_SHA256" "$GITHUB_RUN_ID"
+          /opt/nmulticloud/deploy/bin/healthcheck-app netbox
+
+      - name: Report failure status
+        if: failure()
+        run: /opt/nmulticloud/deploy/bin/status-app netbox
+
+      - name: Destroy claimed proof material
+        if: always()
+        run: |
+          set -euo pipefail
+          test -n "${RUNNER_TEMP:-}"
+          printf '%s' "$GITHUB_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$GITHUB_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*$'
+          runner_temp="$(cd "$RUNNER_TEMP" && pwd -P)"
+          proof_root="${runner_temp}/netbox-openbao-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if test -e "$proof_root"; then
+            test "$(cd "$(dirname "$proof_root")" && pwd -P)" = "$runner_temp"
+            rm -rf -- "$proof_root"
+          fi
