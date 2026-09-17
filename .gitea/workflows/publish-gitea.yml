@@ -58,7 +58,7 @@ jobs:
           PYTHONPATH="$build_root/pip" python3 -m pip install --disable-pip-version-check \
             --no-warn-script-location --target "$build_root/dependencies" \
             'build==1.3.0' 'setuptools==80.9.0' 'twine==6.2.0'
-          PYTHONPATH="$build_root/dependencies" python3 -m build \
+          PYTHONPATH="$build_root/dependencies" python3 -m build --no-isolation \
             --outdir "$build_root/dist" "$build_root"
           PYTHONPATH="$build_root/dependencies" python3 -m twine check "$build_root"/dist/*
           python3 "$build_root/scripts/release_artifacts.py" manifest \

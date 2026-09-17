@@ -117,6 +117,7 @@ def test_gitea_publisher_bootstraps_verified_pip_bytes() -> None:
     assert publish.count("sha256sum --check --strict") == 2
     assert publish.count("'pip==25.2'") == 2
     assert publish.count("PYTHONPATH=") == 5
+    assert "python3 -m build --no-isolation" in publish
 
 
 def test_public_publish_trigger_contract() -> None:
