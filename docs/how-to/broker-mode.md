@@ -49,6 +49,27 @@ See its own repository. It needs the AppRole, the KV mount, a client CA, and a
 per-instance configuration naming which path prefixes each certificate CN may
 reach.
 
+To use the OpenBao administration workspaces, explicitly enable every reviewed
+family for the NetBox instance:
+
+```toml
+[[instances]]
+name = "netbox-production"
+administration_families = [
+  "access",
+  "authentication",
+  "cluster",
+  "finalization",
+  "mounted-secrets",
+  "secret-engines",
+]
+```
+
+Administration remains disabled when the list is absent. The plugin requires
+broker contract version `1`, its pinned registry digest, and the exact expected
+operation classification before it exposes any administration action. Upgrade
+the broker and plugin together when that contract changes.
+
 ### 2. Point an engine at it
 
 Set the engine's **backend** to `Broker (netbox-openbao-broker)` and its **API
@@ -66,6 +87,11 @@ curl -X PATCH https://netbox.example.net/api/plugins/openbao/engines/1/ \
 
 Nothing above the `SecretBackend` abstraction changes. Credentials, policies,
 assignments, reveals, and staged rotations all behave identically.
+
+The same `OpenBaoCluster` may now use every reviewed Web UI and REST
+administration journey through the broker. The broker policy is instance-level
+transport authorization; it does not duplicate or replace NetBox's per-user
+object permissions.
 
 ### 3. Deliver the client certificate
 
@@ -147,6 +173,34 @@ string has given up the guarantee the exception layer exists to provide.
 | `403`, "refused this request for this NetBox instance" | The certificate is fine; the path is outside this instance's permitted prefixes, or the operation is one it may not perform |
 | "The broker is unreachable" | Transport failure — the broker, not OpenBao |
 | "The broker is up, but cannot reach OpenBao" | The other half |
+
+An administration error that says the broker contract is incompatible,
+incomplete, malformed, or rejected means the plugin and broker are not a
+reviewed pair, or the mTLS instance does not enable all six families. Compare
+the deployed package versions and the instance's `administration_families`.
+Do not work around the error by changing the cluster to a direct OpenBao URL.
+
+## Incident response, rollback, and retirement
+
+For an uncertain mutation, stop automatic retries and reconcile the exact
+OpenBao resource through the same broker transport. Preserve both NetBox's
+metadata-only administration log and the broker's out-of-band audit log. Rotate
+the mTLS client key if NetBox host compromise is suspected, and rotate the
+broker-held AppRole if the broker host is suspect.
+
+To roll back broker administration without changing credential storage, remove
+the instance's `administration_families` and restart the broker. Administration
+then fails closed while ordinary broker KV traffic remains governed by its
+existing path/write/delete policy. Do not point the cluster directly at
+OpenBao as an emergency fallback; that changes the trust boundary and places a
+service credential on the NetBox host.
+
+To retire broker mode completely, first disable administration families, stop
+new NetBox operations, reconcile in-flight mutations, retain the two audit
+streams according to policy, revoke the instance certificate, and remove the
+instance from broker configuration. Move to direct mode only as a separately
+reviewed migration with a new OpenBao service identity and updated cluster and
+engine configuration.
 
 The two authorization cases raise the same exception type, so nothing above
 `SecretBackend` behaves differently — but they are entirely different operator

@@ -509,7 +509,7 @@ class FinalAdministrationAPITest(OpenBaoAdministrationTestCase):
         self.assertEqual(response.status_code, 409, response.content)
         self.assertFalse(response.data["conformant"])
 
-    def test_broker_mode_fails_closed_without_advertised_contract(self):
+    def test_broker_mode_fails_closed_without_configured_mtls_identity(self):
         self.cluster.backend = BackendChoices.BACKEND_BROKER
         self.cluster.save(update_fields=["backend"])
         self.add_permissions(*self.base_permissions, "netbox_openbao.view_leases_openbaocluster")

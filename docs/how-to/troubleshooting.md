@@ -170,6 +170,21 @@ bao kv metadata list secret/netbox/credentials/
 In [broker mode](broker-mode.md), an instance configured `may_delete = false`
 produces this on **every** failed write, by design.
 
+## Broker administration says the contract is incompatible
+
+The plugin verifies the broker contract before exposing any administration
+operation. Confirm that the deployed plugin and broker versions are a reviewed
+pair and that the mTLS instance enables `access`, `authentication`, `cluster`,
+`finalization`, `mounted-secrets`, and `secret-engines`. A partial family list
+is intentionally rejected because it would make a UI family appear complete
+while failing only after an operator begins a workflow.
+
+Do not bypass this failure by pointing the administrative cluster directly at
+OpenBao. That would change the credential and audit boundary. Upgrade or roll
+back the plugin and broker together, restart both services, and re-run
+capability discovery. If a mutation returned an unknown outcome, reconcile its
+resource before retrying after the contract issue is corrected.
+
 ## Tests hang instead of failing
 
 Two causes, and the second is invisible.

@@ -8,6 +8,7 @@ BASELINE_VERSION = "2.6.2"
 REQUIRED_FIELDS = frozenset({"id", "upstream_routes", "capability", "owner_issue", "status"})
 COMPLETE_FIELDS = REQUIRED_FIELDS | {"equivalence", "evidence"}
 EVIDENCE_FIELDS = frozenset({"implementation", "ui", "tests"})
+TRANSPORTS = frozenset({"direct", "broker"})
 ALLOWED_STATUSES = frozenset({"foundation", "planned", "complete", "capability-gated"})
 
 
@@ -78,6 +79,18 @@ def _validate_family(family: Any, seen: set[str]) -> None:
         _validate_evidence(family)
 
 
+def _validate_transport_evidence(manifest: dict[str, Any], complete_families: set[str]) -> None:
+    evidence = manifest.get("transport_evidence")
+    if not isinstance(evidence, dict) or set(evidence) != complete_families:
+        raise ValueError("Complete OpenBao UI parity families need transport evidence.")
+    repository = Path(__file__).resolve().parents[2]
+    for family_id, transports in evidence.items():
+        if not isinstance(transports, dict) or set(transports) != TRANSPORTS:
+            raise ValueError(f"OpenBao UI parity family {family_id} has invalid transport evidence.")
+        for paths in transports.values():
+            _validate_evidence_group(repository, paths)
+
+
 def load_parity_manifest() -> dict[str, Any]:
     path = Path(__file__).with_name("openbao-ui-v2.6.2.json")
     manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -89,4 +102,6 @@ def load_parity_manifest() -> dict[str, Any]:
     seen: set[str] = set()
     for family in families:
         _validate_family(family, seen)
+    complete_families = {family["id"] for family in families if family["status"] == "complete"}
+    _validate_transport_evidence(manifest, complete_families)
     return manifest

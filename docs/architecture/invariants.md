@@ -63,7 +63,7 @@ Fix the test.
 | Advertised operations never become executable through discovery | Normalization hard-codes `executable=False`; unknown operations receive no permission | `test_administration_schema.CapabilitySchemaTest.test_normalization_is_stable_classified_and_never_executable`, `test_administration.AdministrationAPITest.test_discovery_is_bounded_non_executable_audited_and_not_storable` |
 | Hostile or malformed OpenAPI metadata fails closed | Bounded size, depth, path, method, ID, string and collection validation | `test_administration_schema.CapabilitySchemaTest`, `test_administration.AdministrationBackendTest.test_direct_discovery_scrubs_invalid_upstream_content` |
 | Capability responses cannot carry backend diagnostics or enter caches | Fixed exceptions plus `Cache-Control: no-store` on API and UI | `test_administration.AdministrationAPITest.test_upstream_failure_returns_only_a_fixed_error_and_is_audited`, `AdministrationUITest.test_ui_discovery_is_escaped_audited_and_not_storable` |
-| Broker mode never bypasses its isolation boundary | Discovery fails closed until the broker advertises the reviewed contract | `test_administration.AdministrationBackendTest.test_factory_selects_direct_and_broker_transports` |
+| Broker mode never bypasses its isolation boundary | Exact version, digest, family, operation, and framing negotiation; no direct fallback | `test_broker_administration.BrokerContractTest` |
 
 ## Cluster lifecycle and Raft recovery are guarded
 

@@ -211,6 +211,13 @@ Optional throughout. The default deployment is unchanged, and nothing above the
 `SecretBackend` abstraction knows which mode is in use. See
 [`docs/installation.md`](docs/installation.md#broker-mode).
 
+OpenBao administration also has full broker parity. The plugin negotiates a
+versioned, digest-bound, instance-enabled contract before exposing cluster,
+authentication, secret-engine, policy/identity, lease/tool, or Raft snapshot
+operations. The broker accepts only reviewed operation identifiers and bounded
+typed inputs; it is not an arbitrary OpenBao proxy and never replaces NetBox's
+per-user authorization.
+
 ## Data model
 
 | Model | Role |

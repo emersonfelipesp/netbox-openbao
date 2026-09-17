@@ -1,6 +1,84 @@
 {
   "baseline": "2.6.2",
   "source": "OpenBao stable UI router and runtime OpenAPI/help documents",
+  "transport_evidence": {
+    "cluster-session": {
+      "direct": ["netbox_openbao/tests/test_authentication_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "cluster-bootstrap": {
+      "direct": ["netbox_openbao/tests/test_cluster_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "api-explorer": {
+      "direct": ["netbox_openbao/tests/test_engine_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "raft-storage": {
+      "direct": ["netbox_openbao/tests/test_cluster_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "auth-methods": {
+      "direct": ["netbox_openbao/tests/test_authentication_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "mfa": {
+      "direct": ["netbox_openbao/tests/test_authentication_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "engine-lifecycle": {
+      "direct": ["netbox_openbao/tests/test_engine_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "generic-secrets": {
+      "direct": ["netbox_openbao/tests/test_engine_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "kv": {
+      "direct": ["netbox_openbao/tests/test_engine_administration_live.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "common-engines": {
+      "direct": ["netbox_openbao/tests/test_engine_administration_live.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "pki": {
+      "direct": ["netbox_openbao/tests/test_engine_administration_live.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "kubernetes": {
+      "direct": ["netbox_openbao/tests/test_engine_administration_live.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "policies": {
+      "direct": ["netbox_openbao/tests/test_access_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "identity": {
+      "direct": ["netbox_openbao/tests/test_access_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "oidc": {
+      "direct": ["netbox_openbao/tests/test_access_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "namespaces": {
+      "direct": ["netbox_openbao/tests/test_access_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "leases": {
+      "direct": ["netbox_openbao/tests/test_finalization_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "tools": {
+      "direct": ["netbox_openbao/tests/test_finalization_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "ui-configuration": {
+      "direct": ["netbox_openbao/tests/test_finalization_administration.py"],
+      "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    }
+  },
   "families": [
     {
       "id": "cluster-session",

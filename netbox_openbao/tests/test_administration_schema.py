@@ -177,6 +177,19 @@ class ParityManifestTest(TestCase):
             with self.assertRaisesRegex(ValueError, 'evidence paths'):
                 load_parity_manifest()
 
+    def test_complete_family_requires_both_transport_evidence_sets(self):
+        missing_family = load_parity_manifest()
+        missing_family['transport_evidence'].pop('cluster-session')
+        with patch('pathlib.Path.read_text', return_value=json.dumps(missing_family)):
+            with self.assertRaisesRegex(ValueError, 'transport evidence'):
+                load_parity_manifest()
+
+        missing_broker = load_parity_manifest()
+        missing_broker['transport_evidence']['cluster-session'].pop('broker')
+        with patch('pathlib.Path.read_text', return_value=json.dumps(missing_broker)):
+            with self.assertRaisesRegex(ValueError, 'transport evidence'):
+                load_parity_manifest()
+
     def test_complete_family_requires_equivalence_and_all_evidence_groups(self):
         manifest = load_parity_manifest()
         manifest['families'][0].pop('equivalence')

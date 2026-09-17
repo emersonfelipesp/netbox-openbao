@@ -20,10 +20,11 @@ unsealed OpenBao 2.6.x cluster at or above 2.6.2. The runtime OpenAPI document
 must advertise each selected operation and retain the catalog digest used by
 the page.
 
-Broker mode fails closed because the current broker does not advertise this
-administrative contract. It does not fall back to direct access. Add a reviewed
-broker contract before enabling these operations through a broker; do not proxy
-arbitrary paths to simulate support.
+Broker mode executes the same reviewed operations through broker contract
+version `1`. The plugin verifies the exact registry digest and complete family
+set before exposing the workspace. Each broker mTLS instance must explicitly
+enable the `finalization` family. A missing, stale, malformed, incomplete, or
+differently classified contract fails closed without direct-access fallback.
 
 ## Permissions
 

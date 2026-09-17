@@ -162,6 +162,14 @@ Three engine fields are **ignored** in broker mode, deliberately:
 The broker serves **KV v2 only**; an engine set to version 1 is refused before
 any request is sent.
 
+For Web UI and REST administration parity, enable `access`, `authentication`,
+`cluster`, `finalization`, `mounted-secrets`, and `secret-engines` in the
+broker instance's `administration_families`. The plugin verifies contract
+version `1`, the pinned registry digest, and exact operation classifications.
+Partial or incompatible contracts fail closed and never fall back to direct
+OpenBao. See [Run broker mode](how-to/broker-mode.md) for the configuration,
+upgrade, rollback, and retirement procedures.
+
 One operational note that has already caught a test suite: if the broker
 instance is configured `may_delete = false`, the plugin can read, write, and
 rotate but **cannot delete** a credential's secret material — those calls come

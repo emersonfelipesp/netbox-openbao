@@ -240,9 +240,11 @@ cluster. Do not deliberately diverge the two connections; later engine
 lifecycle work will complete the consolidation.
 
 Keep `tls_verify` enabled. For an internal CA, set `ca_cert_path` to its bundle
-instead of disabling verification. Broker clusters may report health but reject
-capability discovery until the broker implements the bounded administration
-contract; the plugin does not bypass the broker by connecting directly.
+instead of disabling verification. Broker clusters support the same reviewed
+administration workspaces when their mTLS instance enables all six
+administration families and advertises contract version `1` with the pinned
+registry digest. Missing, stale, malformed, or incomplete contracts fail closed;
+the plugin never bypasses the broker by connecting directly.
 
 The **Administration** tab provides guarded cluster state, initialization,
 unseal, seal, Raft peer, and snapshot controls for OpenBao 2.6.2 through the

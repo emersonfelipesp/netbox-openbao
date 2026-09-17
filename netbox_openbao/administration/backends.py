@@ -37,6 +37,7 @@ from .authentication import (
     normalize_totp_setup_result,
     validate_direct_oidc_role,
 )
+from .broker import BrokerAdministrationClient, MemoryResponse
 from .cluster import (
     MAX_CLUSTER_JSON_BYTES,
     MAX_SNAPSHOT_BYTES,
@@ -118,8 +119,12 @@ class AdministrationBackend(ABC):
         *,
         query: dict,
         body: dict,
+        mount_path: str = "",
+        operation_id: str = "",
+        path_template: str = "",
+        mount_parameter: str = "",
     ) -> dict:
-        del method, path, query, body
+        del method, path, query, body, mount_path, operation_id, path_template, mount_parameter
         raise self._unsupported()
 
     def initialization_status(self) -> bool:
@@ -613,7 +618,19 @@ class DirectAdministrationBackend(AdministrationBackend):
         response.close()
 
     @sensitive_variables()
-    def execute_mounted_operation(self, method: str, path: str, *, query: dict, body: dict) -> dict:
+    def execute_mounted_operation(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict,
+        body: dict,
+        mount_path: str = "",
+        operation_id: str = "",
+        path_template: str = "",
+        mount_parameter: str = "",
+    ) -> dict:
+        del mount_path, operation_id, path_template, mount_parameter
         if method not in {"GET", "LIST", "POST", "PUT", "PATCH", "DELETE"} or not path.startswith("/"):
             raise BackendConfigurationError("The mounted operation is outside the reviewed transport contract.")
         kwargs = {"params": query}
@@ -1089,20 +1106,287 @@ class DirectAdministrationBackend(AdministrationBackend):
             raise OpenBaoMutationUnknown() from None
 
 
-class BrokerAdministrationBackend(AdministrationBackend):
-    """Broker health is supported; discovery fails closed until the broker opts in."""
+class BrokerAdministrationBackend(DirectAdministrationBackend):
+    """Administrative operations mediated by the pinned mTLS broker contract."""
 
     def __init__(self, cluster):
-        super().__init__(cluster)
+        AdministrationBackend.__init__(self, cluster)
         self.backend = BrokerBackend(cluster)
+        self.client = BrokerAdministrationClient(self.backend)
 
     def health(self) -> dict:
         return self.backend.health()
 
     def discover_capabilities(self) -> CapabilityDocument:
-        raise BackendConfigurationError(
-            "The configured broker does not advertise the administrative capability contract."
+        document = self.client.execute("discover_capabilities", {}, mutation=False)
+        try:
+            return normalize_openapi_document(document)
+        except CapabilitySchemaError:
+            raise OpenBaoUnavailable("The broker returned an invalid capability document.") from None
+
+    def _cluster_operation(self, operation: str, arguments: dict, normalizer):
+        mutation = operation in self._CLUSTER_MUTATIONS
+        result = self.client.execute(operation, arguments, mutation=mutation)
+        if mutation:
+            return self._normalize_mutation(normalizer, result)
+        return self._normalize(normalizer, result)
+
+    _CLUSTER_MUTATIONS = frozenset({"initialize", "join_raft", "unseal", "seal", "remove_raft_peer"})
+
+    def initialization_status(self) -> bool:
+        result = self.client.execute("initialization_status", {}, mutation=False)
+        initialized = result.get("initialized") if isinstance(result, dict) else None
+        if not isinstance(initialized, bool):
+            raise OpenBaoUnavailable("The broker returned an invalid initialization status.")
+        return initialized
+
+    def seal_status(self) -> SealStatus:
+        return self._cluster_operation("seal_status", {}, normalize_seal_status)
+
+    def leader_status(self) -> LeaderStatus:
+        return self._cluster_operation("leader_status", {}, normalize_leader_status)
+
+    def ha_status(self) -> HAStatus:
+        return self._cluster_operation("ha_status", {}, normalize_ha_status)
+
+    def raft_configuration(self) -> RaftConfiguration:
+        return self._cluster_operation("raft_configuration", {}, normalize_raft_configuration)
+
+    def initialize(self, payload: dict) -> InitializationResult:
+        return self._cluster_operation("initialize", payload, normalize_initialization_result)
+
+    @sensitive_variables()
+    def join_raft(self, payload: dict) -> dict:
+        result = self.client.execute("join_raft", payload, mutation=True)
+        if not isinstance(result, dict) or not isinstance(result.get("joined"), bool):
+            raise OpenBaoMutationUnknown()
+        return {"joined": result["joined"]}
+
+    def unseal(self, *, key: str = "", reset: bool = False, migrate: bool = False) -> SealStatus:
+        arguments = {"reset": reset, "migrate": migrate}
+        if key:
+            arguments["key"] = key
+        return self._cluster_operation("unseal", arguments, normalize_seal_status)
+
+    def seal(self) -> None:
+        self.client.execute("seal", {}, mutation=True)
+
+    def remove_raft_peer(self, server_id: str) -> None:
+        self.client.execute("remove_raft_peer", {"server_id": server_id}, mutation=True)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        authenticated: bool,
+        expected: tuple[int, ...],
+        token: str = "",
+        **kwargs,
+    ):
+        del authenticated
+        operation = self._proxy_operation(path)
+        arguments = {"method": method, "path": path, "payload": kwargs.get("json") or {}}
+        if operation == "execute_authentication_operation" and token:
+            arguments["token"] = token
+        mutation = method in {"POST", "PUT", "PATCH", "DELETE"}
+        try:
+            result = self.client.execute(operation, arguments, mutation=mutation)
+        except OpenBaoNotFound:
+            if 404 in expected:
+                return MemoryResponse({}, status_code=404)
+            raise
+        return MemoryResponse(result)
+
+    @staticmethod
+    def _proxy_operation(path: str) -> str:
+        if path.startswith(("/sys/mounts", "/sys/remount")):
+            return "execute_secret_engine_operation"
+        if path.startswith(("/sys/auth", "/auth/", "/identity/mfa/", "/sys/mfa/")):
+            return "execute_authentication_operation"
+        raise BackendConfigurationError("The operation is outside the broker administration contract.")
+
+    def list_secret_engines(self) -> tuple[SecretEngineMount, ...]:
+        arguments = {"method": "LIST", "path": "/sys/mounts", "payload": {}}
+        result = self.client.execute("execute_secret_engine_operation", arguments, mutation=False)
+        return self._normalize(normalize_secret_engine_mounts, result)
+
+    def list_auth_methods(self) -> tuple[AuthMount, ...]:
+        arguments = {"method": "LIST", "path": "/sys/auth", "payload": {}}
+        result = self.client.execute("execute_authentication_operation", arguments, mutation=False)
+        return self._normalize(normalize_auth_mounts, result)
+
+    def remount_auth_method(self, source: str, destination: str) -> dict:
+        source = normalize_mount_path(source)
+        destination = normalize_mount_path(destination)
+        arguments = {
+            "method": "POST",
+            "path": "/sys/remount",
+            "payload": {"from": f"auth/{source}/", "to": f"auth/{destination}/"},
+        }
+        result = self.client.execute("execute_authentication_operation", arguments, mutation=True)
+        return self._normalize_mutation(normalize_public_auth_data, result)
+
+    def remount_status(self, migration_id: str) -> dict:
+        migration_id = normalize_resource_name(migration_id, uuid_only=True)
+        arguments = {
+            "method": "GET",
+            "path": f"/sys/remount/status/{migration_id}",
+            "payload": {},
+        }
+        result = self.client.execute("execute_authentication_operation", arguments, mutation=False)
+        return self._normalize(normalize_public_auth_data, result)
+
+    def remount_secret_engine(self, source: str, destination: str) -> dict:
+        source_path = normalize_engine_mount_path(source)
+        destination_path = normalize_engine_mount_path(destination)
+        arguments = {
+            "method": "POST",
+            "path": "/sys/remount",
+            "payload": {"from": f"{source_path}/", "to": f"{destination_path}/"},
+        }
+        result = self.client.execute("execute_secret_engine_operation", arguments, mutation=True)
+        return self._normalize_mutation(normalize_public_auth_data, result)
+
+    @sensitive_variables()
+    def execute_access_operation(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict,
+        material: bool = False,
+    ) -> dict:
+        if method not in {"GET", "LIST", "POST", "DELETE"} or not path.startswith(
+            ("/sys/policies/", "/identity/", "/sys/namespaces")
+        ):
+            raise BackendConfigurationError("The access-control operation is outside the reviewed contract.")
+        arguments = {"method": method, "path": path, "payload": payload, "material": material}
+        try:
+            result = self.client.execute(
+                "execute_access_operation", arguments, mutation=method in {"POST", "DELETE"}
+            )
+        except OpenBaoNotFound:
+            if method != "LIST":
+                raise
+            result = {"data": {"keys": [], "key_info": {}}}
+        return self._normalize_mutation_if_needed(method, result, material)
+
+    @sensitive_variables()
+    def execute_final_operation(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict,
+        material: bool = False,
+    ) -> dict:
+        prefixes = ("/sys/leases/", "/sys/wrapping/", "/sys/tools/", "/sys/config/ui/headers", "/auth/token/lookup")
+        if method not in {"GET", "LIST", "POST", "DELETE"} or not path.startswith(prefixes):
+            raise BackendConfigurationError("The finalization operation is outside the reviewed contract.")
+        arguments = {"method": method, "path": path, "payload": payload, "material": material}
+        try:
+            result = self.client.execute(
+                "execute_final_operation", arguments, mutation=method in {"POST", "DELETE"}
+            )
+        except OpenBaoNotFound:
+            if method != "LIST":
+                raise
+            result = {"data": {"keys": [], "key_info": {}}}
+        return self._normalize_mutation_if_needed(method, result, material)
+
+    def _normalize_mutation_if_needed(self, method: str, result: dict, material: bool) -> dict:
+        def normalizer(value):
+            return normalize_access_response(value, material=material)
+
+        if method in {"POST", "DELETE"}:
+            return self._normalize_mutation(normalizer, result)
+        return self._normalize(normalizer, result)
+
+    @sensitive_variables()
+    def execute_mounted_operation(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict,
+        body: dict,
+        mount_path: str = "",
+        operation_id: str = "",
+        path_template: str = "",
+        mount_parameter: str = "",
+    ) -> dict:
+        if not all((mount_path, operation_id, path_template, mount_parameter)):
+            raise BackendConfigurationError("The mounted operation lacks its advertised broker contract metadata.")
+        broker_template = path_template.replace("{secret_mount_path}", f"{{{mount_parameter}}}", 1)
+        arguments = {
+            "method": method,
+            "path": path,
+            "query": query,
+            "body": body,
+            "mount_path": mount_path,
+            "operation_id": operation_id,
+            "path_template": broker_template,
+        }
+        return self.client.execute(
+            "execute_mounted_operation",
+            arguments,
+            mutation=method in {"POST", "PUT", "PATCH", "DELETE"},
         )
+
+    def download_raft_snapshot(self) -> SnapshotDownload:
+        headers = {**self.client.snapshot_headers(), "Accept-Encoding": "identity"}
+        response = self.client._send(
+            "GET", "/v1/administration/snapshot", mutation=False, headers=headers, timeout=(30, 300)
+        )
+        content_encoding = response.headers.get("Content-Encoding", "").strip().lower()
+        if content_encoding not in ("", "identity"):
+            response.close()
+            raise OpenBaoUnavailable("The broker returned an invalid snapshot response.")
+        content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/octet-stream":
+            response.close()
+            raise OpenBaoUnavailable("The broker returned an invalid snapshot response.")
+        declared_size = self._snapshot_size(response)
+        return SnapshotDownload(response, declared_size)
+
+    @staticmethod
+    def _snapshot_size(response) -> int | None:
+        raw_length = response.headers.get("Content-Length")
+        if raw_length is None:
+            return None
+        try:
+            declared_size = int(raw_length)
+        except (TypeError, ValueError):
+            response.close()
+            raise OpenBaoUnavailable("The broker returned an invalid snapshot response.") from None
+        if not 0 < declared_size <= MAX_SNAPSHOT_BYTES:
+            response.close()
+            raise OpenBaoUnavailable("The broker returned an invalid snapshot response.")
+        return declared_size
+
+    def restore_raft_snapshot(self, stream, size: int, *, force: bool = False) -> None:
+        try:
+            body = BoundedSnapshotReader(stream, size)
+        except ValueError:
+            raise OpenBaoConflict("The snapshot upload is outside the allowed size.") from None
+        headers = {
+            **self.client.snapshot_headers(),
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(size),
+        }
+        response = self.client._send(
+            "POST",
+            "/v1/administration/snapshot",
+            mutation=True,
+            headers=headers,
+            params={"force": "true" if force else "false"},
+            data=body,
+            timeout=(30, 300),
+        )
+        result = self.client._decode_json(response, mutation=True)
+        if result != {"restored": True}:
+            raise OpenBaoMutationUnknown()
 
 
 def get_administration_backend(cluster) -> AdministrationBackend:

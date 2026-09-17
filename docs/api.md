@@ -94,6 +94,14 @@ unclassified. The response is `no-store`, and every success or failure is
 written synchronously to `OpenBaoAdministrationLog`. See the
 [administration-plane contract](architecture/administration-plane.md).
 
+For a broker-backed cluster, the public REST shapes above are unchanged. Before
+serving them, the plugin verifies broker administration contract version `1`,
+the pinned registry digest, all six expected families, and every operation's
+name/family/framing tuple. A mismatch returns a safe backend failure and never
+falls back to direct OpenBao. Snapshot endpoints use dedicated raw streaming
+calls; all other routes send only a closed operation identifier and bounded
+typed arguments over the configured mTLS identity.
+
 ## Secrets-engine lifecycle and mounted operations
 
 All secrets-engine actions use the cluster's configured service identity and

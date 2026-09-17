@@ -23,12 +23,15 @@ contract; later minor releases require a new compatibility review.
 The closure gates are:
 
 1. `python scripts/check_openbao_ui_parity.py` validates all 19 route families,
-   exact route/equivalence/evidence mappings, and evidence paths.
+   exact route/equivalence/evidence mappings, evidence paths, and explicit
+   direct and broker transport evidence for every complete family.
 2. `openbao-final-v2.6.2.json` pins the final 17 API operations to upstream
    commit `dd9c19c37a878cf4a81b18efb8d6f0599c7da923`.
 3. Runtime conformance fails for a missing, duplicate, unclassified, or stale
    matching contract.
-4. Direct mode is live-tested. Broker mode fails closed until it advertises an
-   equivalent reviewed contract.
+4. Direct mode and broker mode share a normalization conformance suite. The
+   opt-in broker integration suite exercises the pinned contract through real
+   mTLS and OpenBao 2.6.2; incompatible contracts fail closed without direct
+   fallback.
 5. Material responses are JSON-only, no-store, request-scoped, and absent from
    database and audit records.

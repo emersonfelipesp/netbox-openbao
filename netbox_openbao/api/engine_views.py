@@ -462,7 +462,16 @@ class SecretEngineAdministrationMixin:
                 request=request,
                 require_durable=True,
             )
-            result = backend.execute_mounted_operation(operation.method, path, query=data["query"], body=data["body"])
+            result = backend.execute_mounted_operation(
+                operation.method,
+                path,
+                query=data["query"],
+                body=data["body"],
+                mount_path=data["mount_path"],
+                operation_id=operation.operation_id,
+                path_template=operation.path_template,
+                mount_parameter=operation.mount_parameter,
+            )
         except CapabilitySchemaError as exc:
             raise ValidationError(str(exc)) from None
         except OpenBaoMutationUnknown:
@@ -590,17 +599,26 @@ class SecretEngineAdministrationMixin:
 
     @staticmethod
     def _run_engine_journey(backend, journey, operation, path, data):
+        contract = {
+            "mount_path": data["mount_path"],
+            "operation_id": operation.operation_id,
+            "path_template": operation.path_template,
+            "mount_parameter": operation.mount_parameter,
+        }
         if journey.journey_id != "kv2.diff":
             return backend.execute_mounted_operation(
                 operation.method,
                 path,
                 query={**data["query"], **dict(journey.fixed_query)},
                 body=data["body"],
+                **contract,
             )
         before = backend.execute_mounted_operation(
-            "GET", path, query={"version": data["query"]["from_version"]}, body={}
+            "GET", path, query={"version": data["query"]["from_version"]}, body={}, **contract
         )
-        after = backend.execute_mounted_operation("GET", path, query={"version": data["query"]["to_version"]}, body={})
+        after = backend.execute_mounted_operation(
+            "GET", path, query={"version": data["query"]["to_version"]}, body={}, **contract
+        )
         return {
             "from_version": data["query"]["from_version"],
             "to_version": data["query"]["to_version"],

@@ -14,7 +14,7 @@ from netbox_openbao.administration.backends import (
     get_administration_backend,
 )
 from netbox_openbao.administration.schema import CapabilityDocument, DiscoveredOperation
-from netbox_openbao.backends.exceptions import BackendConfigurationError, OpenBaoMutationUnknown, OpenBaoUnavailable
+from netbox_openbao.backends.exceptions import OpenBaoMutationUnknown, OpenBaoUnavailable
 from netbox_openbao.choices import BackendChoices
 from netbox_openbao.models import OpenBaoAdministrationLog, OpenBaoCluster, SecretEngine
 
@@ -228,11 +228,6 @@ class AdministrationBackendTest(OpenBaoAdministrationTestCase):
         self.cluster.backend = BackendChoices.BACKEND_BROKER
         broker = get_administration_backend(self.cluster)
         self.assertIsInstance(broker, BrokerAdministrationBackend)
-        with self.assertRaisesRegex(
-            BackendConfigurationError,
-            'does not advertise the administrative capability contract',
-        ):
-            broker.discover_capabilities()
 
 
 class AdministrationAPITest(OpenBaoAdministrationTestCase):

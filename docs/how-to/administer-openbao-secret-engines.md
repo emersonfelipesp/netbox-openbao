@@ -10,9 +10,10 @@ to the browser or accepted from an API caller.
 ## Before you begin
 
 The OpenBao cluster must be initialized, unsealed, and reachable through its
-configured direct transport. Broker mode fails closed until the broker
-implements the same administration contract. Grant only the object-constrained
-permissions required for the operator's role:
+configured direct or broker transport. Broker mode requires all six
+administration families on the instance and an exact version-and-digest match
+for the bounded broker contract. Grant only the object-constrained permissions
+required for the operator's role:
 
 | Permission | Capability |
 |---|---|

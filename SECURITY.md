@@ -42,6 +42,10 @@ In scope — anything that breaks one of the properties in
 - a runtime-discovered path bypassing the pinned OpenBao 2.6.2 registries, or a
   force-revoke/UI-configuration mutation bypassing reason, impact, and exact
   confirmation checks
+- broker administration accepting an unknown, stale, incomplete, malformed,
+  or differently classified contract; falling back to direct OpenBao access;
+  or accepting a caller-controlled origin, namespace, service credential, raw
+  path, or arbitrary method
 
 Out of scope:
 

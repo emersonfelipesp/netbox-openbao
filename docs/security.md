@@ -440,3 +440,13 @@ The same scrubbing rule applies in both directions: `BrokerBackend` discards the
 broker's error text rather than relaying it. The broker is written not to leak
 policy, but the plugin cannot verify that from here, and a backend that forwards
 a remote string has given up the guarantee this page describes.
+
+Administrative access uses a separate pinned contract. The plugin verifies the
+contract version, registry digest, complete family set, and every operation's
+name, family, and framing before sending an operation. The broker receives only
+the reviewed operation identifier and bounded typed arguments. It never receives
+a caller-selected OpenBao origin, namespace override, service credential, raw
+method, or unreviewed path. Snapshot bytes and submitted authentication material
+remain request-scoped, and mutation transport or parsing uncertainty is never
+retried automatically. Broker authorization remains instance-level; NetBox
+object permissions remain the sole per-user authorization model.

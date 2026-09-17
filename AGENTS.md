@@ -71,8 +71,9 @@ operations come only from `administration/finalization.py` and the pinned
 `openbao-final-v2.6.2.json` fixture. Runtime OpenAPI may prove a reviewed route
 exists but may not add one. Keep material no-store and browser-memory-only;
 force revoke and UI configuration changes require dedicated permissions, a
-fresh impact digest, a reason, and exact confirmation. Broker mode fails closed
-until it advertises the same reviewed contract. Procedures are in
+fresh impact digest, a reason, and exact confirmation. Broker mode must verify
+the pinned version and registry digest before forwarding the same reviewed
+contract, and it must never fall back to direct OpenBao access. Procedures are in
 `docs/how-to/administer-openbao-leases-tools.md`.
 
 **Authentication and MFA administration never creates an OpenBao browser

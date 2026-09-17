@@ -616,7 +616,8 @@ class FakeEngineAdministrationBackend:
         self.calls.append(("tuning", mount_path))
         return {"description": "Credentials", "max_lease_ttl": 60}
 
-    def execute_mounted_operation(self, method, path, *, query, body):
+    def execute_mounted_operation(self, method, path, *, query, body, **contract):
+        del contract
         self.calls.append(("execute", method, path, query, body))
         return {"data": {"password": self.material_response}}
 

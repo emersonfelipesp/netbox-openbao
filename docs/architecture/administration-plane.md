@@ -49,7 +49,7 @@ remain in environment variables or referenced files.
 
 ## Runtime capability discovery
 
-Direct mode requests only:
+Direct mode requests:
 
 ```text
 GET /v1/sys/internal/specs/openapi?generic_mount_paths=true
@@ -82,10 +82,12 @@ operations. Classification describes where review belongs; it does not grant
 execution. Unknown routes remain `unclassified`, carry no permission, and fail
 closed.
 
-Broker health uses the existing broker transport. Capability discovery through
-the broker fails closed until the broker advertises an equivalent bounded
-administration contract. The plugin never silently bypasses broker isolation by
-calling OpenBao directly.
+Broker mode requests the same OpenAPI document through the broker's closed
+`discover_capabilities` operation. Before the first operation, the plugin
+requires contract version `1`, the pinned registry digest, all six expected
+families, and the exact name/family/framing tuple for every operation. Unknown,
+stale, malformed, incomplete, or differently classified contracts fail closed.
+The plugin never silently bypasses broker isolation by calling OpenBao directly.
 
 ## Authentication administration boundary
 
@@ -110,8 +112,10 @@ Direct transport constructs every upstream URL from a static template plus a
 validated mount or resource segment. Redirects are disabled. Submitted
 self-service tokens are placed in the header of one request and do not mutate
 the pooled session or the cluster service client's cached token. Broker mode
-inherits unsupported methods from the administration contract and therefore
-fails closed until the broker explicitly implements the same fixed surface.
+uses `execute_authentication_operation` with the same reviewed paths and sends
+a submitted token only as a request-scoped contract field on the small set of
+self-service paths. The broker rejects that field everywhere else and never
+changes its service credential.
 
 ## Token and authentication material custody
 
@@ -299,9 +303,14 @@ JSON renderer with `no-store`; browser memory clears on demand, after five
 minutes, and on `pagehide`. A transport or response-parsing failure after a
 mutation is an unknown outcome and is never retried automatically.
 
-Broker mode inherits unsupported lifecycle and explorer methods and therefore
-fails closed. It must implement and advertise the equivalent reviewed contract
-before these actions become available through the broker.
+Broker mode carries lifecycle calls through the closed
+`execute_secret_engine_operation` operation and mounted calls through
+`execute_mounted_operation`. A mounted request includes the exact advertised
+operation ID, original OpenAPI mount parameter, path template, mount, query, and
+body. The broker independently re-fetches OpenAPI and validates the operation,
+mount binding, query schema, and recursive body schema before contacting the
+target path. It accepts no caller-controlled origin, namespace, service
+credential, arbitrary method, or unreviewed path.
 
 ## Permissions
 
