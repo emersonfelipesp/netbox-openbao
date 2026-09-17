@@ -90,20 +90,25 @@ jobs:
           PYTHONPATH="$publisher_root/pip" python3 -m pip install --disable-pip-version-check \
             --no-warn-script-location --target "$publisher_root/dependencies" 'twine==6.2.0'
           PYTHONPATH="$publisher_root/dependencies" python3 -m twine upload --non-interactive \
+            --skip-existing \
             --repository-url "${GITHUB_SERVER_URL%/}/api/packages/emersonfelipesp/pypi" \
             release-transfer/*.whl release-transfer/*.tar.gz
-          printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \
-            curl --disable --config - --fail --silent --show-error --max-redirs 0 --retry 0 \
+          manifest_status="$(printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \
+            curl --disable --config - --silent --show-error --max-redirs 0 --retry 0 \
             -H 'Content-Type: application/octet-stream' \
             --upload-file release-transfer/release-manifest.json \
-            "${GITHUB_SERVER_URL%/}/api/packages/emersonfelipesp/generic/netbox-openbao-release-manifest/${VERSION}/release-manifest.json"
+            --output "$publisher_root/manifest-upload-response" --write-out '%{http_code}' \
+            "${GITHUB_SERVER_URL%/}/api/packages/emersonfelipesp/generic/netbox-openbao-release-manifest/${VERSION}/release-manifest.json")"
+          test "$manifest_status" = 201 || test "$manifest_status" = 400
           for package in netbox-openbao netbox-openbao-release-manifest; do
             package_type=pypi
             test "$package" = netbox-openbao-release-manifest && package_type=generic
-            printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \
-              curl --disable --config - --fail --silent --show-error --max-redirs 0 --retry 0 \
+            link_status="$(printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \
+              curl --disable --config - --silent --show-error --max-redirs 0 --retry 0 \
               -X POST \
-              "${GITHUB_SERVER_URL%/}/api/v1/packages/emersonfelipesp/${package_type}/${package}/-/link/netbox-openbao"
+              --output "$publisher_root/${package_type}-link-response" --write-out '%{http_code}' \
+              "${GITHUB_SERVER_URL%/}/api/v1/packages/emersonfelipesp/${package_type}/${package}/-/link/netbox-openbao")"
+            test "$link_status" = 204 || test "$link_status" = 400
           done
           verify_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-verify.XXXXXX")"
           trap 'rm -rf -- "$verify_root"' EXIT
