@@ -59,6 +59,15 @@ hashes those bytes before passing the claimed proof to the deploy-host helper.
 12. Reconcile the Gitea package, tags, GitHub Release, TestPyPI, and PyPI, then
     remove temporary branches and worktrees.
 
+If final PyPI publication fails after the GitHub Release is published, correct
+the publishing policy through the reviewed branch workflow and dispatch
+`publish.yml` manually with the existing final tag. The manual path runs the
+same canonical-main, tag, version, build, and artifact-transfer checks; it does
+not permit a different source or a reused version with changed bytes. Final
+publication authenticates as `__token__` with the environment-accessible
+`PYPI_TOKEN` GitHub Actions secret. Release candidates continue to use
+TestPyPI trusted publishing and never receive the production token.
+
 ## Proof-v3 production boundary
 
 The target-21 workflow accepts only a claimed NMS proof for attempt 1 of the

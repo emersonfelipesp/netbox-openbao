@@ -147,6 +147,10 @@ def test_public_publish_trigger_contract() -> None:
     public = PUBLIC.read_text(encoding="utf-8")
     assert 'tags: ["v*rc*"]' in public
     assert "types: [published]" in public
+    assert "workflow_dispatch:" in public
+    assert "DISPATCH_TAG: ${{ inputs.tag }}" in public
+    assert 'test "$EVENT_NAME" != workflow_dispatch || tag="$DISPATCH_TAG"' in public
+    assert "^v[0-9]+\\.[0-9]+\\.[0-9]+(\\.post[0-9]+)?$" in public
     assert 'tags: ["v*"]' not in public
     assert "+refs/heads/main:refs/release-policy/main" in public
     policy_checkout = public.index("Checkout protected canonical-main policy")
@@ -164,6 +168,13 @@ def test_public_publish_trigger_contract() -> None:
     publish_job = public[public.index("  publish:") :]
     assert "scripts/validate_release_ref.py" not in publish_job
     assert "actions/download-artifact@" in publish_job
+    assert "secrets.PYPI_TOKEN" in publish_job
+    assert "secrets.PYPI_PASSWORD" not in publish_job
+    assert "secrets.PYPI_USERNAME" not in publish_job
+    assert "if: ${{ github.event_name == 'push' }}" in publish_job
+    assert "if: ${{ github.event_name != 'push' }}" in publish_job
+    assert publish_job.count("pypa/gh-action-pypi-publish@") == 2
+    assert "password: ${{ secrets.PYPI_TOKEN }}" in publish_job
 
 
 @pytest.mark.parametrize(
