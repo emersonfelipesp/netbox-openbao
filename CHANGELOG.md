@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 - 2026-09-17
+## 0.1.0rc1 - 2026-09-17
 
 - Added immutable package-first Gitea publication with a canonical schema-1
   release manifest bound to the source commit and exact wheel/sdist bytes.
