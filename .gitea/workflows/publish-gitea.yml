@@ -80,6 +80,14 @@ jobs:
           test -n "$GITEA_PACKAGE_TOKEN"
           publisher_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-publisher.XXXXXX")"
           trap 'rm -rf -- "$publisher_root"' EXIT
+          if GITEA_PACKAGE_TOKEN="$GITEA_PACKAGE_TOKEN" python3 scripts/release_artifacts.py fetch-gitea \
+            --owner emersonfelipesp --repository netbox-openbao \
+            --version "$VERSION" --source-sha "$SOURCE_SHA" \
+            --dist "$publisher_root/preflight-dist" \
+            --manifest "$publisher_root/preflight-release-manifest.json"; then
+            echo "existing immutable package verified"
+            exit 0
+          fi
           curl --fail --silent --show-error --location --max-redirs 3 \
             https://bootstrap.pypa.io/get-pip.py --output "$publisher_root/get-pip.py"
           printf '%s  %s\n' \
@@ -90,7 +98,6 @@ jobs:
           PYTHONPATH="$publisher_root/pip" python3 -m pip install --disable-pip-version-check \
             --no-warn-script-location --target "$publisher_root/dependencies" 'twine==6.2.0'
           PYTHONPATH="$publisher_root/dependencies" python3 -m twine upload --non-interactive \
-            --skip-existing \
             --repository-url "${GITHUB_SERVER_URL%/}/api/packages/emersonfelipesp/pypi" \
             release-transfer/*.whl release-transfer/*.tar.gz
           manifest_status="$(printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \
@@ -110,9 +117,8 @@ jobs:
               "${GITHUB_SERVER_URL%/}/api/v1/packages/emersonfelipesp/${package_type}/${package}/-/link/netbox-openbao")"
             test "$link_status" = 204 || test "$link_status" = 400
           done
-          verify_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-verify.XXXXXX")"
-          trap 'rm -rf -- "$verify_root"' EXIT
           GITEA_PACKAGE_TOKEN="$GITEA_PACKAGE_TOKEN" python3 scripts/release_artifacts.py fetch-gitea \
             --owner emersonfelipesp --repository netbox-openbao \
             --version "$VERSION" --source-sha "$SOURCE_SHA" \
-            --dist "$verify_root/dist" --manifest "$verify_root/release-manifest.json"
+            --dist "$publisher_root/verify-dist" \
+            --manifest "$publisher_root/verify-release-manifest.json"

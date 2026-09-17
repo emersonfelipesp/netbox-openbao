@@ -115,14 +115,16 @@ def test_release_workflows_use_managed_package_credential() -> None:
 
 def test_gitea_publisher_retries_only_into_byte_verification() -> None:
     publish = PUBLISH.read_text(encoding="utf-8")
-    assert "--skip-existing" in publish
+    assert "--skip-existing" not in publish
+    assert 'echo "existing immutable package verified"' in publish
     assert 'test "$manifest_status" = 201 || test "$manifest_status" = 400' in publish
     assert 'test "$link_status" = 204 || test "$link_status" = 400' in publish
-    upload = publish.index("--skip-existing")
+    preflight = publish.index("scripts/release_artifacts.py fetch-gitea")
+    upload = publish.index("python3 -m twine upload")
     manifest = publish.index('manifest_status="$(')
     link = publish.index('link_status="$(')
-    verifier = publish.index("scripts/release_artifacts.py fetch-gitea")
-    assert upload < manifest < link < verifier
+    verifier = publish.rindex("scripts/release_artifacts.py fetch-gitea")
+    assert preflight < upload < manifest < link < verifier
 
 
 def test_gitea_publisher_bootstraps_verified_pip_bytes() -> None:
