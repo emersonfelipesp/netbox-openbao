@@ -104,6 +104,18 @@ def test_release_trigger_and_target_contracts() -> None:
     assert "for attempt in 1 2 3 4 5 6" in deploy
 
 
+def test_gitea_publisher_uses_runner_supported_environment_bootstrap() -> None:
+    publish = PUBLISH.read_text(encoding="utf-8")
+    required_commands = (
+        "command -v uv",
+        "uv venv --python python3",
+        "uv pip install --python",
+    )
+    assert "python3 -m venv" not in publish
+    for command in required_commands:
+        assert publish.count(command) == 2
+
+
 def test_public_publish_trigger_contract() -> None:
     public = PUBLIC.read_text(encoding="utf-8")
     assert 'tags: ["v*rc*"]' in public

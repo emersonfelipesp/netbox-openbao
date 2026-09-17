@@ -48,8 +48,9 @@ jobs:
           build_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-release.XXXXXX")"
           trap 'rm -rf -- "$build_root"' EXIT
           git archive "$SOURCE_SHA" | tar -x -C "$build_root"
-          python3 -m venv "$build_root/.publisher"
-          "$build_root/.publisher/bin/pip" install --disable-pip-version-check \
+          command -v uv
+          uv venv --python python3 "$build_root/.publisher"
+          uv pip install --python "$build_root/.publisher/bin/python" \
             'build==1.3.0' 'setuptools==80.9.0' 'twine==6.2.0'
           "$build_root/.publisher/bin/python" -m build --outdir "$build_root/dist" "$build_root"
           "$build_root/.publisher/bin/python" -m twine check "$build_root"/dist/*
@@ -70,9 +71,12 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$GITEA_PACKAGE_TOKEN"
-          python3 -m venv .publisher
-          .publisher/bin/pip install --disable-pip-version-check 'twine==6.2.0'
-          .publisher/bin/python -m twine upload --non-interactive \
+          command -v uv
+          publisher_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-publisher.XXXXXX")"
+          trap 'rm -rf -- "$publisher_root"' EXIT
+          uv venv --python python3 "$publisher_root/venv"
+          uv pip install --python "$publisher_root/venv/bin/python" 'twine==6.2.0'
+          "$publisher_root/venv/bin/python" -m twine upload --non-interactive \
             --repository-url "${GITHUB_SERVER_URL%/}/api/packages/emersonfelipesp/pypi" \
             release-transfer/*.whl release-transfer/*.tar.gz
           printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \
