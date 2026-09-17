@@ -26,6 +26,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Provision the publisher Python toolchain
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
       - name: Resolve immutable tagged source
         id: release
         env:
@@ -48,12 +53,11 @@ jobs:
           build_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-release.XXXXXX")"
           trap 'rm -rf -- "$build_root"' EXIT
           git archive "$SOURCE_SHA" | tar -x -C "$build_root"
-          python3 -m pip install --disable-pip-version-check \
-            --target "$build_root/.publisher" \
+          python -m venv "$build_root/.publisher"
+          "$build_root/.publisher/bin/pip" install --disable-pip-version-check \
             'build==1.3.0' 'setuptools==80.9.0' 'twine==6.2.0'
-          PYTHONPATH="$build_root/.publisher" python3 -m build \
-            --outdir "$build_root/dist" "$build_root"
-          PYTHONPATH="$build_root/.publisher" python3 -m twine check "$build_root"/dist/*
+          "$build_root/.publisher/bin/python" -m build --outdir "$build_root/dist" "$build_root"
+          "$build_root/.publisher/bin/python" -m twine check "$build_root"/dist/*
           python3 "$build_root/scripts/release_artifacts.py" manifest \
             --dist "$build_root/dist" --version "$VERSION" \
             --source-sha "$SOURCE_SHA" --manifest "$build_root/release-manifest.json"
@@ -73,9 +77,9 @@ jobs:
           test -n "$GITEA_PACKAGE_TOKEN"
           publisher_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-publisher.XXXXXX")"
           trap 'rm -rf -- "$publisher_root"' EXIT
-          python3 -m pip install --disable-pip-version-check \
-            --target "$publisher_root/dependencies" 'twine==6.2.0'
-          PYTHONPATH="$publisher_root/dependencies" python3 -m twine upload --non-interactive \
+          python -m venv "$publisher_root/venv"
+          "$publisher_root/venv/bin/pip" install --disable-pip-version-check 'twine==6.2.0'
+          "$publisher_root/venv/bin/python" -m twine upload --non-interactive \
             --repository-url "${GITHUB_SERVER_URL%/}/api/packages/emersonfelipesp/pypi" \
             release-transfer/*.whl release-transfer/*.tar.gz
           printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \

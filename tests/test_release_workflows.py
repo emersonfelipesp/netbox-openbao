@@ -104,14 +104,18 @@ def test_release_trigger_and_target_contracts() -> None:
     assert "for attempt in 1 2 3 4 5 6" in deploy
 
 
-def test_gitea_publisher_uses_isolated_target_dependencies() -> None:
+def test_gitea_publisher_provisions_complete_python_toolchain() -> None:
     publish = PUBLISH.read_text(encoding="utf-8")
-    assert "python3 -m venv" not in publish
+    assert (
+        "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405"
+        in publish
+    )
+    assert 'python-version: "3.12"' in publish
     assert "command -v uv" not in publish
     assert "uv venv" not in publish
-    assert publish.count("python3 -m pip install --disable-pip-version-check") == 2
-    assert publish.count("--target") == 2
-    assert publish.count("PYTHONPATH=") == 3
+    assert "python3 -m pip" not in publish
+    assert publish.count("python -m venv") == 2
+    assert publish.count("/bin/pip") == 2
 
 
 def test_public_publish_trigger_contract() -> None:
