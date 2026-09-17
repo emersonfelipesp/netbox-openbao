@@ -13,6 +13,7 @@ internal automation resolution receipts have no CRUD endpoint.
 | `GET /clusters/{id}/capabilities/` | Normalize bounded OpenAPI metadata; requires `discover_openbaocluster` and never makes an operation executable |
 | `GET /clusters/{id}/state/` | Read typed initialization, seal, HA, leader, and Raft state |
 | `POST /clusters/{id}/initialize/` | Initialize once and return custody material once; JSON-only and `no-store` |
+| `POST /clusters/{id}/raft/join/` | Join an uninitialized Raft node with request-scoped TLS material |
 | `POST /clusters/{id}/unseal/` | Submit one unseal share or reset accumulated progress |
 | `POST /clusters/{id}/seal/` | Seal an initialized active cluster |
 | `POST /clusters/{id}/raft/remove-peer/` | Remove a non-leader peer after index and quorum checks |
@@ -31,6 +32,9 @@ internal automation resolution receipts have no CRUD endpoint.
 | `POST /clusters/{id}/secret-operations/execute/` | Execute one reviewed mounted operation with stale-state, schema, permission, and confirmation checks |
 | `GET /clusters/{id}/secret-engine-journeys/` | Return permission-filtered KV, transit, database, SSH, TOTP, PKI, and Kubernetes journeys proven by the live mount-specific schema |
 | `POST /clusters/{id}/secret-engine-journeys/execute/` | Execute one typed journey with stale-digest, mount/version, field, permission, audit, and exact-confirmation checks |
+| `GET /clusters/{id}/final-resources/` | Return permission-filtered lease, tool, token, and UI-header operations |
+| `POST /clusters/{id}/final-resources/operate/` | Execute one reviewed final operation with typed fields, digest freshness, audit, and impact confirmation |
+| `GET /clusters/{id}/final-conformance/` | Compare runtime OpenAPI with the pinned OpenBao 2.6.2 final-operation fixture |
 | `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/` | Singleton runtime configuration; deletion is refused while any credential exists and requires the standard `OpenBaoSettings` model permissions |
 | `GET/POST /engines/` | Secret engines |
 | `GET /engines/{id}/health/` | Probe and record engine status |
@@ -155,6 +159,37 @@ only. They are marked `Cache-Control: no-store`. The plugin never persists or
 audits the response. If the initialization request loses its response, the API
 does not retry: re-read cluster state and enter incident recovery, because a
 successful retry could never reproduce the original keys.
+
+Raft join is available only while the target node reports uninitialized and
+requires `join_raft_openbaocluster`, a reason, and exact
+`JOIN RAFT <cluster-slug> VIA DIRECT <leader-url>` or
+`JOIN RAFT <cluster-slug> VIA AUTO <auto-join-expression>` confirmation. Supply
+exactly one direct HTTP(S) leader URL or auto-join expression; direct URLs cannot
+contain user information, a query string, or a fragment. Auto-join scheme and
+port apply only to auto mode. Leader CA, client certificate, and
+client private-key PEM values are write-only request fields. They are sent only
+to the fixed `/sys/storage/raft/join` endpoint, never stored or audited, and are
+cleared from the Web UI after submission. An uncertain join outcome returns the
+standard `outcome=unknown` no-retry envelope and records only metadata in a
+best-effort follow-up audit.
+
+## Leases, tools, UI headers, and final conformance
+
+The final resource catalog is the intersection of static reviewed contracts,
+the current OpenBao 2.6.2 OpenAPI document, and object permissions. The caller
+cannot supply a raw path, method, header, origin, namespace, token transport,
+or response parser. Material operations are JSON-only and `no-store`.
+
+Lease and UI-header destructive operations require a preview. The execution
+request repeats the preview's `impact_digest` and exact confirmation; a changed
+lease listing or header value returns HTTP 409. Force revoke uses a separate
+permission because OpenBao may discard the lease record without cleaning up the
+backing credential.
+
+The conformance response returns `missing`, `duplicates`, `unclassified`, and
+`stale` arrays/flags and uses HTTP 409 unless all are clear. See the
+[leases and tools runbook](how-to/administer-openbao-leases-tools.md) for fields,
+permissions, incident handling, and migration guidance.
 
 Snapshot restore does not use multipart parsing. Send exactly
 `application/octet-stream`, a valid `Content-Length` from 1 through 536870912,

@@ -25,4 +25,9 @@
       <i class="mdi mdi-database-key"></i> Secret engines
     </a>
   {% endif %}
+  {% if perms.netbox_openbao.view_operations_openbaocluster %}
+    <a class="btn btn-primary" href="{% url 'plugins:netbox_openbao:openbaocluster_operations' pk=object.pk %}">
+      <i class="mdi mdi-tools"></i> Leases and tools
+    </a>
+  {% endif %}
 {% endblock controls %}

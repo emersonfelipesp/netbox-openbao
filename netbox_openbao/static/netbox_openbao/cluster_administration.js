@@ -1,9 +1,34 @@
 "use strict";
 
+function isObject(value) { return Boolean(value) && !Array.isArray(value) && typeof value === "object"; }
+
 async function completeAction(send, reloadRequested, showResult, reloadPage) {
-  const response = await send();
-  const data = await response.json().catch(() => ({ detail: "The server returned an invalid response." }));
-  if (!response.ok) throw new Error(JSON.stringify(data));
+  let response;
+  try { response = await send(); }
+  catch {
+    const data = { outcome: "unknown", audit_status: "unavailable" };
+    showResult(`OpenBao may have accepted the operation. Do not retry. Verify current state first.\n${JSON.stringify(data, null, 2)}`, true);
+    return data;
+  }
+  let data;
+  try { data = await response.json(); }
+  catch {
+    const unknown = { outcome: "unknown", audit_status: "unavailable" };
+    showResult(`OpenBao may have accepted the operation. Do not retry. Verify current state first.\n${JSON.stringify(unknown, null, 2)}`, true);
+    return unknown;
+  }
+  if (!isObject(data)) {
+    const unknown = { outcome: "unknown", audit_status: "unavailable" };
+    showResult(`OpenBao may have accepted the operation. Do not retry. Verify current state first.\n${JSON.stringify(unknown, null, 2)}`, true);
+    return unknown;
+  }
+  if (data.outcome === "unknown") {
+    showResult(
+      `OpenBao may have accepted the operation. Do not retry. Verify current state first.\n${JSON.stringify(data, null, 2)}`,
+      true,
+    );
+    return data;
+  }
   if (data.outcome === "accepted-audit-incomplete") {
     showResult(
       `OpenBao accepted the operation, but the completion audit is incomplete. Do not retry. Verify current OpenBao state and repair NetBox auditing before another mutation.\n${JSON.stringify(data, null, 2)}`,
@@ -11,12 +36,52 @@ async function completeAction(send, reloadRequested, showResult, reloadPage) {
     );
     return data;
   }
+  if (!response.ok) throw new Error(JSON.stringify(data));
   showResult(data);
   if (reloadRequested) reloadPage();
   return data;
 }
 
-export { completeAction };
+function initializePayload(payload) {
+  const recovery = payload.seal_mode === "recovery";
+  delete payload.seal_mode;
+  for (const name of recovery ? ["secret_shares", "secret_threshold", "pgp_keys"] : ["recovery_shares", "recovery_threshold", "recovery_pgp_keys"]) delete payload[name];
+  for (const name of ["pgp_keys", "recovery_pgp_keys"]) {
+    if (payload[name]) payload[name] = payload[name].split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+    else delete payload[name];
+  }
+  if (!payload.root_token_pgp_key) delete payload.root_token_pgp_key;
+}
+
+function coerceClusterNumbers(payload) {
+  for (const name of ["secret_shares", "secret_threshold", "recovery_shares", "recovery_threshold", "configuration_index", "auto_join_port"]) {
+    if (name in payload && payload[name] !== "") payload[name] = Number(payload[name]);
+  }
+}
+
+function joinPayload(payload, fields) {
+  for (const name of ["retry", "non_voter"]) payload[name] = fields.has(name);
+  for (const name of ["leader_api_addr", "leader_ca_cert", "leader_client_cert", "leader_client_key", "leader_tls_servername", "auto_join", "auto_join_scheme", "auto_join_port"]) {
+    if (payload[name] === "" || payload[name] === undefined) delete payload[name];
+  }
+  if (payload.leader_api_addr) for (const name of ["auto_join_scheme", "auto_join_port"]) delete payload[name];
+}
+
+function clusterActionPayload(action, fields) {
+  const payload = Object.fromEntries(fields.entries());
+  if (action === "initialize") initializePayload(payload);
+  coerceClusterNumbers(payload);
+  if (action === "join") joinPayload(payload, fields);
+  return payload;
+}
+
+function clearClusterActionMaterial(form) {
+  for (const input of form.querySelectorAll(
+    '[name="key"], [name="leader_ca_cert"], [name="leader_client_cert"], [name="leader_client_key"]',
+  )) input.value = "";
+}
+
+export { clearClusterActionMaterial, clusterActionPayload, completeAction };
 
 if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", () => {
   const root = document.getElementById("openbao-administration");
@@ -26,6 +91,7 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
   const csrf = root.querySelector("input[name=csrfmiddlewaretoken]")?.value || "";
   const urls = {
     initialize: root.dataset.initializeUrl,
+    join: root.dataset.joinUrl,
     unseal: root.dataset.unsealUrl,
     seal: root.dataset.sealUrl,
     "remove-peer": root.dataset.removePeerUrl,
@@ -52,21 +118,7 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
       event.preventDefault();
       const action = form.dataset.action;
       const fields = new FormData(form);
-      const payload = Object.fromEntries(fields.entries());
-      if (action === "initialize") {
-        const recovery = payload.seal_mode === "recovery";
-        delete payload.seal_mode;
-        for (const name of recovery ? ["secret_shares", "secret_threshold", "pgp_keys"] : ["recovery_shares", "recovery_threshold", "recovery_pgp_keys"]) delete payload[name];
-        for (const name of ["pgp_keys", "recovery_pgp_keys"]) {
-          if (payload[name]) payload[name] = payload[name].split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
-          else delete payload[name];
-        }
-        if (!payload.root_token_pgp_key) delete payload.root_token_pgp_key;
-      }
-      for (const name of ["secret_shares", "secret_threshold", "recovery_shares", "recovery_threshold", "configuration_index"]) {
-        if (name in payload) payload[name] = Number(payload[name]);
-      }
-      const keyInput = form.querySelector("input[name=key]");
+      const payload = clusterActionPayload(action, fields);
       try {
         await completeAction(
           () => fetch(urls[action], {
@@ -83,7 +135,7 @@ if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded
       } catch (error) {
         show(error.message, true);
       } finally {
-        if (keyInput) keyInput.value = "";
+        clearClusterActionMaterial(form);
       }
     });
   }

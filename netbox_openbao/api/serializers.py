@@ -10,6 +10,7 @@ what any view does. There is also no model field for it to fall back to.
 
 import base64
 import binascii
+from urllib.parse import urlsplit
 
 from dcim.models import Device
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -66,6 +67,7 @@ __all__ = (
     'OpenBaoSettingsSerializer',
     'SecretEngineSerializer',
     'InitializeClusterSerializer',
+    'JoinRaftSerializer',
     'UnsealClusterSerializer',
     'ConfirmClusterActionSerializer',
     'RemoveRaftPeerSerializer',
@@ -200,6 +202,78 @@ class InitializeClusterSerializer(_ClusterConfirmationSerializer):
             raise serializers.ValidationError({threshold_key: 'Threshold cannot exceed the share count.'})
         if pgp_key in attrs and len(attrs[pgp_key]) != shares:
             raise serializers.ValidationError({pgp_key: 'Provide exactly one PGP key for every share.'})
+        return attrs
+
+    def openbao_payload(self) -> dict:
+        excluded = {'reason', 'confirmation'}
+        return {key: value for key, value in self.validated_data.items() if key not in excluded}
+
+
+class JoinRaftSerializer(_ClusterConfirmationSerializer):
+    confirmation = serializers.CharField(max_length=5000, trim_whitespace=True)
+    leader_api_addr = serializers.CharField(max_length=2048, required=False, allow_blank=True)
+    retry = serializers.BooleanField(default=False)
+    leader_ca_cert = serializers.CharField(max_length=100_000, required=False, allow_blank=True, write_only=True)
+    leader_client_cert = serializers.CharField(max_length=100_000, required=False, allow_blank=True, write_only=True)
+    leader_client_key = serializers.CharField(max_length=100_000, required=False, allow_blank=True, write_only=True)
+    leader_tls_servername = serializers.RegexField(
+        r'^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$', required=False, allow_blank=True
+    )
+    auto_join = serializers.CharField(max_length=4000, required=False, allow_blank=True)
+    auto_join_scheme = serializers.ChoiceField(choices=('https', 'http'), required=False)
+    auto_join_port = serializers.IntegerField(min_value=1, max_value=65535, required=False)
+    non_voter = serializers.BooleanField(default=False)
+
+    def expected_confirmation(self, attrs):
+        if attrs.get('leader_api_addr'):
+            mode, locator = 'DIRECT', attrs['leader_api_addr']
+        else:
+            mode, locator = 'AUTO', attrs.get('auto_join', '')
+        return f"JOIN RAFT {self.context['cluster'].slug} VIA {mode} {locator}"
+
+    @staticmethod
+    def _validate_direct_address(attrs, direct):
+        direct = serializers.URLField(max_length=2048).run_validation(direct)
+        attrs['leader_api_addr'] = direct
+        parsed = urlsplit(direct)
+        try:
+            _ = parsed.port
+        except ValueError:
+            raise serializers.ValidationError({'leader_api_addr': 'Use a valid TCP port.'}) from None
+        if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password:
+            raise serializers.ValidationError({'leader_api_addr': 'Use an http(s) URL without user information.'})
+        if parsed.query or parsed.fragment:
+            raise serializers.ValidationError({'leader_api_addr': 'Query strings and fragments are not accepted.'})
+        attrs.pop('auto_join_scheme', None)
+        attrs.pop('auto_join_port', None)
+
+    @staticmethod
+    def _validate_join_certificates(attrs):
+        for name in ('leader_ca_cert', 'leader_client_cert'):
+            value = attrs.get(name, '')
+            if value and not value.startswith('-----BEGIN CERTIFICATE-----'):
+                raise serializers.ValidationError({name: 'Provide one PEM certificate.'})
+        key = attrs.get('leader_client_key', '')
+        if key and not key.startswith('-----BEGIN '):
+            raise serializers.ValidationError({'leader_client_key': 'Provide one PEM private key.'})
+        if bool(attrs.get('leader_client_cert')) != bool(key):
+            raise serializers.ValidationError(
+                'The leader client certificate and private key must be supplied together.'
+            )
+
+    def validate(self, attrs):
+        direct = attrs.get('leader_api_addr', '')
+        automatic = attrs.get('auto_join', '')
+        if bool(direct) == bool(automatic):
+            raise serializers.ValidationError('Specify exactly one leader API address or auto-join expression.')
+        if direct:
+            self._validate_direct_address(attrs, direct)
+        else:
+            attrs.pop('leader_api_addr', None)
+            attrs.setdefault('auto_join_scheme', 'https')
+            attrs.setdefault('auto_join_port', 8200)
+        attrs = super().validate(attrs)
+        self._validate_join_certificates(attrs)
         return attrs
 
     def openbao_payload(self) -> dict:

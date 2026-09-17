@@ -35,6 +35,13 @@ In scope — anything that breaks one of the properties in
   into NetBox columns
 - auth material (RoleID, SecretID, tokens, broker client keys) reaching the
   database, a model field, or a tracked file
+- Raft-join TLS material, wrapping tokens, unwrapped data, hashes, random data,
+  or token-lookup input reaching persistence, audit content, browser storage,
+  cacheable responses, or a permission boundary broader than its dedicated
+  OpenBaoCluster action
+- a runtime-discovered path bypassing the pinned OpenBao 2.6.2 registries, or a
+  force-revoke/UI-configuration mutation bypassing reason, impact, and exact
+  confirmation checks
 
 Out of scope:
 

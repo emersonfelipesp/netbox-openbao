@@ -1,0 +1,23 @@
+{
+  "baseline": "2.6.2",
+  "upstream_commit": "dd9c19c37a878cf4a81b18efb8d6f0599c7da923",
+  "operations": [
+    {"resource":"leases","operation":"list","method":"LIST","path":"/sys/leases/lookup/{identifier}","operation_ids":["leases-look-up","leases-look-up-with-prefix"],"query":{"list":"string!"},"body":{}},
+    {"resource":"leases","operation":"lookup","method":"POST","path":"/sys/leases/lookup","operation_ids":["leases-read-lease"],"query":{},"body":{"lease_id":"string"}},
+    {"resource":"leases","operation":"renew","method":"POST","path":"/sys/leases/renew","operation_ids":["leases-renew-lease2"],"query":{},"body":{"increment":"integer","lease_id":"string","url_lease_id":"string"}},
+    {"resource":"leases","operation":"revoke","method":"POST","path":"/sys/leases/revoke","operation_ids":["leases-revoke-lease2"],"query":{},"body":{"lease_id":"string","sync":"boolean","url_lease_id":"string"}},
+    {"resource":"leases","operation":"revoke-prefix","method":"POST","path":"/sys/leases/revoke-prefix/{identifier}","operation_ids":["leases-revoke-lease-with-prefix2"],"query":{},"body":{"sync":"boolean"}},
+    {"resource":"leases","operation":"force-revoke","method":"POST","path":"/sys/leases/revoke-force/{identifier}","operation_ids":["leases-force-revoke-lease-with-prefix2"],"query":{},"body":{}},
+    {"resource":"wrapping","operation":"wrap","method":"POST","path":"/sys/wrapping/wrap","operation_ids":["wrap"],"query":{},"body":{}},
+    {"resource":"wrapping","operation":"lookup","method":"POST","path":"/sys/wrapping/lookup","operation_ids":["read-wrapping-properties"],"query":{},"body":{"token":"string"}},
+    {"resource":"wrapping","operation":"rewrap","method":"POST","path":"/sys/wrapping/rewrap","operation_ids":["rewrap"],"query":{},"body":{"token":"string"}},
+    {"resource":"wrapping","operation":"unwrap","method":"POST","path":"/sys/wrapping/unwrap","operation_ids":["unwrap"],"query":{},"body":{"token":"string"}},
+    {"resource":"hash","operation":"run","method":"POST","path":"/sys/tools/hash/{identifier}","operation_ids":["generate-hash-with-algorithm"],"query":{},"body":{"algorithm":"string","format":"string","input":"string"}},
+    {"resource":"random","operation":"generate","method":"POST","path":"/sys/tools/random/{identifier}","operation_ids":["generate-random-with-source"],"query":{},"body":{"bytes":"integer","format":"string","urlbytes":"string"}},
+    {"resource":"token-tools","operation":"lookup","method":"POST","path":"/auth/token/lookup","operation_ids":["token-look-up-update"],"query":{},"body":{"token":"string"}},
+    {"resource":"ui-headers","operation":"list","method":"LIST","path":"/sys/config/ui/headers","operation_ids":["ui-headers-list"],"query":{"list":"string!"},"body":{}},
+    {"resource":"ui-headers","operation":"read","method":"GET","path":"/sys/config/ui/headers/{identifier}","operation_ids":["ui-headers-read-configuration"],"query":{},"body":{}},
+    {"resource":"ui-headers","operation":"write","method":"POST","path":"/sys/config/ui/headers/{identifier}","operation_ids":["ui-headers-configure"],"query":{},"body":{"multivalue":"boolean","values":"array"}},
+    {"resource":"ui-headers","operation":"delete","method":"DELETE","path":"/sys/config/ui/headers/{identifier}","operation_ids":["ui-headers-delete-configuration"],"query":{},"body":{}}
+  ]
+}

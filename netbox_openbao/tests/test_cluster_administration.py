@@ -31,7 +31,12 @@ from netbox_openbao.administration.cluster import (
     normalize_seal_status,
 )
 from netbox_openbao.administration.schema import CapabilitySchemaError
-from netbox_openbao.backends.exceptions import BackendConfigurationError, OpenBaoConflict, OpenBaoUnavailable
+from netbox_openbao.backends.exceptions import (
+    BackendConfigurationError,
+    OpenBaoConflict,
+    OpenBaoMutationUnknown,
+    OpenBaoUnavailable,
+)
 from netbox_openbao.choices import BackendChoices
 from netbox_openbao.models import OpenBaoAdministrationLog
 from netbox_openbao.tests.test_administration import OpenBaoAdministrationTestCase, _Response
@@ -444,6 +449,71 @@ class ClusterAdministrationAPITest(OpenBaoAdministrationTestCase):
             f'plugins-api:netbox_openbao-api:openbaocluster-{action}',
             kwargs={'pk': self.cluster.pk},
         )
+
+    def assert_unknown_mutation(self, response):
+        self.assertEqual(response.status_code, 503, response.content)
+        self.assertEqual(response.data["outcome"], "unknown")
+        self.assertIn("Do not retry", response.data["message"])
+        self.assertEqual(response["X-OpenBao-Operation-Outcome"], "unknown")
+        self.assertIn(response["X-OpenBao-Audit-Status"], {"best-effort", "failed"})
+
+    @patch('netbox_openbao.api.views.get_administration_backend')
+    def test_cluster_mutation_families_preserve_unknown_outcomes(self, get_backend):
+        self.add_permissions(
+            'netbox_openbao.view_openbaocluster',
+            'netbox_openbao.initialize_openbaocluster',
+            'netbox_openbao.unseal_openbaocluster',
+            'netbox_openbao.seal_openbaocluster',
+            'netbox_openbao.remove_raft_peer_openbaocluster',
+            'netbox_openbao.restore_raft_snapshot_openbaocluster',
+        )
+
+        backend = FakeLifecycleBackend(self.cluster)
+        backend.seal_state = SealStatus(**{**backend.seal_state.as_dict(), 'initialized': False})
+        backend.initialize = lambda payload: (_ for _ in ()).throw(OpenBaoMutationUnknown())
+        get_backend.return_value = backend
+        self.assert_unknown_mutation(self.client.post(self.url('initialize'), {
+            'secret_shares': 1, 'secret_threshold': 1,
+            'reason': 'Commission the replacement cluster.',
+            'confirmation': f'INITIALIZE {self.cluster.slug}',
+        }, format='json', **self.header))
+
+        backend = FakeLifecycleBackend(self.cluster)
+        backend.unseal = lambda **payload: (_ for _ in ()).throw(OpenBaoMutationUnknown())
+        get_backend.return_value = backend
+        self.assert_unknown_mutation(self.client.post(self.url('unseal'), {
+            'key': 'share-canary', 'reason': 'Advance reviewed unseal progress.',
+            'confirmation': f'UNSEAL {self.cluster.slug}',
+        }, format='json', **self.header))
+
+        backend = FakeLifecycleBackend(self.cluster)
+        backend.seal_state = SealStatus(**{**backend.seal_state.as_dict(), 'sealed': False})
+        backend.seal = lambda: (_ for _ in ()).throw(OpenBaoMutationUnknown())
+        get_backend.return_value = backend
+        self.assert_unknown_mutation(self.client.post(self.url('seal'), {
+            'reason': 'Seal the reviewed cluster.', 'confirmation': f'SEAL {self.cluster.slug}',
+        }, format='json', **self.header))
+
+        backend = FakeLifecycleBackend(self.cluster)
+        backend.seal_state = SealStatus(**{**backend.seal_state.as_dict(), 'sealed': False})
+        backend.remove_raft_peer = lambda server_id: (_ for _ in ()).throw(OpenBaoMutationUnknown())
+        get_backend.return_value = backend
+        self.assert_unknown_mutation(self.client.post(self.url('remove-raft-peer'), {
+            'server_id': 'raft4', 'configuration_index': 24,
+            'reason': 'Remove the reviewed failed peer.',
+            'confirmation': f'REMOVE raft4 FROM {self.cluster.slug}',
+        }, format='json', **self.header))
+
+        backend = FakeLifecycleBackend(self.cluster)
+        backend.seal_state = SealStatus(**{**backend.seal_state.as_dict(), 'sealed': False})
+        backend.restore_raft_snapshot = lambda *args, **kwargs: (_ for _ in ()).throw(OpenBaoMutationUnknown())
+        get_backend.return_value = backend
+        self.assert_unknown_mutation(self.client.post(
+            self.url('raft-snapshot-restore'), b'snapshot', content_type='application/octet-stream',
+            HTTP_X_OPENBAO_REASON='Restore the reviewed recovery point.',
+            HTTP_X_OPENBAO_CONFIRMATION=f'RESTORE SNAPSHOT {self.cluster.slug}',
+            HTTP_X_OPENBAO_CLUSTER_ID='cluster-id', HTTP_X_OPENBAO_RAFT_INDEX='24', **self.header,
+        ))
 
     @patch('netbox_openbao.api.views.get_administration_backend')
     def test_state_is_permissioned_audited_and_not_storable(self, get_backend):

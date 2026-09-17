@@ -109,6 +109,7 @@ class OpenBaoCluster(PrimaryModel):
             ("unseal", "Submit OpenBao unseal material or reset unseal progress"),
             ("seal", "Seal an OpenBao cluster"),
             ("manage_raft", "Manage OpenBao Raft configuration"),
+            ("join_raft", "Join an OpenBao Raft cluster"),
             ("remove_raft_peer", "Remove an OpenBao Raft peer"),
             ("download_raft_snapshot", "Download an OpenBao Raft snapshot"),
             ("restore_raft_snapshot", "Restore an OpenBao Raft snapshot"),
@@ -180,6 +181,16 @@ class OpenBaoCluster(PrimaryModel):
             ("rotate_oidc_keys", "Rotate OpenBao OIDC signing keys"),
             ("manage_namespaces", "Create and update OpenBao namespaces"),
             ("delete_namespaces", "Delete OpenBao namespaces"),
+            ("view_operations", "View OpenBao leases, tools, and UI configuration"),
+            ("view_leases", "View OpenBao leases"),
+            ("manage_leases", "Renew OpenBao leases"),
+            ("revoke_leases", "Revoke OpenBao leases and prefixes"),
+            ("force_revoke_leases", "Force revoke OpenBao lease prefixes"),
+            ("use_wrapping", "Wrap, inspect, and rewrap OpenBao responses"),
+            ("unwrap_material", "Unwrap one-time OpenBao response material"),
+            ("use_tools", "Use OpenBao hashing and random-data tools"),
+            ("view_ui_configuration", "View OpenBao UI response-header configuration"),
+            ("manage_ui_configuration", "Replace and delete OpenBao UI response headers"),
         )
 
     def __str__(self):

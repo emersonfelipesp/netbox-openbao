@@ -70,7 +70,29 @@
       ],
       "capability": "Initialization, Raft join, unseal and seal",
       "owner_issue": 70,
-      "status": "foundation"
+      "status": "complete",
+      "equivalence": {
+        "init": "Guarded initialization with bounded shares, threshold validation, request-scoped recovery material, and durable preflight audit covers the upstream initialization route.",
+        "unseal": "Request-scoped unseal submission, progress reporting, and local material clearing cover the upstream unseal journey without browser persistence.",
+        "settings.seal": "Dedicated seal authorization, current-state impact preview, and exact confirmation cover the upstream seal control."
+      },
+      "evidence": {
+        "init": {
+          "implementation": ["netbox_openbao/administration/cluster.py", "netbox_openbao/api/views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_administration.html", "netbox_openbao/static/netbox_openbao/cluster_administration.js"],
+          "tests": ["netbox_openbao/tests/test_cluster_administration.py", "netbox_openbao/tests/js/cluster_administration.test.js"]
+        },
+        "unseal": {
+          "implementation": ["netbox_openbao/administration/cluster.py", "netbox_openbao/api/views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_administration.html", "netbox_openbao/static/netbox_openbao/cluster_administration.js"],
+          "tests": ["netbox_openbao/tests/test_cluster_administration.py", "netbox_openbao/tests/js/cluster_administration.test.js"]
+        },
+        "settings.seal": {
+          "implementation": ["netbox_openbao/administration/cluster.py", "netbox_openbao/api/views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_administration.html", "netbox_openbao/static/netbox_openbao/cluster_administration.js"],
+          "tests": ["netbox_openbao/tests/test_cluster_administration.py", "netbox_openbao/tests/js/cluster_administration.test.js"]
+        }
+      }
     },
     {
       "id": "api-explorer",
@@ -613,7 +635,17 @@
       ],
       "capability": "Lease lookup, renewal and revocation",
       "owner_issue": 70,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "access.leases": "Permission-filtered lease prefix listing, lookup, renewal, single revocation, guarded prefix revocation, and separately authorized force revocation cover the upstream lease workspace."
+      },
+      "evidence": {
+        "access.leases": {
+          "implementation": ["netbox_openbao/administration/finalization.py", "netbox_openbao/administration/backends.py", "netbox_openbao/api/finalization_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_operations.html", "netbox_openbao/static/netbox_openbao/finalization_administration.js"],
+          "tests": ["netbox_openbao/tests/test_finalization_administration.py", "netbox_openbao/tests/test_finalization_administration_live.py", "netbox_openbao/tests/test_finalization_administration_browser.py"]
+        }
+      }
     },
     {
       "id": "tools",
@@ -622,7 +654,17 @@
       ],
       "capability": "Wrapping, hashing, random data and token tools",
       "owner_issue": 70,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "tools.tool": "Typed request-scoped wrapping, lookup, rewrap, unwrap, base64 hashing, entropy generation, and token lookup cover the upstream tools workspace without retaining material."
+      },
+      "evidence": {
+        "tools.tool": {
+          "implementation": ["netbox_openbao/administration/finalization.py", "netbox_openbao/administration/backends.py", "netbox_openbao/api/finalization_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_operations.html", "netbox_openbao/static/netbox_openbao/finalization_administration.js"],
+          "tests": ["netbox_openbao/tests/test_finalization_administration.py", "netbox_openbao/tests/test_finalization_administration_live.py", "netbox_openbao/tests/js/finalization_administration.test.js"]
+        }
+      }
     },
     {
       "id": "ui-configuration",
@@ -631,7 +673,17 @@
       ],
       "capability": "UI response headers and diagnostics",
       "owner_issue": 70,
-      "status": "planned"
+      "status": "complete",
+      "equivalence": {
+        "settings.index": "Typed UI response-header lifecycle and pinned runtime conformance diagnostics cover the stable upstream UI configuration controls with guarded replacement and deletion."
+      },
+      "evidence": {
+        "settings.index": {
+          "implementation": ["netbox_openbao/administration/finalization.py", "netbox_openbao/administration/openbao-final-v2.6.2.json", "netbox_openbao/api/finalization_views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_operations.html", "netbox_openbao/static/netbox_openbao/finalization_administration.js"],
+          "tests": ["netbox_openbao/tests/test_finalization_administration.py", "netbox_openbao/tests/test_finalization_administration_live.py", "netbox_openbao/tests/test_finalization_administration_browser.py"]
+        }
+      }
     }
   ]
 }

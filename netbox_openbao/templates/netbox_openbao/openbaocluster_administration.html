@@ -7,6 +7,7 @@
   <div
     id="openbao-administration"
     data-initialize-url="{{ api_urls.initialize }}"
+    data-join-url="{{ api_urls.join }}"
     data-unseal-url="{{ api_urls.unseal }}"
     data-seal-url="{{ api_urls.seal }}"
     data-remove-peer-url="{{ api_urls.remove_peer }}"
@@ -82,6 +83,29 @@
               <div class="col-12"><label class="form-label">Type exactly: <code>INITIALIZE {{ object.slug }}</code></label><input class="form-control" name="confirmation" maxlength="300" autocomplete="off" required></div>
             </div>
             <button class="btn btn-danger mt-3" type="submit">Initialize once</button>
+          </form>
+        </div>
+      {% endif %}
+
+      {% if not state.seal.initialized and perms.netbox_openbao.join_raft_openbaocluster %}
+        <div class="card mb-3">
+          <h2 class="card-header">Join a Raft cluster</h2>
+          <form class="card-body openbao-json-action" data-action="join" data-reload="true">
+            <div class="row g-3">
+              <div class="col-md-8"><label class="form-label">Leader API address (direct mode)</label><input class="form-control" name="leader_api_addr" type="url" maxlength="2048"></div>
+              <div class="col-md-4"><label class="form-label">Leader TLS server name</label><input class="form-control" name="leader_tls_servername" maxlength="253"></div>
+              <div class="col-md-4"><label class="form-label">Auto-join scheme</label><select class="form-select" name="auto_join_scheme"><option value="https">https</option><option value="http">http</option></select></div>
+              <div class="col-md-4"><label class="form-label">Auto-join port</label><input class="form-control" name="auto_join_port" type="number" min="1" max="65535" value="8200"></div>
+              <div class="col-md-4"><label class="form-label">Auto-join expression (auto mode)</label><input class="form-control" name="auto_join" maxlength="4000"></div>
+              <div class="col-md-4 form-check ms-2"><input class="form-check-input" name="retry" type="checkbox" value="true" id="openbao-join-retry"><label class="form-check-label" for="openbao-join-retry">Retry the join in OpenBao</label></div>
+              <div class="col-md-4 form-check ms-2"><input class="form-check-input" name="non_voter" type="checkbox" value="true" id="openbao-join-non-voter"><label class="form-check-label" for="openbao-join-non-voter">Join as a non-voter</label></div>
+              <div class="col-12"><label class="form-label">Leader CA certificate (optional)</label><textarea class="form-control font-monospace" name="leader_ca_cert" rows="4" maxlength="100000"></textarea></div>
+              <div class="col-md-6"><label class="form-label">Leader client certificate (optional)</label><textarea class="form-control font-monospace" name="leader_client_cert" rows="4" maxlength="100000"></textarea></div>
+              <div class="col-md-6"><label class="form-label">Leader client private key (request-scoped)</label><textarea class="form-control font-monospace" name="leader_client_key" rows="4" maxlength="100000" autocomplete="off"></textarea></div>
+              <div class="col-md-6"><label class="form-label">Reason</label><input class="form-control" name="reason" minlength="3" maxlength="1000" required></div>
+              <div class="col-12"><label class="form-label">Type exactly: <code>JOIN RAFT {{ object.slug }} VIA DIRECT &lt;leader URL&gt;</code> or <code>JOIN RAFT {{ object.slug }} VIA AUTO &lt;auto-join expression&gt;</code></label><input class="form-control" name="confirmation" maxlength="5000" autocomplete="off" required></div>
+            </div>
+            <button class="btn btn-warning mt-3" type="submit">Join once</button>
           </form>
         </div>
       {% endif %}

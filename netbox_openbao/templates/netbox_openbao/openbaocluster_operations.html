@@ -1,0 +1,48 @@
+{% extends 'generic/object.html' %}
+{% load static %}
+
+{% block title %}{{ object }} — Leases and tools{% endblock %}
+
+{% block head %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static 'netbox_openbao/access_administration.css' %}">
+{% endblock head %}
+
+{% block content %}
+  <div id="openbao-final" data-api-base="{{ api_base }}">
+    {% csrf_token %}
+    <div class="alert alert-warning" role="alert">
+      Wrapping tokens, unwrapped data, hashes, and random data are request-scoped material. Transfer them to approved custody and clear the result. Force revoke and UI configuration changes require a fresh impact preview and exact confirmation.
+    </div>
+    <div class="openbao-access-layout">
+      <section class="card border-0 openbao-access-card" aria-labelledby="openbao-final-heading">
+        <div class="card-header"><h2 class="h4 mb-0" id="openbao-final-heading">Leases, tools, and UI configuration</h2></div>
+        <form class="card-body" id="openbao-final-form" autocomplete="off">
+          <div class="row g-3">
+            <div class="col-lg-4"><label class="form-label" for="openbao-final-resource">Resource</label><select class="form-select" id="openbao-final-resource" required></select></div>
+            <div class="col-lg-4"><label class="form-label" for="openbao-final-operation">Operation</label><select class="form-select" id="openbao-final-operation" required></select></div>
+            <div class="col-lg-4" id="openbao-final-identifier-group"><label class="form-label" for="openbao-final-identifier">Identifier</label><input class="form-control font-monospace" id="openbao-final-identifier" maxlength="500"></div>
+            <div class="col-12"><div class="openbao-access-fields" id="openbao-final-fields"></div></div>
+            <div class="col-12"><label class="form-label" for="openbao-final-reason">Reason</label><input class="form-control" id="openbao-final-reason" minlength="3" maxlength="1000" required></div>
+          </div>
+          <div class="openbao-impact d-none mt-4" id="openbao-final-impact">
+            <h3 class="h5">Current impact</h3><pre class="openbao-access-output" id="openbao-final-impact-output"></pre>
+            <div class="font-monospace text-secondary mb-2" id="openbao-final-confirmation-hint"></div>
+            <label class="form-label" for="openbao-final-confirmation">Exact confirmation</label><input class="form-control font-monospace" id="openbao-final-confirmation" maxlength="500">
+          </div>
+          <div class="d-flex flex-wrap gap-2 mt-4">
+            <button class="btn btn-outline-warning d-none" id="openbao-final-preview" type="button">Preview impact</button>
+            <button class="btn btn-primary" id="openbao-final-submit" type="submit">Run reviewed operation</button>
+            <button class="btn btn-outline-primary" id="openbao-final-conformance" type="button">Check conformance</button>
+          </div>
+        </form>
+      </section>
+      <aside class="card border-0 openbao-access-card"><div class="card-header"><h2 class="h4 mb-0">Request-scoped result</h2></div><div class="card-body">
+        <div class="alert d-none" id="openbao-final-status" role="status" aria-live="polite"></div>
+        <pre class="openbao-access-output" id="openbao-final-result">No result.</pre>
+        <button class="btn btn-outline-secondary mt-3" id="openbao-final-clear" type="button">Clear</button>
+      </div></aside>
+    </div>
+  </div>
+  <script src="{% static 'netbox_openbao/finalization_administration.js' %}" type="module"></script>
+{% endblock content %}

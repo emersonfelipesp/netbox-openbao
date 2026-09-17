@@ -81,6 +81,7 @@ __all__ = (
     'OpenBaoClusterAdministrationView',
     'OpenBaoClusterAuthenticationView',
     'OpenBaoClusterAccessView',
+    'OpenBaoClusterOperationsView',
     'OpenBaoClusterSecretEnginesView',
     'OpenBaoClusterCapabilitiesView',
     'OpenBaoClusterDeleteView',
@@ -216,6 +217,7 @@ class OpenBaoClusterAdministrationView(ObjectPermissionRequiredMixin, View):
             'snapshot_limit': 512 * 1024 * 1024,
             'api_urls': {
                 'initialize': reverse('plugins-api:netbox_openbao-api:openbaocluster-initialize', args=[cluster.pk]),
+                'join': reverse('plugins-api:netbox_openbao-api:openbaocluster-join-raft', args=[cluster.pk]),
                 'unseal': reverse('plugins-api:netbox_openbao-api:openbaocluster-unseal', args=[cluster.pk]),
                 'seal': reverse('plugins-api:netbox_openbao-api:openbaocluster-seal', args=[cluster.pk]),
                 'remove_peer': reverse(
@@ -304,6 +306,40 @@ class OpenBaoClusterAccessView(ObjectPermissionRequiredMixin, View):
             'api_base': reverse(
                 'plugins-api:netbox_openbao-api:openbaocluster-access-resources', args=[cluster.pk]
             ).removesuffix('access-resources/'),
+            'return_url': cluster.get_absolute_url(),
+        })
+        return _never_store(response)
+
+
+@register_model_view(OpenBaoCluster, 'operations')
+class OpenBaoClusterOperationsView(ObjectPermissionRequiredMixin, View):
+    """Render request-scoped leases, tools, and UI configuration."""
+
+    queryset = OpenBaoCluster.objects.all()
+    template_name = 'netbox_openbao/openbaocluster_operations.html'
+
+    def get_required_permission(self):
+        return 'netbox_openbao.view_operations_openbaocluster'
+
+    def get(self, request, pk):
+        cluster = get_object_or_404(self.queryset.restrict(request.user, 'view_operations'), pk=pk)
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action='finalization-administration-ui',
+                operation_id='finalization-workspace',
+                risk_level='read',
+                success=True,
+                status_code=200,
+                message='Rendered the request-scoped leases, tools, and UI configuration workspace.',
+                request=request,
+            )
+        except (AdministrationAuditError, DatabaseError):
+            raise PermissionDenied(_('OpenBao administration audit is unavailable.')) from None
+        response = render(request, self.template_name, {
+            'object': cluster,
+            'api_base': reverse('plugins-api:netbox_openbao-api:openbaocluster-detail', args=[cluster.pk]),
             'return_url': cluster.get_absolute_url(),
         })
         return _never_store(response)

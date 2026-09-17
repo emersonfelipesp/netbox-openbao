@@ -6,12 +6,10 @@ targets the reviewed OpenBao 2.6.2 contract. The plugin admits later patch
 releases within the 2.6 line but fails closed below 2.6.2 or at 2.7.0 and later
 until compatibility is reviewed.
 
-This implementation does not yet replace OpenBao's Raft-join journey. The
-cluster-bootstrap parity family remains at `foundation`, and issue #70 owns the
-guarded join API/UI and its request-scoped TLS private-key handling. Join a new
-Raft node through the approved existing OpenBao procedure until that tracked
-work is complete; do not infer an executable operation from capability
-discovery alone.
+The cluster-bootstrap parity family includes guarded Raft join. Leader CA,
+client certificate, and client private-key values are accepted only in the
+current no-store request and are cleared from the page after submission. Do not
+infer any additional executable operation from capability discovery alone.
 
 ## Prerequisites
 
@@ -39,6 +37,7 @@ discovery alone.
 | `initialize_openbaocluster` | Bootstrap custodian |
 | `unseal_openbaocluster` | Unseal custodian |
 | `seal_openbaocluster` | Incident commander or vault operator |
+| `join_raft_openbaocluster` | Raft bootstrap custodian |
 | `remove_raft_peer_openbaocluster` | Raft administrator |
 | `download_raft_snapshot_openbaocluster` | Backup operator |
 | `restore_raft_snapshot_openbaocluster` | Recovery operator |

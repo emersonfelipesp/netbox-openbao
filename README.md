@@ -241,15 +241,17 @@ running access). The [OpenBao administration plane](docs/architecture/administra
 now has cluster inventory, bounded runtime capability discovery, dedicated
 permissions, metadata-only audit, guarded bootstrap and seal operations, HA and
 Raft state, peer-removal safety, and bounded authenticated snapshot recovery.
-Its pinned OpenBao 2.6.2 parity manifest records Raft storage, secrets-engine
+Its pinned OpenBao 2.6.2 parity manifest records cluster bootstrap, Raft storage, secrets-engine
 lifecycle, the classified API explorer, KV v1/v2, transit, database, SSH,
-TOTP, PKI, and Kubernetes administration as complete. Mounted operation
+TOTP, PKI, Kubernetes, policies, identity, OIDC, namespaces, leases, tools, and
+UI response-header administration as complete. Mounted operation
 execution covers runtime-advertised GET, LIST, POST, PUT, PATCH, and DELETE
 templates that satisfy the reviewed grammar, schema, authorization, and
 material-handling contract, including external plugin-style schemas.
-Cluster bootstrap remains at `foundation` until guarded Raft join is implemented
-under issue #70. Other discovered operations remain non-executable until their
-capability family is implemented and reviewed.
+The checked-in final-operation fixture and runtime conformance endpoint fail on
+missing, duplicate, unclassified, or stale OpenBao 2.6.2 contracts. Other
+discovered operations remain non-executable until their capability family is
+implemented and reviewed.
 
 Also shipped since: the
 [Ansible lookup plugin](https://github.com/emersonfelipesp/netbox-openbao-ansible)
@@ -260,10 +262,9 @@ claimed more than the design delivers and has been corrected above.
 Deliberately not yet here:
 
 - Cloud credential engines and the remaining typed dynamic-secret families
-- Complete NetBox-native replacement of the built-in OpenBao Web UI. Cluster,
-  authentication, MFA, storage, secrets-engine lifecycle, and bounded generic
-  mounted operations are present; the parity manifest identifies the remaining
-  typed capability families without treating discovery as execution.
+- OpenBao capabilities introduced after the pinned 2.6.2 UI and runtime
+  contracts. A later minor release requires a new review and evidence fixture;
+  runtime discovery alone never expands execution.
 
 **Host operations via netbox-rpc** are implemented on `SecretEngine`: bind an
 OpenBao host `dcim.Device`, then dispatch the seeded `service.openbao.1.*`

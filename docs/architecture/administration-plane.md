@@ -8,11 +8,10 @@ same inventory, object permissions, audit correlation, and API conventions as
 the rest of their infrastructure.
 
 This page describes the security and compatibility foundation plus the
-implemented authentication, MFA, initialization, unseal, seal, and
-Raft-storage journeys. The
-cluster-bootstrap parity family remains `foundation` because guarded Raft join
-is assigned to issue #70. This page does **not** claim that every OpenBao
-operation is executable yet. Runtime discovery remains display-only unless a
+implemented authentication, MFA, initialization, unseal, seal, Raft-storage,
+access-control, lease, tool, and UI-configuration journeys. All pinned OpenBao
+2.6.2 UI families are complete. This page does **not** claim that a later
+OpenBao operation is executable. Runtime discovery remains display-only unless a
 concrete view constrains an operation's inputs and outputs, assigns a dedicated
 permission, and supplies tests for its risk class.
 
@@ -440,11 +439,10 @@ python scripts/check_openbao_ui_parity.py
 The baseline includes cluster session and bootstrap, Raft storage, API
 exploration, auth methods, MFA, engine lifecycle, generic mounted engines, KV,
 transit/database/SSH/TOTP, PKI, Kubernetes, policies, identity, OIDC,
-namespaces, leases, tools, and UI configuration. A family marked `planned` is
-not implemented. The `cluster-session`, `auth-methods`, `mfa`, `kv`,
-`common-engines`, `pki`, `kubernetes`, `policies`, `identity`, `oidc`, and
-`namespaces` families are complete through
-request-scoped typed workspaces. Completion
+namespaces, leases, tools, and UI configuration. All 19 families are complete
+through request-scoped typed workspaces. The final 17 operations are pinned in
+`administration/openbao-final-v2.6.2.json`; runtime conformance fails on a
+missing, duplicate, unclassified, or stale matching operation. Completion
 requires a Web UI, REST API, authorization, auditing, direct/broker behavior,
 hostile-input tests, and live OpenBao/browser evidence.
 

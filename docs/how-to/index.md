@@ -26,6 +26,13 @@ gets you to a working result.
     Manage access-control resources through typed, permissioned operations with
     impact previews and request-scoped generated material.
 
+-   :material-timer-key-outline: **[Administer OpenBao leases, tools, and UI configuration](administer-openbao-leases-tools.md)**
+
+    ---
+
+    Inspect and revoke leases, use request-scoped cryptographic tools, manage
+    UI response headers, and verify the pinned runtime contract.
+
 -   :material-key-plus: **[Grant a device SSH access](../quick-add-ssh.md)**
 
     ---

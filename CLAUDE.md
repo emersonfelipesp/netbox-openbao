@@ -59,6 +59,19 @@ outcome, and any mutation whose preflight audit did not commit. The bootstrap,
 HA, recovery, and incident procedures are in
 `docs/how-to/administer-openbao-cluster.md`.
 
+**Raft join and final OpenBao UI parity remain request-scoped.** Raft join is
+allowed only on an uninitialized node through the fixed
+`/sys/storage/raft/join` contract and dedicated `join_raft_openbaocluster`
+permission. Never persist or audit the leader CA, client certificate, or client
+private key. Lease, wrapping, hashing, random-data, token-lookup, and UI-header
+operations come only from `administration/finalization.py` and the pinned
+`openbao-final-v2.6.2.json` fixture. Runtime OpenAPI may prove a reviewed route
+exists but may not add one. Keep material no-store and browser-memory-only;
+force revoke and UI configuration changes require dedicated permissions, a
+fresh impact digest, a reason, and exact confirmation. Broker mode fails closed
+until it advertises the same reviewed contract. Procedures are in
+`docs/how-to/administer-openbao-leases-tools.md`.
+
 **Authentication and MFA administration never creates an OpenBao browser
 session in NetBox.** The executable surface is the static OpenBao 2.6.2
 registry in `administration/authentication.py`; runtime OpenAPI may prove that

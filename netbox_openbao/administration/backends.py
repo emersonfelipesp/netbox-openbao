@@ -141,6 +141,10 @@ class AdministrationBackend(ABC):
         del payload
         raise self._unsupported()
 
+    def join_raft(self, payload: dict) -> dict:
+        del payload
+        raise self._unsupported()
+
     def unseal(self, *, key: str = "", reset: bool = False, migrate: bool = False) -> SealStatus:
         del key, reset, migrate
         raise self._unsupported()
@@ -307,6 +311,10 @@ class AdministrationBackend(ABC):
         payload: dict,
         material: bool = False,
     ) -> dict:
+        del method, path, payload, material
+        raise self._unsupported()
+
+    def execute_final_operation(self, method: str, path: str, *, payload: dict, material: bool = False) -> dict:
         del method, path, payload, material
         raise self._unsupported()
 
@@ -478,6 +486,13 @@ class DirectAdministrationBackend(AdministrationBackend):
     def initialize(self, payload: dict) -> InitializationResult:
         result = self._request_json("POST", "/sys/init", authenticated=False, json=payload)
         return self._normalize(normalize_initialization_result, result)
+
+    @sensitive_variables()
+    def join_raft(self, payload: dict) -> dict:
+        result = self._request_json("POST", "/sys/storage/raft/join", authenticated=False, json=payload)
+        if not isinstance(result.get("joined"), bool):
+            raise OpenBaoMutationUnknown()
+        return {"joined": result["joined"]}
 
     def unseal(self, *, key: str = "", reset: bool = False, migrate: bool = False) -> SealStatus:
         payload = {"reset": reset, "migrate": migrate}
@@ -1013,6 +1028,51 @@ class DirectAdministrationBackend(AdministrationBackend):
             return {}
         result = self._response_json(response)
         return self._normalize(normalizer, result)
+
+    @sensitive_variables()
+    def execute_final_operation(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict,
+        material: bool = False,
+    ) -> dict:
+        prefixes = ("/sys/leases/", "/sys/wrapping/", "/sys/tools/", "/sys/config/ui/headers", "/auth/token/lookup")
+        if method not in {"GET", "LIST", "POST", "DELETE"} or not path.startswith(prefixes):
+            raise BackendConfigurationError("The finalization operation is outside the reviewed contract.")
+
+        def normalizer(value):
+            return normalize_access_response(value, material=material)
+
+        if method == "LIST":
+            return self._normalize(normalizer, self._request_list_json(path))
+        kwargs = {}
+        if method == "POST":
+            if path == "/sys/wrapping/wrap":
+                request_payload = payload["data"]
+                if ttl := payload.get("ttl"):
+                    kwargs["headers"] = {"X-Vault-Wrap-TTL": ttl}
+            else:
+                request_payload = payload
+            kwargs["json"] = request_payload
+        if method == "GET" and path.startswith("/sys/config/ui/headers/"):
+            kwargs["params"] = {"multivalue": "true"}
+        response = self._request(method, path, authenticated=True, expected=(200, 204), **kwargs)
+        if method in {"POST", "DELETE"}:
+            try:
+                if response.status_code == 204:
+                    response.close()
+                    return {}
+                return self._normalize_mutation(normalizer, self._response_json(response))
+            except OpenBaoMutationUnknown:
+                raise
+            except (CapabilitySchemaError, OpenBaoUnavailable):
+                raise OpenBaoMutationUnknown() from None
+        if response.status_code == 204:
+            response.close()
+            return {}
+        return self._normalize(normalizer, self._response_json(response))
 
     @staticmethod
     def _normalize(normalizer, payload):

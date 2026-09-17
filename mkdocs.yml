@@ -158,12 +158,14 @@ nav:
       - Administer OpenBao authentication and MFA: how-to/administer-openbao-authentication.md
       - Administer OpenBao secret engines: how-to/administer-openbao-secret-engines.md
       - Administer OpenBao policies, identity, OIDC, and namespaces: how-to/administer-openbao-access.md
+      - Administer OpenBao leases, tools, and UI configuration: how-to/administer-openbao-leases-tools.md
       - Use HashiCorp Vault: how-to/use-vault.md
       - Migrate from netbox-secrets: migration-from-netbox-secrets.md
       - Report on expiry: how-to/expiry-reporting.md
       - Troubleshoot: how-to/troubleshooting.md
   - Security model: security.md
   - REST API: api.md
+  - OpenBao UI parity matrix: openbao-ui-parity-matrix.md
   - Automation resolution: automation-resolution.md
   - Code reference: reference/
   - Development: development.md

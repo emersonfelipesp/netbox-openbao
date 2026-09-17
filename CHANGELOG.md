@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Complete the pinned OpenBao 2.6.2 Web UI replacement with guarded Raft join;
+  typed lease lookup, renewal, revocation, prefix revocation, and force
+  revocation; request-scoped wrapping, hashing, random-data, and token tools;
+  safe UI response-header controls; and exact runtime conformance diagnostics.
+  Dedicated permissions, durable preflight audit, stale impact checks, no-store
+  material handling, direct-mode live coverage, broker fail-closed behavior,
+  browser accessibility checks, and end-to-end operating guidance close all 19
+  parity families.
+
 - Secrets-engine administration now provides cluster-scoped Web UI and REST
   actions for mount listing, configuration, tuning, enable, remount status, and
   guarded disable. A classified OpenBao 2.6.2 operation explorer intersects

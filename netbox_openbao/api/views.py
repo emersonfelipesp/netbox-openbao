@@ -29,6 +29,7 @@ from django.db.models import Count
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.views.decorators.debug import sensitive_variables
 from drf_spectacular.utils import extend_schema
 from netbox.api.viewsets import NetBoxModelViewSet, NetBoxReadOnlyModelViewSet
 from packaging.version import InvalidVersion, Version
@@ -51,7 +52,7 @@ from netbox_openbao.administration import (
 from netbox_openbao.administration.audit import AdministrationAuditError, log_administration
 from netbox_openbao.api.transactions import material_api_operation
 from netbox_openbao.backends import get_backend
-from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoError
+from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoError, OpenBaoMutationUnknown
 from netbox_openbao.choices import AccessActionChoices
 from netbox_openbao.material_transactions import material_operation
 from netbox_openbao.models import (
@@ -83,6 +84,7 @@ from .access_views import AccessAdministrationMixin
 from .authentication_views import AuthenticationAdministrationMixin
 from .automation import AutomationResolveRequestSerializer, AutomationResolveResponseSerializer
 from .engine_views import SecretEngineAdministrationMixin
+from .finalization_views import FinalizationAdministrationMixin
 from .permissions import ClusterActionPermissions, ProcedureActionPermissions, SecretActionPermissions
 from .serializers import (
     ConfirmClusterActionSerializer,
@@ -92,6 +94,7 @@ from .serializers import (
     CredentialSerializer,
     CredentialTypeSchemaSerializer,
     InitializeClusterSerializer,
+    JoinRaftSerializer,
     OpenBaoAdministrationLogSerializer,
     OpenBaoClusterSerializer,
     OpenBaoProcedureRunSerializer,
@@ -217,6 +220,7 @@ class SecretEngineViewSet(NetBoxModelViewSet):
 
 
 class OpenBaoClusterViewSet(
+    FinalizationAdministrationMixin,
     AccessAdministrationMixin,
     SecretEngineAdministrationMixin,
     AuthenticationAdministrationMixin,
@@ -336,6 +340,45 @@ class OpenBaoClusterViewSet(
         return response
 
     @staticmethod
+    def _mutation_unknown_response(
+        request,
+        cluster,
+        *,
+        action,
+        operation_id,
+        risk_level,
+        path_template,
+        reason,
+    ):
+        audit_status = 'best-effort'
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action=action,
+                operation_id=operation_id,
+                risk_level=risk_level,
+                method='POST',
+                path_template=path_template,
+                reason=reason,
+                outcome='unknown',
+                success=False,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                message='The cluster mutation outcome is unknown; no request material was retained.',
+                request=request,
+            )
+        except (AdministrationAuditError, DatabaseError):
+            audit_status = 'failed'
+        response = _no_store(Response({
+            'outcome': 'unknown',
+            'audit_status': audit_status,
+            'message': 'OpenBao may have accepted the request. Do not retry; verify current state first.',
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE))
+        response['X-OpenBao-Operation-Outcome'] = 'unknown'
+        response['X-OpenBao-Audit-Status'] = audit_status
+        return response
+
+    @staticmethod
     def _confirm_serializer(serializer_class, request, cluster, *, action=None):
         serializer = serializer_class(data=request.data, context={'request': request, 'cluster': cluster})
         if action is not None:
@@ -397,6 +440,7 @@ class OpenBaoClusterViewSet(
             'raft': raft.as_dict() if raft else None,
         }))
 
+    @sensitive_variables()
     @action(
         detail=True,
         methods=['post'],
@@ -404,6 +448,8 @@ class OpenBaoClusterViewSet(
         permission_classes=[ClusterActionPermissions],
     )
     def initialize(self, request, pk=None):
+        raw_request = getattr(request, '_request', request)
+        raw_request.sensitive_post_parameters = '__ALL__'
         cluster = self._cluster(request, pk, 'initialize')
         serializer = self._confirm_serializer(InitializeClusterSerializer, request, cluster)
         reason = serializer.validated_data['reason']
@@ -428,6 +474,11 @@ class OpenBaoClusterViewSet(
                 require_durable=True,
             )
             result = backend.initialize(serializer.openbao_payload())
+        except OpenBaoMutationUnknown:
+            return self._mutation_unknown_response(
+                request, cluster, action='initialize', operation_id='sys-init', risk_level='sensitive',
+                path_template='/sys/init', reason=reason,
+            )
         except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
             self._backend_failure(request, cluster, 'initialize', exc, reason=reason, risk_level='sensitive')
         audit_complete = True
@@ -454,6 +505,69 @@ class OpenBaoClusterViewSet(
             audit_complete=audit_complete,
         )
 
+    @sensitive_variables()
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='raft/join',
+        permission_classes=[ClusterActionPermissions],
+        renderer_classes=[JSONRenderer],
+    )
+    def join_raft(self, request, pk=None):
+        raw_request = getattr(request, '_request', request)
+        raw_request.sensitive_post_parameters = '__ALL__'
+        cluster = self._cluster(request, pk, 'join_raft')
+        serializer = self._confirm_serializer(JoinRaftSerializer, request, cluster)
+        reason = serializer.validated_data['reason']
+        try:
+            backend = get_administration_backend(cluster)
+            before = backend.seal_status()
+            self._require_baseline(before)
+            if before.initialized or backend.initialization_status():
+                raise OpenBaoConflict()
+            log_administration(
+                cluster,
+                request.user,
+                action='join-raft-authorized',
+                operation_id='raft-join',
+                risk_level='sensitive',
+                method='POST',
+                path_template='/sys/storage/raft/join',
+                reason=reason,
+                success=True,
+                message='Authorized joining the uninitialized node to a Raft cluster.',
+                request=request,
+                require_durable=True,
+            )
+            result = backend.join_raft(serializer.openbao_payload())
+        except OpenBaoMutationUnknown:
+            return self._mutation_unknown_response(
+                request, cluster, action='join-raft', operation_id='raft-join', risk_level='sensitive',
+                path_template='/sys/storage/raft/join', reason=reason,
+            )
+        except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
+            self._backend_failure(request, cluster, 'join-raft', exc, reason=reason, risk_level='sensitive')
+        audit_complete = True
+        try:
+            log_administration(
+                cluster,
+                request.user,
+                action='join-raft',
+                operation_id='raft-join',
+                risk_level='sensitive',
+                method='POST',
+                path_template='/sys/storage/raft/join',
+                reason=reason,
+                success=True,
+                status_code=200,
+                message='Submitted the request-scoped Raft join configuration.',
+                request=request,
+            )
+        except AdministrationAuditError:
+            audit_complete = False
+        return self._mutation_response(result, status_code=200, audit_complete=audit_complete)
+
+    @sensitive_variables()
     @action(
         detail=True,
         methods=['post'],
@@ -461,6 +575,8 @@ class OpenBaoClusterViewSet(
         permission_classes=[ClusterActionPermissions],
     )
     def unseal(self, request, pk=None):
+        raw_request = getattr(request, '_request', request)
+        raw_request.sensitive_post_parameters = '__ALL__'
         cluster = self._cluster(request, pk, 'unseal')
         serializer = self._confirm_serializer(UnsealClusterSerializer, request, cluster)
         data = serializer.validated_data
@@ -492,6 +608,12 @@ class OpenBaoClusterViewSet(
                 migrate=data['migrate'],
             )
             data.pop('key', None)
+        except OpenBaoMutationUnknown:
+            data.pop('key', None)
+            return self._mutation_unknown_response(
+                request, cluster, action=action_name, operation_id='sys-unseal', risk_level='sensitive',
+                path_template='/sys/unseal', reason=reason,
+            )
         except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
             data.pop('key', None)
             self._backend_failure(request, cluster, action_name, exc, reason=reason, risk_level='sensitive')
@@ -544,6 +666,11 @@ class OpenBaoClusterViewSet(
                 require_durable=True,
             )
             backend.seal()
+        except OpenBaoMutationUnknown:
+            return self._mutation_unknown_response(
+                request, cluster, action='seal', operation_id='sys-seal', risk_level='destructive',
+                path_template='/sys/seal', reason=reason,
+            )
         except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
             self._backend_failure(request, cluster, 'seal', exc, reason=reason, risk_level='destructive')
         audit_complete = True
@@ -608,6 +735,11 @@ class OpenBaoClusterViewSet(
                 require_durable=True,
             )
             backend.remove_raft_peer(peer.node_id)
+        except OpenBaoMutationUnknown:
+            return self._mutation_unknown_response(
+                request, cluster, action='remove-raft-peer', operation_id='raft-remove-peer',
+                risk_level='destructive', path_template='/sys/storage/raft/remove-peer', reason=reason,
+            )
         except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
             self._backend_failure(
                 request,
@@ -734,6 +866,7 @@ class OpenBaoClusterViewSet(
             response['Content-Length'] = str(snapshot.declared_size)
         return _no_store(response)
 
+    @sensitive_variables()
     def _restore_raft_snapshot(self, request, pk, *, force):
         permission = 'force_restore_raft_snapshot' if force else 'restore_raft_snapshot'
         cluster = self._cluster(request, pk, permission)
@@ -765,6 +898,11 @@ class OpenBaoClusterViewSet(
                 require_durable=True,
             )
             backend.restore_raft_snapshot(request.stream, size, force=force)
+        except OpenBaoMutationUnknown:
+            return self._mutation_unknown_response(
+                request, cluster, action=action_name, operation_id=action_name, risk_level='destructive',
+                path_template=path, reason=reason,
+            )
         except (AdministrationAuditError, DatabaseError, OpenBaoError) as exc:
             self._backend_failure(
                 request,
