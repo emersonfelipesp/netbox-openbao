@@ -139,7 +139,7 @@ jobs:
       - name: Bind the exact package request and artifacts
         if: ${{ env.RESOLVED_SOURCE == 'latest_package' }}
         env:
-          GITEA_PACKAGE_TOKEN: ${{ secrets.PKG_TOKEN }}
+          GITEA_PACKAGE_TOKEN: ${{ secrets.PACKAGE_WRITE_TOKEN }}
         run: |
           set -euo pipefail
           source_sha="$(python3 - "$PROOF_PATH" <<'PY'

@@ -104,6 +104,15 @@ def test_release_trigger_and_target_contracts() -> None:
     assert "for attempt in 1 2 3 4 5 6" in deploy
 
 
+def test_release_workflows_use_managed_package_credential() -> None:
+    publish = PUBLISH.read_text(encoding="utf-8")
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    assert "secrets.PKG_TOKEN" not in publish
+    assert "secrets.PKG_TOKEN" not in deploy
+    assert publish.count("secrets.PACKAGE_WRITE_TOKEN") == 2
+    assert deploy.count("secrets.PACKAGE_WRITE_TOKEN") == 1
+
+
 def test_gitea_publisher_bootstraps_verified_pip_bytes() -> None:
     publish = PUBLISH.read_text(encoding="utf-8")
     assert "actions/setup-python@" not in publish

@@ -70,9 +70,9 @@ jobs:
 
       - name: Publish and verify immutable package bytes
         env:
-          GITEA_PACKAGE_TOKEN: ${{ secrets.PKG_TOKEN }}
+          GITEA_PACKAGE_TOKEN: ${{ secrets.PACKAGE_WRITE_TOKEN }}
           TWINE_USERNAME: emersonfelipesp
-          TWINE_PASSWORD: ${{ secrets.PKG_TOKEN }}
+          TWINE_PASSWORD: ${{ secrets.PACKAGE_WRITE_TOKEN }}
           VERSION: ${{ steps.release.outputs.version }}
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
         run: |
