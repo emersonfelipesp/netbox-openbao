@@ -26,11 +26,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Provision the publisher Python toolchain
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.12"
-
       - name: Resolve immutable tagged source
         id: release
         env:
@@ -53,11 +48,19 @@ jobs:
           build_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-release.XXXXXX")"
           trap 'rm -rf -- "$build_root"' EXIT
           git archive "$SOURCE_SHA" | tar -x -C "$build_root"
-          python -m venv "$build_root/.publisher"
-          "$build_root/.publisher/bin/pip" install --disable-pip-version-check \
+          curl --fail --silent --show-error --location --max-redirs 3 \
+            https://bootstrap.pypa.io/get-pip.py --output "$build_root/get-pip.py"
+          printf '%s  %s\n' \
+            'fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6' \
+            "$build_root/get-pip.py" | sha256sum --check --strict
+          python3 "$build_root/get-pip.py" --disable-pip-version-check \
+            --no-warn-script-location --target "$build_root/pip" 'pip==25.2'
+          PYTHONPATH="$build_root/pip" python3 -m pip install --disable-pip-version-check \
+            --no-warn-script-location --target "$build_root/dependencies" \
             'build==1.3.0' 'setuptools==80.9.0' 'twine==6.2.0'
-          "$build_root/.publisher/bin/python" -m build --outdir "$build_root/dist" "$build_root"
-          "$build_root/.publisher/bin/python" -m twine check "$build_root"/dist/*
+          PYTHONPATH="$build_root/dependencies" python3 -m build \
+            --outdir "$build_root/dist" "$build_root"
+          PYTHONPATH="$build_root/dependencies" python3 -m twine check "$build_root"/dist/*
           python3 "$build_root/scripts/release_artifacts.py" manifest \
             --dist "$build_root/dist" --version "$VERSION" \
             --source-sha "$SOURCE_SHA" --manifest "$build_root/release-manifest.json"
@@ -77,9 +80,16 @@ jobs:
           test -n "$GITEA_PACKAGE_TOKEN"
           publisher_root="$(mktemp -d "$RUNNER_TEMP/netbox-openbao-publisher.XXXXXX")"
           trap 'rm -rf -- "$publisher_root"' EXIT
-          python -m venv "$publisher_root/venv"
-          "$publisher_root/venv/bin/pip" install --disable-pip-version-check 'twine==6.2.0'
-          "$publisher_root/venv/bin/python" -m twine upload --non-interactive \
+          curl --fail --silent --show-error --location --max-redirs 3 \
+            https://bootstrap.pypa.io/get-pip.py --output "$publisher_root/get-pip.py"
+          printf '%s  %s\n' \
+            'fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6' \
+            "$publisher_root/get-pip.py" | sha256sum --check --strict
+          python3 "$publisher_root/get-pip.py" --disable-pip-version-check \
+            --no-warn-script-location --target "$publisher_root/pip" 'pip==25.2'
+          PYTHONPATH="$publisher_root/pip" python3 -m pip install --disable-pip-version-check \
+            --no-warn-script-location --target "$publisher_root/dependencies" 'twine==6.2.0'
+          PYTHONPATH="$publisher_root/dependencies" python3 -m twine upload --non-interactive \
             --repository-url "${GITHUB_SERVER_URL%/}/api/packages/emersonfelipesp/pypi" \
             release-transfer/*.whl release-transfer/*.tar.gz
           printf 'header = "Authorization: token %s"\n' "$GITEA_PACKAGE_TOKEN" | \

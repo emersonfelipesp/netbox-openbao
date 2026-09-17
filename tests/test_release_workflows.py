@@ -104,18 +104,19 @@ def test_release_trigger_and_target_contracts() -> None:
     assert "for attempt in 1 2 3 4 5 6" in deploy
 
 
-def test_gitea_publisher_provisions_complete_python_toolchain() -> None:
+def test_gitea_publisher_bootstraps_verified_pip_bytes() -> None:
     publish = PUBLISH.read_text(encoding="utf-8")
-    assert (
-        "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405"
-        in publish
-    )
-    assert 'python-version: "3.12"' in publish
+    assert "actions/setup-python@" not in publish
     assert "command -v uv" not in publish
     assert "uv venv" not in publish
-    assert "python3 -m pip" not in publish
-    assert publish.count("python -m venv") == 2
-    assert publish.count("/bin/pip") == 2
+    assert "python -m venv" not in publish
+    assert publish.count("https://bootstrap.pypa.io/get-pip.py") == 2
+    assert publish.count(
+        "fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6"
+    ) == 2
+    assert publish.count("sha256sum --check --strict") == 2
+    assert publish.count("'pip==25.2'") == 2
+    assert publish.count("PYTHONPATH=") == 5
 
 
 def test_public_publish_trigger_contract() -> None:
