@@ -245,8 +245,12 @@ jobs:
         if: ${{ env.RESOLVED_SOURCE == 'main_branch' }}
         run: |
           set -euo pipefail
-          /opt/nmulticloud/deploy/bin/deploy-netbox-plugin-package \
-            --main netbox-openbao "$WORKFLOW_SHA" "$DEPLOY_REQUEST_ID" \
+          # deploy-main is the authorizing entry point: it verifies the claimed
+          # proof, durably reserves the request, and only then runs the plugin
+          # helper chain. Calling the inner helper directly skips the
+          # reservation and fails closed with a missing descriptor.
+          /opt/nmulticloud/deploy/bin/proxbox-package-deploy deploy-main \
+            netbox-openbao "$WORKFLOW_SHA" "$DEPLOY_REQUEST_ID" "$PROOF_PATH" \
             "$DEPLOY_REQUEST_SHA256" "$GITHUB_RUN_ID"
           /opt/nmulticloud/deploy/bin/healthcheck-app netbox
 
