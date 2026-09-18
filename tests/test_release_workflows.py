@@ -16,6 +16,7 @@ DEPLOY = ROOT / ".gitea/workflows/deploy-production.yml"
 PUBLIC = ROOT / ".github/workflows/publish.yml"
 HELPER = ROOT / "scripts/release_artifacts.py"
 REF_VALIDATOR = ROOT / "scripts/validate_release_ref.py"
+ROUTE_SELECTOR = ROOT / "scripts/select_public_release_target.py"
 
 
 def _helper():
@@ -28,6 +29,16 @@ def _helper():
 
 def _ref_validator():
     spec = importlib.util.spec_from_file_location("validate_release_ref", REF_VALIDATOR)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _route_selector():
+    spec = importlib.util.spec_from_file_location(
+        "select_public_release_target", ROUTE_SELECTOR
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -149,9 +160,15 @@ def test_public_publish_trigger_contract() -> None:
     assert "types: [published]" in public
     assert "workflow_dispatch:" in public
     assert "DISPATCH_TAG: ${{ inputs.tag }}" in public
+    assert "DISPATCH_TARGET: ${{ inputs.target }}" in public
     assert 'test "$EVENT_NAME" != workflow_dispatch || tag="$DISPATCH_TAG"' in public
     assert "^v[0-9]+\\.[0-9]+\\.[0-9]+(\\.post[0-9]+)?$" in public
+    assert "scripts/select_public_release_target.py" in public
     assert 'tags: ["v*"]' not in public
+
+
+def test_public_publish_source_policy_contract() -> None:
+    public = PUBLIC.read_text(encoding="utf-8")
     assert "+refs/heads/main:refs/release-policy/main" in public
     policy_checkout = public.index("Checkout protected canonical-main policy")
     policy_ref = public.index("ref: main", policy_checkout)
@@ -162,19 +179,84 @@ def test_public_publish_trigger_contract() -> None:
     assert '--repository . --tag "$tag"' in validator_command
     assert '--event "$event"' in validator_command
     assert "--github-output" in validator_command
-    assert public.count("id-token: write") == 1
+    assert "id-token: write" not in public
+
+
+def test_public_publish_credential_isolation_contract() -> None:
+    public = PUBLIC.read_text(encoding="utf-8")
     validate_job = public[public.index("validate-build:") : public.index("  publish:")]
     assert "id-token: write" not in validate_job
     publish_job = public[public.index("  publish:") :]
     assert "scripts/validate_release_ref.py" not in publish_job
     assert "actions/download-artifact@" in publish_job
+    assert publish_job.count("pypa/gh-action-pypi-publish@") == 2
+    assert publish_job.count("attestations: false") == 2
+
+
+def test_public_publish_pypi_credentials_are_scoped() -> None:
+    publish_job = PUBLIC.read_text(encoding="utf-8").split("  publish:", 1)[1]
     assert "secrets.PYPI_TOKEN" in publish_job
     assert "secrets.PYPI_PASSWORD" not in publish_job
     assert "secrets.PYPI_USERNAME" not in publish_job
-    assert "if: ${{ github.event_name == 'push' }}" in publish_job
-    assert "if: ${{ github.event_name != 'push' }}" in publish_job
-    assert publish_job.count("pypa/gh-action-pypi-publish@") == 2
+    assert "if: ${{ needs.validate-build.outputs.target == 'pypi' }}" in publish_job
     assert "password: ${{ secrets.PYPI_TOKEN }}" in publish_job
+
+
+def test_public_publish_testpypi_credentials_are_scoped() -> None:
+    publish_job = PUBLIC.read_text(encoding="utf-8").split("  publish:", 1)[1]
+    assert "secrets.TEST_PYPI_USERNAME" in publish_job
+    assert "secrets.TEST_PYPI_TOKEN" in publish_job
+    assert "if: ${{ needs.validate-build.outputs.target == 'testpypi' }}" in publish_job
+    assert "user: ${{ secrets.TEST_PYPI_USERNAME }}" in publish_job
+    assert "password: ${{ secrets.TEST_PYPI_TOKEN }}" in publish_job
+
+
+@pytest.mark.parametrize(
+    ("event_name", "dispatch_target", "expected"),
+    [
+        (
+            "push",
+            "",
+            ("rc", "testpypi", "https://test.pypi.org/legacy/"),
+        ),
+        (
+            "release",
+            "",
+            ("final", "pypi", "https://upload.pypi.org/legacy/"),
+        ),
+        (
+            "workflow_dispatch",
+            "pypi",
+            ("final", "pypi", "https://upload.pypi.org/legacy/"),
+        ),
+        (
+            "workflow_dispatch",
+            "testpypi",
+            ("final", "testpypi", "https://test.pypi.org/legacy/"),
+        ),
+    ],
+)
+def test_public_release_route_matrix(
+    event_name: str, dispatch_target: str, expected: tuple[str, str, str]
+) -> None:
+    selector = _route_selector()
+    assert selector.select_release_route(event_name, dispatch_target) == expected
+
+
+@pytest.mark.parametrize(
+    ("event_name", "dispatch_target"),
+    [
+        ("workflow_dispatch", ""),
+        ("workflow_dispatch", "production"),
+        ("pull_request", "testpypi"),
+    ],
+)
+def test_public_release_route_rejects_invalid_input(
+    event_name: str, dispatch_target: str
+) -> None:
+    selector = _route_selector()
+    with pytest.raises(ValueError, match="Unsupported public release event or target"):
+        selector.select_release_route(event_name, dispatch_target)
 
 
 @pytest.mark.parametrize(

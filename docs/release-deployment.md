@@ -12,7 +12,7 @@ working checkout.
 | Gitea package publication | NMS package publish target **9** dispatches `publish-gitea.yml` on `main` |
 | Staging | A reviewed push to `develop` dispatches deployment target **20** |
 | Production | NMS deployment target **21** dispatches `deploy-production.yml` on `main`; the default is `latest_package`, with `main_branch` as an explicit override |
-| Public release candidate | A direct `v*rc*` tag push runs the GitHub workflow and publishes to TestPyPI |
+| Public release candidate | A direct `v*rc*` tag push runs the GitHub workflow and publishes to TestPyPI with the scoped TestPyPI API credentials |
 | Public final | Publishing a GitHub Release runs the GitHub workflow and publishes to PyPI |
 
 The Gitea package is the production artifact of record. TestPyPI and PyPI are
@@ -61,12 +61,18 @@ hashes those bytes before passing the claimed proof to the deploy-host helper.
 
 If final PyPI publication fails after the GitHub Release is published, correct
 the publishing policy through the reviewed branch workflow and dispatch
-`publish.yml` manually with the existing final tag. The manual path runs the
-same canonical-main, tag, version, build, and artifact-transfer checks; it does
-not permit a different source or a reused version with changed bytes. Final
-publication authenticates as `__token__` with the environment-accessible
-`PYPI_TOKEN` GitHub Actions secret. Release candidates continue to use
-TestPyPI trusted publishing and never receive the production token.
+`publish.yml` manually with the existing final tag and the `pypi` target. The
+manual path runs the same canonical-main, tag, version, build, and
+artifact-transfer checks; it does not permit a different source or a reused
+version with changed bytes. Final publication authenticates as `__token__`
+with the environment-accessible `PYPI_TOKEN` GitHub Actions secret.
+
+To publish an existing validated final tag to TestPyPI, dispatch `publish.yml`
+with that tag and the `testpypi` target. TestPyPI publication authenticates
+with the environment-accessible `TEST_PYPI_USERNAME` and `TEST_PYPI_TOKEN`
+GitHub Actions secrets. Direct `v*rc*` tag pushes use the same TestPyPI-scoped
+credentials. The conditional publish steps keep TestPyPI and production PyPI
+credentials isolated, and neither index receives the other index's token.
 
 ## Proof-v3 production boundary
 
