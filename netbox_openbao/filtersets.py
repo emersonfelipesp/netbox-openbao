@@ -2,6 +2,7 @@ import django_filters
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 from netbox.filtersets import BaseFilterSet, NetBoxModelFilterSet
+from users.models import User
 from utilities.filters import ContentTypeFilter, MultiValueCharFilter, MultiValueNumberFilter
 
 from .choices import (
@@ -285,6 +286,13 @@ class OpenBaoProcedureRunFilterSet(NetBoxModelFilterSet):
         label=_('Engine (ID)'),
     )
     procedure_name = MultiValueCharFilter(field_name='procedure_name', lookup_expr='iexact')
+    # Declared explicitly: a bare Meta.fields entry would auto-generate a
+    # single-value ModelChoiceFilter, which silently drops every extra user
+    # the multi-select filter form submits.
+    initiated_by_id = django_filters.ModelMultipleChoiceFilter(
+        queryset=User.objects.all(),
+        label=_('Initiated by (ID)'),
+    )
 
     class Meta:
         model = OpenBaoProcedureRun

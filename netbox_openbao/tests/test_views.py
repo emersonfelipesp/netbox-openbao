@@ -9,7 +9,9 @@ tests of the other — this suite exists because an earlier revision reimplement
 """
 
 from django.contrib.auth import get_user_model
+from django.test import TestCase
 from django.urls import reverse
+from utilities.testing import TestCase as NetBoxTestCase
 from utilities.testing.views import ModelViewTestCase
 
 from netbox_openbao import backends
@@ -376,3 +378,120 @@ class CredentialListViewTest(OpenBaoViewTestCase):
         response = self.client.get(self.policy.get_absolute_url())
 
         self.assertEqual(response.status_code, 200)
+
+
+class FilterFormDeclarationTest(TestCase):
+    """Every filter form names its model as a class attribute.
+
+    ``NetBoxModelFilterSetForm`` reads ``model`` from the class. A form that
+    instead hands ``model`` to the constructor reaches Django's ``BaseForm``
+    and raises ``TypeError`` on the list view, which is how the procedure-run
+    list broke (#111). Instantiating each form here catches that whole class of
+    copy-paste error, not just the one occurrence.
+    """
+
+    def test_every_filter_form_declares_a_model_and_instantiates(self):
+        from django.db.models import Model
+        from netbox.forms import NetBoxModelFilterSetForm
+
+        from netbox_openbao import forms as openbao_forms
+
+        seen = 0
+        for name in openbao_forms.__all__:
+            form_class = getattr(openbao_forms, name)
+            if not (isinstance(form_class, type) and issubclass(form_class, NetBoxModelFilterSetForm)):
+                continue
+            seen += 1
+            with self.subTest(form=name):
+                self.assertTrue(
+                    isinstance(form_class.model, type) and issubclass(form_class.model, Model),
+                    f'{name}.model must be a model class, got {form_class.model!r}',
+                )
+                form = form_class({})
+                self.assertIs(form.model, form_class.model)
+        self.assertGreaterEqual(seen, 5, 'expected the module to export its filter forms')
+
+
+class OpenBaoProcedureRunViewTest(NetBoxTestCase):
+    """The procedure-run list and detail pages render for a permitted user."""
+
+    def setUp(self):
+        super().setUp()
+        from django.contrib.contenttypes.models import ContentType
+        from netbox_rpc.models import RPCExecution
+
+        from netbox_openbao.models import OpenBaoProcedureRun
+
+        from .test_rpc import _make_device, _make_procedure
+
+        self.engine = SecretEngine.objects.create(
+            name='Primary', slug='primary', api_url='https://bao.example.net:8200', is_default=True,
+        )
+        self.other_engine = SecretEngine.objects.create(
+            name='Secondary', slug='secondary', api_url='https://bao-2.example.net:8200',
+        )
+        self.other_user = User.objects.create_user('openbao-other', password='test')
+        device = _make_device()
+        device_ct = ContentType.objects.get(app_label='dcim', model='device')
+        # Each run differs from the others in every filterable attribute, so a
+        # filter that silently ignores its input cannot pass by coincidence.
+        self.runs = {}
+        for procedure_name, engine, user in (
+            ('service.openbao.1.health', self.engine, self.user),
+            ('service.openbao.1.status', self.other_engine, self.other_user),
+        ):
+            execution = RPCExecution.objects.create(
+                procedure=_make_procedure(procedure_name),
+                assigned_object_type=device_ct,
+                assigned_object_id=device.pk,
+                requested_by=user,
+            )
+            self.runs[procedure_name] = OpenBaoProcedureRun.objects.create(
+                engine=engine,
+                rpc_execution=execution,
+                procedure_name=procedure_name,
+                initiated_by=user,
+            )
+        self.list_url = reverse('plugins:netbox_openbao:openbaoprocedurerun_list')
+
+    def _listed(self, **params):
+        self.add_permissions('netbox_openbao.view_openbaoprocedurerun')
+        response = self.client.get(self.list_url, params)
+        self.assertHttpStatus(response, 200)
+        content = response.content.decode()
+        return {name for name, run in self.runs.items() if run.get_absolute_url() in content}
+
+    def test_list_requires_view_permission(self):
+        response = self.client.get(self.list_url)
+        self.assertHttpStatus(response, 403)
+
+    def test_list_renders_with_every_filter_applied(self):
+        listed = self._listed(
+            engine_id=[self.engine.pk],
+            procedure_name=['service.openbao.1.health'],
+            initiated_by_id=[self.user.pk],
+        )
+        self.assertEqual(listed, {'service.openbao.1.health'})
+
+    def test_list_filters_by_engine(self):
+        self.assertEqual(self._listed(engine_id=[self.other_engine.pk]), {'service.openbao.1.status'})
+
+    def test_list_filters_by_procedure(self):
+        self.assertEqual(self._listed(procedure_name=['service.openbao.1.status']), {'service.openbao.1.status'})
+
+    def test_list_filters_by_initiator_and_accepts_several_users(self):
+        self.assertEqual(self._listed(initiated_by_id=[self.other_user.pk]), {'service.openbao.1.status'})
+        self.assertEqual(
+            self._listed(initiated_by_id=[self.user.pk, self.other_user.pk]),
+            {'service.openbao.1.health', 'service.openbao.1.status'},
+        )
+
+    def test_list_renders_unfiltered(self):
+        self.assertEqual(self._listed(), set(self.runs))
+
+    def test_detail_renders(self):
+        self.add_permissions('netbox_openbao.view_openbaoprocedurerun')
+        run = self.runs['service.openbao.1.health']
+        response = self.client.get(run.get_absolute_url())
+        self.assertHttpStatus(response, 200)
+        self.assertIn('service.openbao.1.health', response.content.decode())

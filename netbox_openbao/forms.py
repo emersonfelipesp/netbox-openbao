@@ -19,9 +19,15 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
 from netbox.context import current_request
 from netbox.forms import NetBoxModelFilterSetForm, NetBoxModelForm, OrganizationalModelForm, PrimaryModelForm
-from users.models import Group
+from users.models import Group, User
 from utilities.exceptions import AbortRequest
-from utilities.forms.fields import CommentField, DynamicModelChoiceField, DynamicModelMultipleChoiceField, SlugField
+from utilities.forms.fields import (
+    CommentField,
+    DynamicModelChoiceField,
+    DynamicModelMultipleChoiceField,
+    SlugField,
+    TagFilterField,
+)
 from utilities.forms.rendering import FieldSet
 
 from netbox_openbao.compat import (
@@ -49,6 +55,7 @@ from .models import (
     CredentialPolicy,
     CredentialTypeSchema,
     OpenBaoCluster,
+    OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
 )
@@ -172,13 +179,18 @@ class SecretEngineFilterForm(NetBoxModelFilterSetForm):
     status = forms.MultipleChoiceField(choices=EngineStatusChoices, required=False)
 
 
+# Procedure names are the netbox-rpc handler identifiers; the label drops the
+# fixed `service.openbao.1.` prefix so the choice list reads as a verb.
+OPENBAO_PROCEDURE_CHOICES = [
+    (name, name.removeprefix('service.openbao.1.'))
+    for name in sorted(OPENBAO_READ_PROCEDURES | OPENBAO_WRITE_PROCEDURES)
+]
+
+
 class RunProcedureForm(forms.Form):
     procedure_name = forms.ChoiceField(
         label=_('Procedure'),
-        choices=[
-            (name, name.removeprefix('service.openbao.1.'))
-            for name in sorted(OPENBAO_READ_PROCEDURES | OPENBAO_WRITE_PROCEDURES)
-        ],
+        choices=OPENBAO_PROCEDURE_CHOICES,
     )
     restart_netbox = forms.BooleanField(
         label=_('Restart NetBox services after provisioning'),
@@ -191,15 +203,27 @@ class RunProcedureForm(forms.Form):
 
 
 class OpenBaoProcedureRunFilterForm(NetBoxModelFilterSetForm):
-    model = None
-
-    def __init__(self, *args, **kwargs):
-        from .models import OpenBaoProcedureRun
-
-        kwargs.setdefault('model', OpenBaoProcedureRun)
-        super().__init__(*args, **kwargs)
-    tls_verify = forms.NullBooleanField(required=False)
-    is_default = forms.NullBooleanField(required=False)
+    model = OpenBaoProcedureRun
+    fieldsets = (
+        FieldSet('q', 'filter_id', 'tag'),
+        FieldSet('engine_id', 'procedure_name', 'initiated_by_id', name=_('Run')),
+    )
+    engine_id = DynamicModelMultipleChoiceField(
+        queryset=SecretEngine.objects.all(),
+        required=False,
+        label=_('Engine'),
+    )
+    procedure_name = forms.MultipleChoiceField(
+        choices=OPENBAO_PROCEDURE_CHOICES,
+        required=False,
+        label=_('Procedure'),
+    )
+    initiated_by_id = DynamicModelMultipleChoiceField(
+        queryset=User.objects.all(),
+        required=False,
+        label=_('Initiated by'),
+    )
+    tag = TagFilterField(model)
 
 
 class CredentialPolicyForm(OrganizationalModelForm):
