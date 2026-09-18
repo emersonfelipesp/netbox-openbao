@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0.post1 - 2026-09-18
+
+- Fixed the OpenBao procedure-run list page (Audit > Procedure runs), which
+  failed with `TypeError: BaseForm.__init__() got an unexpected keyword argument
+  'model'` because its filter form declared no model and carried secret-engine
+  fields. The form now filters by engine, procedure, initiator (several at
+  once), tag, and free-text search, and the list and detail pages are covered
+  by view tests.
+- Fixed the `main_branch` production deployment override, which invoked the
+  inner plugin helper before any authorization existed and always failed with
+  `deployment descriptor is missing or malformed`. The workflow now calls the
+  authorizing `deploy-main` entry point with the claimed NMS proof.
+- No model or migration changes.
+
 ## 0.1.0 - 2026-09-17
 
 - Added immutable package-first Gitea publication with a canonical schema-1
