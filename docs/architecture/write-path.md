@@ -30,6 +30,7 @@ sequenceDiagram
     participant S as services.store_credential
     participant DB as PostgreSQL
     participant B as SecretBackend
+    participant P as Metadata projector
 
     C->>S: persist callback, type, payload, cas
     S->>S: validate_payload + extract_metadata<br/><small>pure: no DB, no network</small>
@@ -38,10 +39,13 @@ sequenceDiagram
         S->>DB: persist(metadata) → Credential row
         S->>B: write(path, payload, cas)
         B-->>S: version
-        S->>B: set_metadata(path, custom_metadata)
         S->>DB: save kv_version, live/staged pointers
+        S->>DB: register on_commit(credential ID, DB alias)
+        S->>DB: log_access(success)
     end
-    S->>DB: log_access(success)
+    DB-->>P: committed callback
+    P->>DB: advisory lock + reload final state
+    P->>B: set_metadata(path, custom_metadata)
     S-->>C: (credential, version)
 ```
 
@@ -61,33 +65,17 @@ implementation serves both rather than each caller growing its own.
 Django provides `transaction.on_commit`. It does **not** provide the opposite:
 there is no hook that runs when a transaction unwinds.
 
-So the backend write happens inside the atomic block, the written path is
-recorded in a local, and the enclosing `except` removes it before re-raising:
-
-```python
-except Exception as exc:
-    # The database has already rolled back by the time we get here.
-    if written is not None:
-        backend, path, written_version = written
-        destroy_everything = cas == 0
-        ...
-```
+So the backend material write happens inside the atomic block and its exact
+version is recorded by the material-transaction owner. A known database
+rollback removes that version before re-raising. This compensation applies to
+the backend **material write**, not to custom metadata: metadata publication is
+a post-commit projection and a failure there is logged for reconciliation.
 
 !!! danger "The scope of the rollback is the part that matters"
 
-    `backend.delete(path)` with no `versions` argument destroys the path **and
-    every version on it**.
-
-    On a create — `cas=0`, meaning the write was only permitted if the path did
-    not already exist — that is correct: nothing else was ever there.
-
-    On a **rotation**, the path already held working material. Destroying it
-    wholesale to clean up a failed rotation would take the live secret with it,
-    turning a recoverable failure into data loss strictly worse than the orphan
-    the compensator exists to prevent.
-
-    `store_credential` branches on `cas` for exactly this reason. The rotation
-    case removes only the version this write added.
+    Compensation always calls `backend.delete(path, versions=[written_version])`.
+    Removing the whole path would destroy earlier live versions during a
+    rolled-back rotation and could also erase a concurrent version.
 
 If the compensating delete *itself* fails, it is logged at `ERROR` with the
 literal string `ORPHANED SECRET`, naming the engine and the path.
@@ -183,11 +171,15 @@ does not do yet.
 
 ## Custom metadata
 
-Every write refreshes the KV v2 `custom_metadata` envelope — the credential's
+Every committed write refreshes the KV v2 `custom_metadata` envelope — the credential's
 NetBox ID, UUID, type, policy, assignment list, import provenance, and absolute
-URL. An assignment change refreshes it too, through a `post_save`/`post_delete`
-signal, on a best-effort basis: a stale assignment list would be worse than an
-absent one, because it would be confidently wrong.
+URL. Writes and assignment changes register the same identity-only
+`transaction.on_commit()` projector. A rollback therefore publishes nothing;
+a committed reassignment reloads and publishes the final projections for both
+the old and new credential. The callback uses the transaction's database alias
+and an empty context, so it cannot retain request or material-transaction state.
+If its source credential was deleted before it runs, it stops without writing.
+Backend failures are logged with a fixed, material-free reconciliation message.
 
 !!! bug "Empty values are illegal, and this broke every create"
 

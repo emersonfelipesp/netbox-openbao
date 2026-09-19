@@ -338,6 +338,13 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   credential before it while restoring all their rows. The residue that remains
   in the other direction (row gone, secret present) is recoverable; that one is
   not.
+- **Assignment metadata is a committed projection, not part of the SQL write.**
+  Service writes and assignment signals both call `defer_custom_metadata()`.
+  It captures credential IDs and the database alias, then reloads final state
+  in an empty context after commit. A shared transaction-scoped advisory lock
+  serializes that reload and publication against credential deletion. Preserve
+  old-owner capture on reassignment; never move backend metadata I/O back
+  inside an assignment transaction.
 - **`CredentialVerifyJob` cannot find an orphan.** It iterates existing
   credential rows, so it detects a row whose material is missing and is blind
   to material whose row is missing. Do not write that it reports orphans — the

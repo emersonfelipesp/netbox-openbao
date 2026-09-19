@@ -14,6 +14,7 @@ class FakeBackend(SecretBackend):
     fail_on_write = False
     fail_on_metadata = False
     delete_calls = []
+    metadata_calls = []
 
     def __init__(self, engine, env_prefix=None):
         super().__init__(engine, env_prefix=env_prefix)
@@ -25,6 +26,7 @@ class FakeBackend(SecretBackend):
         cls.fail_on_write = False
         cls.fail_on_metadata = False
         cls.delete_calls = []
+        cls.metadata_calls = []
 
     def read(self, path, version=None):
         versions = self.store.get(path)
@@ -114,6 +116,7 @@ class FakeBackend(SecretBackend):
         """
         if self.fail_on_metadata:
             raise OpenBaoConflict()
+        self.metadata_calls.append((path, dict(metadata or {})))
         for key, value in (metadata or {}).items():
             if not isinstance(value, str) or not value:
                 raise OpenBaoError(

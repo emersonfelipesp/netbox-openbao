@@ -81,13 +81,15 @@ Fix the test.
 
 | Claim | Enforced by | Test |
 |---|---|---|
-| A failed write leaves no orphaned secret | The explicit compensator in `store_credential` | `test_services.test_backend_failure_rolls_back_the_row`, `test_metadata_failure_compensates_the_orphaned_write`, `test_failed_create_still_removes_the_whole_path` |
-| **A failed rotation must not destroy the live secret** | The compensator branches on `cas`: version-scoped delete when `cas != 0` | `test_services.test_failed_rotation_must_not_destroy_the_existing_secret` |
+| A failed backend write leaves no inventory row | The material transaction rolls back the database write | `test_services.WritePathTest.test_backend_failure_rolls_back_the_row` |
+| A known database rollback after a backend write removes only the owned version | Version-scoped material-transaction compensation | `test_material_transactions.MaterialTransactionOwnershipTest.test_outer_caller_failure_compensates_two_writes_and_assignment_changes`, `test_concurrent_version_is_preserved_during_compensation` |
+| A post-commit metadata failure preserves committed material and emits a secret-safe reconciliation diagnostic | Commit-deferred metadata projector | `test_services.WritePathTest.test_metadata_failure_after_commit_is_logged_for_reconciliation`, `test_metadata_failure_does_not_undo_a_committed_rotation`, `test_metadata_failure_does_not_remove_a_committed_create` |
 | A create cannot overwrite material at a colliding path | `cas=0` | `test_backends.test_cas_zero_refuses_to_overwrite`, `test_services.test_duplicate_path_is_refused_by_the_database` |
 | A rotation cannot clobber a concurrent write | `cas=kv_version` | `test_backends.test_cas_stale_version_refuses`, `test_services.test_cas_refuses_a_write_against_a_stale_version` |
 | A malformed payload is rejected before anything is written | `prepare_material` is pure and runs first | `test_services.test_invalid_payload_is_rejected_before_any_write` |
 | Deleting a credential destroys its material | `post_delete` signal, deferred to `transaction.on_commit` | `test_services.test_deleting_a_credential_destroys_its_material` |
 | A rolled-back deletion does **not** destroy the material | the same deferral — destroying is irreversible, a transaction is not, so the irreversible half goes last | `test_policy_gate.DeletionOrderingTest` — 4 tests, including a partially failed bulk delete |
+| Assignment metadata reflects committed state even across concurrent credential deletion | Commit-deferred identity projector plus a shared PostgreSQL advisory lock and a locked reload | `test_metadata_projection.MetadataProjectionTest` — rollback, committed instance/QuerySet delete, reassignment, two-connection deletion interleaving, nondefault alias, and clean-context coverage |
 | The audit API survives `?brief`, `?fields`, and `?omit` | `BaseModelSerializer`, which accepts NetBox's dynamic-field kwargs | `test_policy_gate.AuditLogDynamicFieldsTest` — 5 tests |
 | No unreviewed field can exist on `Credential` | an **allowlist** in `scripts/check_no_secret_fields.py`, applied to the source by CI and to the live model and the serializer by the suite | `test_security` — `test_every_credential_field_is_on_the_reviewed_allowlist`, `test_the_read_representation_exposes_only_reviewed_fields`, and `SharedCheckerTest` (6 tests, including `material`, `payload`, annotated and tuple targets) |
 | A failed quick-add leaves nothing behind | One transaction wrapping service, credential, and assignment | `test_quickadd.test_a_backend_failure_leaves_nothing_behind` |

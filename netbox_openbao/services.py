@@ -21,6 +21,8 @@ and internal callers just need `instance.save()`.
 """
 
 import logging
+from contextvars import Context
+from functools import partial
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
@@ -42,6 +44,7 @@ from netbox_openbao.synchronization import (
 
 __all__ = (
     'build_custom_metadata',
+    'defer_custom_metadata',
     'delete_material',
     'discard_staged',
     'enforce_policy_access',
@@ -312,6 +315,76 @@ def build_custom_metadata(credential):
     return {key: value for key, value in metadata.items() if value}
 
 
+def _publish_custom_metadata(credential_id, using):
+    """Publish the committed projection, or stop if its source disappeared."""
+    from netbox_openbao.models import Credential
+
+    source = Credential.objects.using(using).filter(pk=credential_id).first()
+    _metadata_source_reloaded(credential_id, using)
+    if source is None:
+        return
+    with transaction.atomic(using=using):
+        lock_custom_metadata_projection(credential_id, using)
+        credential = (
+            Credential.objects.using(using)
+            .select_related('engine', 'policy')
+            .filter(pk=credential_id)
+            .first()
+        )
+        if credential is None:
+            return
+        try:
+            backend = get_backend(credential.engine, credential.policy)
+            backend.set_metadata(credential.path, build_custom_metadata(credential))
+        except OpenBaoError:
+            logger.warning(
+                'Committed OpenBao custom metadata projection failed for credential %s; reconciliation is required.',
+                credential_id,
+            )
+        except Exception:
+            logger.error(
+                'Committed OpenBao custom metadata projection raised an untranslated error for credential %s; '
+                'reconciliation is required.',
+                credential_id,
+            )
+
+
+def _metadata_source_reloaded(credential_id, using):
+    """Provide an inert observation point for deterministic concurrency tests."""
+
+
+def lock_custom_metadata_projection(credential_id, using):
+    """Serialize publication and deletion for one credential until commit."""
+    from django.db import connections
+
+    _before_metadata_projection_lock(credential_id, using)
+    with connections[using].cursor() as cursor:
+        lock_name = f'netbox-openbao:custom-metadata:{credential_id}'
+        cursor.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))', (lock_name,))
+
+
+def _before_metadata_projection_lock(credential_id, using):
+    """No-op observation seam used only by deterministic concurrency tests."""
+
+
+def _run_metadata_projection(credential_id, using):
+    """Run the whole callback behind a fixed, secret-safe failure boundary."""
+    try:
+        Context().run(_publish_custom_metadata, credential_id, using)
+    except Exception:
+        logger.error(
+            'Committed OpenBao custom metadata callback failed for credential %s; reconciliation is required.',
+            credential_id,
+        )
+
+
+def defer_custom_metadata(credential_ids, *, using):
+    """Publish final metadata for durable credential identities after commit."""
+    for credential_id in sorted(set(filter(None, credential_ids))):
+        callback = partial(_run_metadata_projection, credential_id, using)
+        transaction.on_commit(callback, using=using)
+
+
 @sensitive_variables()
 def prepare_material(credential_type, payload):
     """
@@ -378,8 +451,6 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
     owner.attempts.append(attempt)
     version = backend.write(credential.path, cleaned, cas=cas)
     attempt.version = version
-    backend.set_metadata(credential.path, build_custom_metadata(credential))
-
     credential.kv_version = version
     credential.last_verified = timezone.now()
     update_fields = ['kv_version', 'last_verified']
@@ -398,6 +469,7 @@ def store_credential(persist, credential_type, payload, *, cas=0, user=None, req
         credential.status = CredentialStatusChoices.STATUS_STAGED
         update_fields.append('status')
     credential.save(update_fields=update_fields)
+    defer_custom_metadata((credential.pk,), using=credential._state.db or 'default')
     audit = log_access(credential, user, action, success=True, request=request)
     attempt.audit_id = getattr(audit, 'pk', None)
     return credential, version
