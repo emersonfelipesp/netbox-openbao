@@ -224,6 +224,11 @@ assignments and public metadata. Credential creation also supports write-only
 `generate_ssh_key` plus `ssh_key_type`; generation must occur inside the
 existing material transaction and the private half must flow directly to
 `store_credential()`.
+The stable `target_type` wire value is the numeric content-type primary key.
+Use a queryset-constrained primary-key serializer field; NetBox 4.6 and 4.7
+`ContentTypeField` accept only `<app_label>.<model>` strings and therefore do
+not implement this public contract. Treat JSON-null `key_type` as omission so
+mode-aware validation can reject or accept it consistently.
 Recheck the live assignment allowlist before mutation, and invoke constrained
 `add_credential` conformance after the complete quick-add graph exists but
 before its transaction commits. Reused credentials must retain their policy.

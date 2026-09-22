@@ -368,12 +368,15 @@ requires `add_credential`, view access to the target and policy, and view
 access to an existing credential when one is reused. Object-permission
 constraints apply. Only Device and VirtualMachine targets are accepted.
 
-The request identifies the target with `target_type` (a content-type ID) and
-`target_id`, then supplies `name`, `username`, `policy`, `create_service`,
-`port`, and an authentication mode:
+The request identifies the target with `target_type` (the numeric content-type
+ID; `<app_label>.<model>` strings are not accepted) and `target_id`, then
+supplies `name`, `username`, `policy`, `create_service`, `port`, and an
+authentication mode. An explicit JSON `null` for `key_type` is normalized as
+omission before mode-aware validation:
 
 - `auth_method=password`: provide the write-only `password`; omit key fields.
-- `auth_method=keypair`, `source=generated`: optionally provide `key_type`.
+- `auth_method=keypair`, `source=generated`: optionally provide `key_type`;
+  omission or `null` selects the configured default.
 - `auth_method=keypair`, `source=provided`: provide write-only `private_key`
   and optional write-only `passphrase`.
 - `auth_method=keypair`, `source=existing`: provide `existing_credential`.

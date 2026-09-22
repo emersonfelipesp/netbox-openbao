@@ -370,6 +370,26 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
         response = self.client.post(self.url, self.payload(), format='json', **self.header)
         self.assertIn(response.status_code, (403, 404))
 
+    def test_target_type_uses_the_documented_numeric_content_type_id(self):
+        self.grant()
+        by_id = self.client.post(self.url, self.payload(), format='json', **self.header)
+        self.assertEqual(by_id.status_code, 201, by_id.content)
+
+        by_label = self.client.post(
+            self.url, self.payload(target_type='dcim.device', name='label-target'),
+            format='json', **self.header,
+        )
+        self.assertEqual(by_label.status_code, 400, by_label.content)
+        self.assertIn('target_type', by_label.data)
+
+        site_type = ContentType.objects.get_for_model(Site)
+        unassignable = self.client.post(
+            self.url, self.payload(target_type=site_type.pk, name='site-target'),
+            format='json', **self.header,
+        )
+        self.assertEqual(unassignable.status_code, 400, unassignable.content)
+        self.assertIn('target_type', unassignable.data)
+
     def test_constrained_add_permission_rolls_back_out_of_scope_quick_add(self):
         self.add_permissions(
             'netbox_openbao.view_credential',
@@ -425,6 +445,18 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
         self.assertEqual(CredentialAssignment.objects.filter(credential=credential).count(), 2)
         self.assertIn('no-store', response['Cache-Control'])
 
+    def test_generated_key_null_key_type_uses_the_configured_default(self):
+        self.grant()
+        response = self.client.post(
+            self.url,
+            self.payload(key_type=None, name='generated-default'),
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.data['key_type'], 'ed25519')
+
     def test_provided_and_existing_key_sources_are_supported(self):
         self.grant()
         from netbox_openbao.secrets.generators import generate_ssh_keypair
@@ -463,6 +495,7 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
             format='json',
             **self.header,
         )
+        self.assertEqual(provided.status_code, 201, provided.content)
         other_policy = CredentialPolicy.objects.create(
             name='Production', slug='production', engine=self.engine, openbao_policy='netbox-production',
         )
@@ -495,6 +528,7 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
             format='json',
             **self.header,
         )
+        self.assertEqual(provided.status_code, 201, provided.content)
         credential = Credential.objects.get(pk=provided.data['credential_id'])
         other_device = Device.objects.create(
             name='unrelated-switch',

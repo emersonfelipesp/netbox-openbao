@@ -566,7 +566,7 @@ class CredentialSerializer(PrimaryModelSerializer):
 class QuickAddSSHRequestSerializer(serializers.Serializer):
     """Write-only request contract for the atomic SSH quick-add service."""
 
-    target_type = ContentTypeField(queryset=assignable_content_types())
+    target_type = serializers.PrimaryKeyRelatedField(queryset=assignable_content_types())
     target_id = serializers.IntegerField(min_value=1)
     name = serializers.CharField(required=False, allow_blank=True, max_length=200)
     username = serializers.CharField(max_length=200)
@@ -580,7 +580,7 @@ class QuickAddSSHRequestSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, required=False, trim_whitespace=False)
     private_key = serializers.CharField(write_only=True, required=False, trim_whitespace=False)
     passphrase = serializers.CharField(write_only=True, required=False, trim_whitespace=False)
-    key_type = serializers.ChoiceField(choices=SSHKeyTypeChoices, required=False)
+    key_type = serializers.ChoiceField(choices=SSHKeyTypeChoices, required=False, allow_null=True)
     existing_credential = serializers.PrimaryKeyRelatedField(
         queryset=Credential.objects.all(), required=False, allow_null=True,
     )
