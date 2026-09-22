@@ -6,15 +6,27 @@ authorization is tested from the outside — through real HTTP with real
 ObjectPermissions — rather than by asserting on internals.
 """
 
+from unittest.mock import patch
+
+from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
+from django.contrib.contenttypes.models import ContentType
 from django.test import override_settings
 from django.urls import reverse
 from users.models import ObjectPermission
 from utilities.testing import APITestCase
 
 from netbox_openbao import backends
+from netbox_openbao.backends.exceptions import OpenBaoMutationUnknown
 from netbox_openbao.backends.openbao import OpenBaoBackend
 from netbox_openbao.choices import CredentialTypeChoices
-from netbox_openbao.models import Credential, CredentialAccessLog, CredentialPolicy, SecretEngine
+from netbox_openbao.config import clear_config
+from netbox_openbao.models import (
+    Credential,
+    CredentialAccessLog,
+    CredentialAssignment,
+    CredentialPolicy,
+    SecretEngine,
+)
 from netbox_openbao.services import write_material
 
 from .base import MaterialTransactionTestMixin
@@ -244,6 +256,342 @@ class CredentialWriteTest(OpenBaoAPITestCase):
             **self.header,
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_create_can_generate_an_ssh_key_without_returning_private_material(self):
+        self.add_permissions('netbox_openbao.add_credential', 'netbox_openbao.view_credential')
+        response = self.client.post(
+            reverse('plugins-api:netbox_openbao-api:credential-list'),
+            {
+                'name': 'generated-key',
+                'credential_type': CredentialTypeChoices.TYPE_SSH_KEYPAIR,
+                'policy': self.policy.pk,
+                'username': 'admin',
+                'generate_ssh_key': True,
+                'ssh_key_type': 'ed25519',
+            },
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertNotIn('generate_ssh_key', response.data)
+        self.assertNotIn('ssh_key_type', response.data)
+        self.assertNotIn('secret_data', response.data)
+        self.assertNotIn(b'PRIVATE KEY', response.content)
+        created = Credential.objects.get(name='generated-key')
+        self.assertTrue(created.public_key.startswith('ssh-ed25519 '))
+        self.assertIn('PRIVATE KEY', FakeBackend.store[created.path][0]['private_key'])
+
+    def test_generation_rejects_supplied_material_before_writing(self):
+        self.add_permissions('netbox_openbao.add_credential', 'netbox_openbao.view_credential')
+        writes_before = dict(FakeBackend.store)
+        response = self.client.post(
+            reverse('plugins-api:netbox_openbao-api:credential-list'),
+            {
+                'name': 'ambiguous-key',
+                'credential_type': CredentialTypeChoices.TYPE_SSH_KEYPAIR,
+                'policy': self.policy.pk,
+                'generate_ssh_key': True,
+                'secret_data': {'private_key': 'must-not-be-reflected'},
+            },
+            format='json',
+            **self.header,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn(b'must-not-be-reflected', response.content)
+        self.assertEqual(FakeBackend.store, writes_before)
+
+    def test_bulk_create_can_generate_ssh_keys_without_returning_private_material(self):
+        self.add_permissions('netbox_openbao.add_credential', 'netbox_openbao.view_credential')
+        response = self.client.post(
+            reverse('plugins-api:netbox_openbao-api:credential-list'),
+            [
+                {
+                    'name': f'generated-key-{index}',
+                    'credential_type': CredentialTypeChoices.TYPE_SSH_KEYPAIR,
+                    'policy': self.policy.pk,
+                    'username': 'admin',
+                    'generate_ssh_key': True,
+                    'ssh_key_type': 'ed25519',
+                }
+                for index in range(2)
+            ],
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(len(response.data), 2)
+        self.assertNotIn(b'PRIVATE KEY', response.content)
+        for credential in Credential.objects.filter(name__startswith='generated-key-'):
+            self.assertTrue(credential.public_key.startswith('ssh-ed25519 '))
+            self.assertIn('PRIVATE KEY', FakeBackend.store[credential.path][0]['private_key'])
+
+
+class QuickAddSSHAPITest(OpenBaoAPITestCase):
+
+    def setUp(self):
+        super().setUp()
+        site = Site.objects.create(name='API Site', slug='api-site')
+        manufacturer = Manufacturer.objects.create(name='API Manufacturer', slug='api-manufacturer')
+        device_type = DeviceType.objects.create(
+            manufacturer=manufacturer, model='API Device', slug='api-device',
+        )
+        role = DeviceRole.objects.create(name='API Role', slug='api-role')
+        self.device = Device.objects.create(
+            name='api-switch', site=site, device_type=device_type, role=role,
+        )
+        self.device_type = ContentType.objects.get_for_model(Device)
+        self.url = reverse('plugins-api:netbox_openbao-api:credential-quick-add-ssh')
+
+    def grant(self):
+        self.add_permissions(
+            'netbox_openbao.add_credential',
+            'netbox_openbao.view_credential',
+            'netbox_openbao.view_credentialpolicy',
+            'dcim.view_device',
+        )
+
+    def payload(self, **overrides):
+        data = {
+            'target_type': self.device_type.pk,
+            'target_id': self.device.pk,
+            'username': 'admin',
+            'policy': self.policy.pk,
+            'auth_method': 'keypair',
+            'source': 'generated',
+            'key_type': 'ed25519',
+        }
+        data.update(overrides)
+        return data
+
+    def test_requires_add_credential_permission(self):
+        self.add_permissions('dcim.view_device', 'netbox_openbao.view_credentialpolicy')
+        response = self.client.post(self.url, self.payload(), format='json', **self.header)
+        self.assertIn(response.status_code, (403, 404))
+
+    def test_constrained_add_permission_rolls_back_out_of_scope_quick_add(self):
+        self.add_permissions(
+            'netbox_openbao.view_credential',
+            'netbox_openbao.view_credentialpolicy',
+            'dcim.view_device',
+        )
+        permission = ObjectPermission(
+            name='production-only-credential-add',
+            actions=['add'],
+            constraints={'policy__slug': 'production'},
+        )
+        permission.save()
+        permission.users.add(self.user)
+        permission.object_types.add(*_credential_object_types())
+        credentials_before = Credential.objects.count()
+        assignments_before = CredentialAssignment.objects.count()
+        writes_before = dict(FakeBackend.store)
+
+        response = self.client.post(self.url, self.payload(), format='json', **self.header)
+
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertEqual(Credential.objects.count(), credentials_before)
+        self.assertEqual(CredentialAssignment.objects.count(), assignments_before)
+        self.assertEqual(FakeBackend.store, writes_before)
+
+    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'assignable_models_deny': ['dcim.device']}})
+    def test_live_assignable_model_deny_rejects_target_before_mutation(self):
+        self.grant()
+        clear_config()
+        self.addCleanup(clear_config)
+        credentials_before = Credential.objects.count()
+        writes_before = dict(FakeBackend.store)
+
+        response = self.client.post(self.url, self.payload(), format='json', **self.header)
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(Credential.objects.count(), credentials_before)
+        self.assertEqual(FakeBackend.store, writes_before)
+
+    def test_generated_key_response_is_bounded_and_private_key_stays_in_openbao(self):
+        self.grant()
+        response = self.client.post(self.url, self.payload(), format='json', **self.header)
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(set(response.data), {
+            'credential_id', 'credential_uuid', 'credential_type', 'public_key', 'fingerprint',
+            'key_type', 'service_id', 'assignment_ids', 'target_type', 'target_id',
+        })
+        self.assertTrue(response.data['public_key'].startswith('ssh-ed25519 '))
+        self.assertNotIn(b'PRIVATE KEY', response.content)
+        credential = Credential.objects.get(pk=response.data['credential_id'])
+        self.assertIn('PRIVATE KEY', FakeBackend.store[credential.path][0]['private_key'])
+        self.assertEqual(CredentialAssignment.objects.filter(credential=credential).count(), 2)
+        self.assertIn('no-store', response['Cache-Control'])
+
+    def test_provided_and_existing_key_sources_are_supported(self):
+        self.grant()
+        from netbox_openbao.secrets.generators import generate_ssh_keypair
+
+        private_key = generate_ssh_keypair('ed25519')['private_key']
+        provided = self.client.post(
+            self.url,
+            self.payload(source='provided', key_type=None, private_key=private_key, name='provided'),
+            format='json',
+            **self.header,
+        )
+        self.assertEqual(provided.status_code, 201, provided.content)
+        self.assertTrue(provided.data['public_key'].startswith('ssh-ed25519 '))
+        existing_id = provided.data['credential_id']
+
+        reused = self.client.post(
+            self.url,
+            self.payload(
+                source='existing', key_type=None, existing_credential=existing_id, name='ignored',
+            ),
+            format='json',
+            **self.header,
+        )
+        self.assertEqual(reused.status_code, 201, reused.content)
+        self.assertEqual(reused.data['credential_id'], existing_id)
+        self.assertEqual(reused.data['public_key'], provided.data['public_key'])
+
+    def test_reused_credential_requires_its_own_policy(self):
+        self.grant()
+        from netbox_openbao.secrets.generators import generate_ssh_keypair
+
+        private_key = generate_ssh_keypair('ed25519')['private_key']
+        provided = self.client.post(
+            self.url,
+            self.payload(source='provided', key_type=None, private_key=private_key, name='shared-policy'),
+            format='json',
+            **self.header,
+        )
+        other_policy = CredentialPolicy.objects.create(
+            name='Production', slug='production', engine=self.engine, openbao_policy='netbox-production',
+        )
+        assignments_before = CredentialAssignment.objects.count()
+
+        response = self.client.post(
+            self.url,
+            self.payload(
+                policy=other_policy.pk,
+                source='existing',
+                key_type=None,
+                existing_credential=provided.data['credential_id'],
+            ),
+            format='json',
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('policy', response.data)
+        self.assertEqual(CredentialAssignment.objects.count(), assignments_before)
+
+    def test_reused_credential_response_excludes_unrelated_assignments(self):
+        self.grant()
+        from netbox_openbao.secrets.generators import generate_ssh_keypair
+
+        private_key = generate_ssh_keypair('ed25519')['private_key']
+        provided = self.client.post(
+            self.url,
+            self.payload(source='provided', key_type=None, private_key=private_key, name='shared'),
+            format='json',
+            **self.header,
+        )
+        credential = Credential.objects.get(pk=provided.data['credential_id'])
+        other_device = Device.objects.create(
+            name='unrelated-switch',
+            site=self.device.site,
+            device_type=self.device.device_type,
+            role=self.device.role,
+        )
+        unrelated = CredentialAssignment.objects.create(
+            credential=credential,
+            assigned_object_type=ContentType.objects.get_for_model(other_device),
+            assigned_object_id=other_device.pk,
+        )
+
+        reused = self.client.post(
+            self.url,
+            self.payload(source='existing', key_type=None, existing_credential=credential.pk),
+            format='json',
+            **self.header,
+        )
+        self.assertEqual(reused.status_code, 201, reused.content)
+        self.assertNotIn(unrelated.pk, reused.data['assignment_ids'])
+
+    @patch('netbox_openbao.quickadd.sync_ssh_password_to_nms')
+    def test_password_auth_syncs_without_reflecting_the_password(self, sync_password):
+        self.grant()
+        response = self.client.post(
+            self.url,
+            self.payload(
+                auth_method='password', source=None, key_type=None, password='api-login-canary',
+            ),
+            format='json',
+            **self.header,
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertNotIn(b'api-login-canary', response.content)
+        sync_password.assert_called_once()
+        credential = Credential.objects.get(pk=response.data['credential_id'])
+        self.assertEqual(FakeBackend.store[credential.path][0], {'password': 'api-login-canary'})
+
+    def test_incompatible_inputs_are_rejected_before_mutation(self):
+        self.grant()
+        credential_count = Credential.objects.count()
+        response = self.client.post(
+            self.url,
+            self.payload(password='must-not-be-reflected'),
+            format='json',
+            **self.header,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn(b'must-not-be-reflected', response.content)
+        self.assertEqual(Credential.objects.count(), credential_count)
+
+    def test_non_device_or_vm_target_is_rejected(self):
+        self.grant()
+        site_type = ContentType.objects.get_for_model(Site)
+        response = self.client.post(
+            self.url,
+            self.payload(target_type=site_type.pk, target_id=self.device.site_id),
+            format='json',
+            **self.header,
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_backend_failure_compensates_metadata_and_returns_sanitized_error(self):
+        self.grant()
+        FakeBackend.fail_on_write = True
+        credential_count = Credential.objects.count()
+        response = self.client.post(
+            self.url,
+            self.payload(name='backend-error-canary'),
+            format='json',
+            **self.header,
+        )
+        self.assertEqual(response.status_code, 502, response.content)
+        self.assertEqual(response.data, {'detail': 'SSH access could not be added.'})
+        self.assertIn('no-store', response['Cache-Control'])
+        self.assertEqual(Credential.objects.count(), credential_count)
+        self.assertFalse(CredentialAssignment.objects.filter(credential__name='backend-error-canary').exists())
+
+    def test_unknown_backend_outcome_is_explicit_and_not_retry_safe(self):
+        self.grant()
+        credential_count = Credential.objects.count()
+        with patch.object(FakeBackend, 'write', side_effect=OpenBaoMutationUnknown()):
+            response = self.client.post(
+                self.url,
+                self.payload(name='unknown-outcome-canary'),
+                format='json',
+                **self.header,
+            )
+
+        self.assertEqual(response.status_code, 503, response.content)
+        self.assertEqual(response.data['outcome'], 'unknown')
+        self.assertIn('Do not retry', response.data['message'])
+        self.assertEqual(response['X-OpenBao-Operation-Outcome'], 'unknown')
+        self.assertIn('no-store', response['Cache-Control'])
+        self.assertEqual(Credential.objects.count(), credential_count)
+        self.assertFalse(CredentialAssignment.objects.filter(credential__name='unknown-outcome-canary').exists())
 
 
 class RevealThrottleTest(OpenBaoAPITestCase):

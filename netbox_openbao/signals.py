@@ -5,13 +5,21 @@ Signal handlers keeping NetBox and OpenBao from drifting apart.
 import logging
 
 from django.db import transaction
-from django.db.models.signals import post_delete, post_save, pre_delete
+from django.db.models.signals import post_delete, post_save, pre_delete, pre_save
 from django.dispatch import receiver
 
 from .backends.exceptions import OpenBaoError
 from .models import Credential, CredentialAssignment, OpenBaoSettings
 
 logger = logging.getLogger('netbox.plugins.netbox_openbao')
+
+
+@receiver(pre_delete, sender=Credential)
+def serialize_material_delete(instance, using, **kwargs):
+    """Order credential deletion against any in-flight metadata publisher."""
+    from .services import lock_custom_metadata_projection
+
+    lock_custom_metadata_projection(instance.pk, using)
 
 
 @receiver(pre_delete, sender=OpenBaoSettings)
@@ -165,8 +173,23 @@ def destroy_material_on_delete(instance, **kwargs):
     transaction.on_commit(destroy)
 
 
+@receiver(pre_save, sender=CredentialAssignment)
+def capture_previous_credential(instance, using, **kwargs):
+    """Capture the durable previous owner before Django mutates the instance."""
+    if instance.pk is None:
+        instance._openbao_previous_credential_id = None
+        return
+    previous = (
+        CredentialAssignment.objects.using(using)
+        .filter(pk=instance.pk)
+        .values_list('credential_id', flat=True)
+        .first()
+    )
+    instance._openbao_previous_credential_id = previous
+
+
 @receiver([post_save, post_delete], sender=CredentialAssignment)
-def refresh_custom_metadata(instance, **kwargs):
+def refresh_custom_metadata(instance, using, **kwargs):
     """
     Keep the KV `custom_metadata` assignment list current.
 
@@ -174,19 +197,11 @@ def refresh_custom_metadata(instance, **kwargs):
     secret belongs to; if it went stale on every reassignment it would be worse
     than absent, because it would be confidently wrong.
 
-    Best-effort: a metadata refresh must never fail an assignment change.
+    Publishing is deferred until commit, reloads the final database state, and
+    uses durable IDs only. A rollback therefore publishes nothing; a
+    reassignment refreshes both the old and new owners.
     """
-    from .backends import get_backend
-    from .services import build_custom_metadata
+    from .services import defer_custom_metadata
 
-    credential = instance.credential
-    try:
-        backend = get_backend(credential.engine, credential.policy)
-        backend.set_metadata(credential.path, build_custom_metadata(credential))
-    except OpenBaoError:
-        logger.warning(
-            'Could not refresh OpenBao custom metadata for credential %s; it is now stale.',
-            credential.pk,
-        )
-    except Exception:
-        logger.exception('Unexpected error refreshing OpenBao custom metadata for credential %s', credential.pk)
+    previous_id = getattr(instance, '_openbao_previous_credential_id', None)
+    defer_custom_metadata((previous_id, instance.credential_id), using=using)

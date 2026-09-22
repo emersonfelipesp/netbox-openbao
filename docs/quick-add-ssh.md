@@ -5,6 +5,9 @@ create a `Credential`, create a `CredentialAssignment`. It is also the single
 most common thing anyone does with this plugin.
 
 **Add SSH access** on any Device or VM page does all three in one transaction.
+The same workflow is available to authenticated automation at
+`POST /api/plugins/openbao/credentials/quick-add-ssh/`; see the REST API guide
+for its write-only request fields and bounded response.
 
 ## What it creates
 
@@ -69,3 +72,15 @@ The button appears for users with `netbox_openbao.add_credential`, which is what
 the action needs — the service and the assignment are consequences of creating
 the credential. The target must also be a type listed in `assignable_models`;
 anything else is a 404 rather than a silently ignored request.
+
+The REST action applies the same `add_credential` gate, resolves the Device or
+VirtualMachine through the caller's constrained `view` permission, and also
+requires constrained view access to the selected policy and any reused
+credential. Its response includes only assignments for the requested target
+and SSH service; reusing a credential never exposes its unrelated bindings.
+The selected policy must match a reused credential's policy. The action checks
+the current assignment allowlist and the created credential against constrained
+`add_credential` permissions through a late conformance callback after all
+assignments and synchronization have run but before the service's database and
+material transactions commit. Refusal therefore leaves no service, credential,
+assignment, or owned OpenBao version.

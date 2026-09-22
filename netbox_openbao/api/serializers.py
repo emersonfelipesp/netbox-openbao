@@ -32,9 +32,12 @@ from netbox_openbao.choices import (
     AuthMethodChoices,
     BackendChoices,
     CredentialStatusChoices,
+    CredentialTypeChoices,
     EngineStatusChoices,
     PurposeChoices,
+    SSHKeyTypeChoices,
 )
+from netbox_openbao.config import get_config
 from netbox_openbao.models import (
     Credential,
     CredentialAccessLog,
@@ -57,6 +60,8 @@ __all__ = (
     'CredentialAssignmentSerializer',
     'CredentialPolicySerializer',
     'CredentialSerializer',
+    'QuickAddSSHRequestSerializer',
+    'QuickAddSSHResponseSerializer',
     'CredentialTypeSchemaSerializer',
     'RevealResponseSerializer',
     'RevealRequestSerializer',
@@ -462,6 +467,18 @@ class CredentialSerializer(PrimaryModelSerializer):
         required=False,
         help_text='Secret payload written to OpenBao. Never returned by any endpoint.',
     )
+    generate_ssh_key = serializers.BooleanField(
+        write_only=True,
+        required=False,
+        default=False,
+        help_text='Generate SSH key material server-side and write the private key directly to OpenBao.',
+    )
+    ssh_key_type = serializers.ChoiceField(
+        choices=SSHKeyTypeChoices,
+        write_only=True,
+        required=False,
+        help_text='Key algorithm used only when generate_ssh_key is enabled.',
+    )
 
     class Meta:
         model = Credential
@@ -472,14 +489,41 @@ class CredentialSerializer(PrimaryModelSerializer):
             'import_source', 'kv_version', 'live_kv_version', 'staged_kv_version', 'has_staged_version',
             'last_verified',
             'assignment_count',
-            'secret_data', 'description', 'owner', 'comments', 'tags', 'custom_fields', 'created',
+            'secret_data', 'generate_ssh_key', 'ssh_key_type', 'description', 'owner', 'comments', 'tags',
+            'custom_fields', 'created',
             'last_updated',
         )
         brief_fields = ('id', 'url', 'display', 'name', 'credential_type', 'status', 'description')
         read_only_fields = (
             'uuid', 'path', 'import_source', 'kv_version', 'live_kv_version', 'staged_kv_version',
-            'last_verified',
+            'last_verified', 'key_type',
         )
+
+    def _validate_generation(self, data, secret_data, generate_ssh_key, ssh_key_type):
+        if not generate_ssh_key:
+            if ssh_key_type is not None:
+                raise serializers.ValidationError({
+                    'ssh_key_type': 'ssh_key_type is valid only when generate_ssh_key is enabled.',
+                })
+            return
+
+        credential_type = data.get('credential_type') or getattr(self.instance, 'credential_type', None)
+        if self.instance is not None:
+            raise serializers.ValidationError({
+                'generate_ssh_key': 'Server-side SSH key generation is supported only during creation.',
+            })
+        if credential_type != CredentialTypeChoices.TYPE_SSH_KEYPAIR:
+            raise serializers.ValidationError({
+                'generate_ssh_key': 'Server-side generation requires the ssh-keypair credential type.',
+            })
+        if secret_data is not None:
+            raise serializers.ValidationError({
+                'secret_data': 'Do not supply secret_data when generate_ssh_key is enabled.',
+            })
+        if not get_config('allow_generation', True):
+            raise serializers.ValidationError({
+                'generate_ssh_key': 'Server-side SSH key generation is disabled.',
+            })
 
     def validate(self, data):
         # NetBox's ValidatedModelSerializer builds `Model(**attrs)` to run
@@ -487,10 +531,14 @@ class CredentialSerializer(PrimaryModelSerializer):
         # — Credential has no such field, by design. Pop it, validate it on its
         # own terms, and restore it for the viewset.
         secret_data = data.pop('secret_data', None)
+        generate_ssh_key = data.pop('generate_ssh_key', False)
+        ssh_key_type = data.pop('ssh_key_type', None)
+
+        self._validate_generation(data, secret_data, generate_ssh_key, ssh_key_type)
 
         # Creating a credential without material would leave a row pointing at
         # an empty path, which every consumer would then fail to resolve.
-        if self.instance is None and not secret_data:
+        if self.instance is None and not secret_data and not generate_ssh_key:
             raise serializers.ValidationError({
                 'secret_data': 'Secret data is required when creating a credential.',
             })
@@ -508,7 +556,117 @@ class CredentialSerializer(PrimaryModelSerializer):
 
         if secret_data is not None:
             data['secret_data'] = secret_data
+        if generate_ssh_key:
+            data['generate_ssh_key'] = True
+            if ssh_key_type is not None:
+                data['ssh_key_type'] = ssh_key_type
         return data
+
+
+class QuickAddSSHRequestSerializer(serializers.Serializer):
+    """Write-only request contract for the atomic SSH quick-add service."""
+
+    target_type = ContentTypeField(queryset=assignable_content_types())
+    target_id = serializers.IntegerField(min_value=1)
+    name = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    username = serializers.CharField(max_length=200)
+    policy = serializers.PrimaryKeyRelatedField(queryset=CredentialPolicy.objects.all())
+    create_service = serializers.BooleanField(required=False, default=True)
+    port = serializers.IntegerField(required=False, default=22, min_value=1, max_value=65535)
+    auth_method = serializers.ChoiceField(choices=('password', 'keypair'))
+    source = serializers.ChoiceField(
+        choices=('existing', 'generated', 'provided'), required=False, allow_null=True,
+    )
+    password = serializers.CharField(write_only=True, required=False, trim_whitespace=False)
+    private_key = serializers.CharField(write_only=True, required=False, trim_whitespace=False)
+    passphrase = serializers.CharField(write_only=True, required=False, trim_whitespace=False)
+    key_type = serializers.ChoiceField(choices=SSHKeyTypeChoices, required=False)
+    existing_credential = serializers.PrimaryKeyRelatedField(
+        queryset=Credential.objects.all(), required=False, allow_null=True,
+    )
+
+    @staticmethod
+    def _validate_password(data):
+        source = data.get('source')
+        password = data.get('password')
+        private_key = data.get('private_key')
+        passphrase = data.get('passphrase')
+        key_type = data.get('key_type')
+        existing = data.get('existing_credential')
+
+        if not password:
+            raise serializers.ValidationError({'password': 'An SSH login password is required.'})
+        if any((source, private_key, passphrase, key_type, existing)):
+            raise serializers.ValidationError({
+                'auth_method': 'Password authentication cannot include keypair source fields.',
+            })
+
+    @staticmethod
+    def _validate_existing(data):
+        existing = data.get('existing_credential')
+        if existing is None:
+            raise serializers.ValidationError({'existing_credential': 'An existing credential is required.'})
+        if existing.credential_type != CredentialTypeChoices.TYPE_SSH_KEYPAIR:
+            raise serializers.ValidationError({
+                'existing_credential': 'The existing credential must be an SSH keypair.',
+            })
+        if existing.policy_id != data['policy'].pk:
+            raise serializers.ValidationError({
+                'policy': 'The selected policy must match the existing credential policy.',
+            })
+        if any((data.get('private_key'), data.get('passphrase'), data.get('key_type'))):
+            raise serializers.ValidationError({'source': 'Existing keypairs cannot include new key material.'})
+
+    @staticmethod
+    def _validate_generated(data):
+        if any((data.get('existing_credential'), data.get('private_key'), data.get('passphrase'))):
+            raise serializers.ValidationError({'source': 'Generated keypairs cannot include supplied material.'})
+        if not get_config('allow_generation', True):
+            raise serializers.ValidationError({'source': 'Server-side SSH key generation is disabled.'})
+
+    @staticmethod
+    def _validate_provided(data):
+        if not data.get('private_key'):
+            raise serializers.ValidationError({'private_key': 'A private key is required.'})
+        if data.get('existing_credential') is not None or data.get('key_type'):
+            raise serializers.ValidationError({'source': 'Provided keypairs cannot select another key source.'})
+
+    def _validate_keypair(self, data):
+        source = data.get('source')
+
+        if source is None:
+            raise serializers.ValidationError({'source': 'A keypair source is required.'})
+        if data.get('password'):
+            raise serializers.ValidationError({'password': 'Password is incompatible with keypair authentication.'})
+
+        if source == 'existing':
+            self._validate_existing(data)
+        elif source == 'generated':
+            self._validate_generated(data)
+        elif source == 'provided':
+            self._validate_provided(data)
+
+    def validate(self, data):
+        if data['auth_method'] == 'password':
+            self._validate_password(data)
+        else:
+            self._validate_keypair(data)
+        return data
+
+
+class QuickAddSSHResponseSerializer(serializers.Serializer):
+    """Bounded response containing identifiers and public metadata only."""
+
+    credential_id = serializers.IntegerField()
+    credential_uuid = serializers.UUIDField()
+    credential_type = serializers.CharField()
+    public_key = serializers.CharField(allow_blank=True)
+    fingerprint = serializers.CharField(allow_blank=True)
+    key_type = serializers.CharField(allow_blank=True)
+    service_id = serializers.IntegerField(allow_null=True)
+    assignment_ids = serializers.ListField(child=serializers.IntegerField())
+    target_type = serializers.CharField()
+    target_id = serializers.IntegerField()
 
 
 class CredentialTypeSchemaSerializer(NetBoxModelSerializer):

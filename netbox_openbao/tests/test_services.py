@@ -95,23 +95,23 @@ class WritePathTest(OpenBaoTestCase):
 
         self.assertEqual(Credential.objects.count(), 0)
 
-    def test_metadata_failure_compensates_the_orphaned_write(self):
+    def test_metadata_failure_after_commit_is_logged_for_reconciliation(self):
         """
-        The material landed but the transaction then failed. Django has no
-        rollback hook, so the compensator must delete the orphaned path
-        explicitly.
+        Metadata is a post-commit projection. Its failure cannot roll back a
+        committed credential and must produce only a fixed, secret-safe log.
         """
         FakeBackend.fail_on_metadata = True
         credential = self.make_credential()
 
-        with self.assertRaises(OpenBaoConflict):
+        with self.assertLogs('netbox.plugins.netbox_openbao', level='WARNING') as captured:
             write_material(credential, {'password': 'hunter2'}, user=self.user)
 
-        self.assertEqual(Credential.objects.count(), 0)
-        self.assertNotIn(credential.path, FakeBackend.store)
-        # Even a new path can gain a concurrent version after rollback.
-        # Compensation therefore removes only this operation's exact version.
-        self.assertEqual(FakeBackend.delete_calls, [(credential.path, (1,))])
+        self.assertEqual(Credential.objects.count(), 1)
+        self.assertIn(credential.path, FakeBackend.store)
+        self.assertNotIn(credential.path, FakeBackend.metadata)
+        self.assertEqual(FakeBackend.delete_calls, [])
+        self.assertIn('reconciliation is required', captured.output[0])
+        self.assertNotIn('hunter2', captured.output[0])
 
     def test_duplicate_path_is_refused_by_the_database(self):
         """
@@ -161,45 +161,38 @@ class WritePathTest(OpenBaoTestCase):
         self.assertIsNotNone(credential.last_rotated)
         self.assertEqual(len(FakeBackend.store[credential.path]), 2)
 
-    def test_failed_rotation_must_not_destroy_the_existing_secret(self):
+    def test_metadata_failure_does_not_undo_a_committed_rotation(self):
         """
-        Compensation after a failed *rotation* must remove only the version it
-        just wrote. Destroying the whole path would take the working secret
-        with it — turning a recoverable failure into data loss, which is far
-        worse than the orphan the compensator exists to prevent.
+        A metadata projection failure happens after the material and inventory
+        commit, so both versions remain and reconciliation can retry safely.
         """
         credential = self.make_credential()
         write_material(credential, {'password': 'good-v1'}, user=self.user)
         credential.refresh_from_db()
 
-        # The rotation's material lands, then the metadata update fails.
         FakeBackend.fail_on_metadata = True
-        with self.assertRaises(OpenBaoConflict):
-            rotate_material(credential, {'password': 'bad-v2'}, user=self.user)
+        rotate_material(credential, {'password': 'good-v2'}, user=self.user)
 
         self.assertIn(
             credential.path, FakeBackend.store,
-            'The credential path was destroyed by a failed rotation.',
+            'The credential path was destroyed by a metadata projection failure.',
         )
         self.assertEqual(
             FakeBackend.store[credential.path][0], {'password': 'good-v1'},
-            'The previously-good version did not survive a failed rotation.',
+            'The previously-good version did not survive a committed rotation.',
         )
-        # ...and the still-readable current value is that good version.
         backend = FakeBackend(self.engine)
-        self.assertEqual(backend.read(credential.path), {'password': 'good-v1'})
-        # Only the failed version was removed, not the whole path.
-        self.assertEqual(FakeBackend.delete_calls, [(credential.path, (2,))])
+        self.assertEqual(backend.read(credential.path), {'password': 'good-v2'})
+        self.assertEqual(FakeBackend.delete_calls, [])
 
-    def test_failed_create_removes_its_only_material_version(self):
-        """A new path with no concurrent writer has no remaining material."""
+    def test_metadata_failure_does_not_remove_a_committed_create(self):
+        """Post-commit projection failure retains the committed material."""
         FakeBackend.fail_on_metadata = True
         credential = self.make_credential()
 
-        with self.assertRaises(OpenBaoConflict):
-            write_material(credential, {'password': 'never-committed'}, user=self.user)
+        write_material(credential, {'password': 'committed'}, user=self.user)
 
-        self.assertNotIn(credential.path, FakeBackend.store)
+        self.assertEqual(FakeBackend(self.engine).read(credential.path), {'password': 'committed'})
 
     def test_invalid_payload_is_rejected_before_any_write(self):
         credential = self.make_credential(credential_type=CredentialTypeChoices.TYPE_SSH_KEYPAIR)

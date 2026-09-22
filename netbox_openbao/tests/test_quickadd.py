@@ -245,6 +245,36 @@ class QuickAddRollbackTest(_QuickAddBase):
         self.assertEqual(CredentialAssignment.objects.count(), 0)
         self.assertEqual(Service.objects.count(), 0)
 
+    def test_late_conformance_failure_compensates_the_complete_graph(self):
+        observed = {}
+
+        def refuse_after_graph_exists(credential):
+            observed['credential'] = Credential.objects.filter(pk=credential.pk).exists()
+            observed['assignments'] = CredentialAssignment.objects.filter(credential=credential).count()
+            observed['services'] = Service.objects.count()
+            observed['material'] = credential.path in FakeBackend.store
+            raise ValidationError('The completed graph is outside the permitted scope.')
+
+        with self.assertRaises(ValidationError):
+            quick_add_ssh(
+                self.device,
+                self.policy,
+                username='admin',
+                generate=True,
+                conform=refuse_after_graph_exists,
+            )
+
+        self.assertEqual(observed, {
+            'credential': True,
+            'assignments': 2,
+            'services': 1,
+            'material': True,
+        })
+        self.assertEqual(Credential.objects.count(), 0)
+        self.assertEqual(CredentialAssignment.objects.count(), 0)
+        self.assertEqual(Service.objects.count(), 0)
+        self.assertEqual(FakeBackend.store, {})
+
 
 class QuickAddViewTest(_QuickAddBase):
 

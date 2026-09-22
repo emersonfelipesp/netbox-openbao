@@ -82,13 +82,26 @@ rather than merely unlikely:
 The test walks `Credential._meta.get_fields()` and fails on any name containing
 `password`, `private`, `secret`, `passphrase`, or `token`.
 
-## 2. `secret_data` is write-only
+## 2. Material-bearing API inputs are write-only
 
 The API accepts material through a `write_only` serializer field. DRF itself
 refuses to serialize it, so it cannot appear in a `GET`, a `brief=true`
 response, the browsable API, an export, or an OpenAPI example — regardless of
 what any view does. It is consumed by the viewset, handed to the backend, and
 dropped.
+
+The server-side creation controls `generate_ssh_key` and `ssh_key_type`, plus
+the atomic SSH quick-add inputs `password`, `private_key`, and `passphrase`,
+are write-only too. Generation happens inside the material transaction and
+passes the private half directly to `store_credential()`. Quick-add returns a
+fixed response containing identifiers and public key metadata only, marks it
+`no-store`, and filters assignment IDs to the requested target and service so
+a reused credential cannot disclose unrelated bindings. Backend failures use
+a fixed error message rather than relaying backend text or request material.
+An uncertain OpenBao mutation returns a no-store `503` with
+`outcome=unknown` and a do-not-retry instruction; it is never collapsed into a
+definite failure. Quick-add also performs its constrained `add_credential`
+conformance check before the compensated material transaction commits.
 
 ## 3. `reveal` is a permission in its own right
 

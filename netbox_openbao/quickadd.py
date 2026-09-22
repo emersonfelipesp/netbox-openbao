@@ -33,6 +33,10 @@ SSH_SERVICE_NAME = 'ssh'
 DEFAULT_SSH_PORT = 22
 
 
+def _accept_credential(_credential):
+    """Default late-conformance callback for non-HTTP callers."""
+
+
 def _service_model():
     from ipam.models import Service
 
@@ -158,6 +162,7 @@ def quick_add_ssh(
     user=None,
     request=None,
     sync_nms=True,
+    conform=_accept_credential,
 ):
     """
     Give `target` SSH access, in one transaction.
@@ -281,6 +286,13 @@ def quick_add_ssh(
                 user=user,
                 request=request,
             )
+
+        # Authorization constraints on a newly created credential can only be
+        # evaluated after its final metadata and assignments exist. Invoke the
+        # caller's check here, after every mutation but before the database
+        # transaction and material owner can commit, so refusal compensates the
+        # owned backend version and rolls back the entire graph.
+        conform(credential)
 
     return credential, service, generated_public_key
 

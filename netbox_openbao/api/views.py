@@ -25,7 +25,7 @@ API's response shape is harder to audit than a single named REST action.
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, IntegrityError, router, transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -53,7 +53,8 @@ from netbox_openbao.administration.audit import AdministrationAuditError, log_ad
 from netbox_openbao.api.transactions import material_api_operation
 from netbox_openbao.backends import get_backend
 from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoError, OpenBaoMutationUnknown
-from netbox_openbao.choices import AccessActionChoices
+from netbox_openbao.choices import AccessActionChoices, SSHKeyTypeChoices
+from netbox_openbao.config import assignable_model_labels, get_config
 from netbox_openbao.material_transactions import material_operation
 from netbox_openbao.models import (
     Credential,
@@ -67,7 +68,9 @@ from netbox_openbao.models import (
     OpenBaoSettings,
     SecretEngine,
 )
+from netbox_openbao.quickadd import quick_add_ssh
 from netbox_openbao.rpc import dispatch_openbao_procedure
+from netbox_openbao.secrets.generators import generate_ssh_keypair
 from netbox_openbao.services import (
     discard_staged,
     enforce_policy_access,
@@ -100,6 +103,8 @@ from .serializers import (
     OpenBaoProcedureRunSerializer,
     OpenBaoSettingsSerializer,
     PromoteRequestSerializer,
+    QuickAddSSHRequestSerializer,
+    QuickAddSSHResponseSerializer,
     RemoveRaftPeerSerializer,
     RestoreRaftSnapshotSerializer,
     RevealRequestSerializer,
@@ -1049,6 +1054,99 @@ class CredentialViewSet(NetBoxModelViewSet):
                 policy_ids.add(policy.pk)
         lock_material_subjects(list(subjects), additional_policy_ids=policy_ids)
 
+    @staticmethod
+    def _quick_add_target(request, content_type, object_id):
+        model = content_type.model_class()
+        label = f'{content_type.app_label}.{content_type.model}'
+        if label not in assignable_model_labels() or model is None or content_type.app_label not in (
+            'dcim', 'virtualization',
+        ) or content_type.model not in (
+            'device', 'virtualmachine',
+        ):
+            raise DRFValidationError({'target_type': 'Only Device and VirtualMachine targets are supported.'})
+        return get_object_or_404(model.objects.restrict(request.user, 'view'), pk=object_id)
+
+    def _constrain_quick_add(self, request, policy, existing_credential=None):
+        if not CredentialPolicy.objects.restrict(request.user, 'view').filter(pk=policy.pk).exists():
+            raise PermissionDenied('The selected credential policy is not permitted.')
+        if existing_credential is not None and not Credential.objects.restrict(
+            request.user, 'view'
+        ).filter(pk=existing_credential.pk).exists():
+            raise PermissionDenied('The selected credential is not permitted.')
+
+    @extend_schema(request=QuickAddSSHRequestSerializer, responses={201: QuickAddSSHResponseSerializer})
+    @action(detail=False, methods=['post'], url_path='quick-add-ssh', renderer_classes=[JSONRenderer])
+    @material_api_operation
+    @sensitive_variables()
+    def quick_add_ssh(self, request):
+        """Atomically create or reuse SSH access for a permitted device or VM."""
+        serializer = QuickAddSSHRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        target = self._quick_add_target(request, data['target_type'], data['target_id'])
+        existing = data.get('existing_credential')
+        self._constrain_quick_add(request, data['policy'], existing)
+
+        source = data.get('source')
+
+        def conform(credential):
+            if not Credential.objects.restrict(request.user, 'add').filter(pk=credential.pk).exists():
+                raise ObjectDoesNotExist
+
+        try:
+            credential, service, generated_public_key = quick_add_ssh(
+                target,
+                data['policy'],
+                username=data['username'],
+                name=data.get('name') or None,
+                existing_credential=existing if source == 'existing' else None,
+                private_key=data.get('private_key') if source == 'provided' else None,
+                passphrase=data.get('passphrase') if source == 'provided' else None,
+                password=data.get('password') if data['auth_method'] == 'password' else None,
+                auth_method=data['auth_method'],
+                generate=source == 'generated',
+                key_type=data.get('key_type'),
+                port=data['port'],
+                create_service=data['create_service'],
+                user=request.user,
+                request=request,
+                conform=conform,
+            )
+        except ObjectDoesNotExist:
+            raise PermissionDenied('The created credential is outside the permitted scope.') from None
+        except DjangoValidationError as exc:
+            raise _as_drf_validation_error(exc) from None
+        except OpenBaoMutationUnknown:
+            raise
+        except OpenBaoError:
+            return _no_store(Response(
+                {'detail': 'SSH access could not be added.'}, status=status.HTTP_502_BAD_GATEWAY,
+            ))
+
+        target_type = data['target_type']
+        assignment_scope = Q(assigned_object_type=target_type, assigned_object_id=target.pk)
+        if service is not None:
+            from django.contrib.contenttypes.models import ContentType
+
+            service_type = ContentType.objects.get_for_model(service)
+            assignment_scope |= Q(assigned_object_type=service_type, assigned_object_id=service.pk)
+        assignment_ids = list(CredentialAssignment.objects.filter(
+            assignment_scope, credential=credential,
+        ).values_list('pk', flat=True))
+        response = QuickAddSSHResponseSerializer({
+            'credential_id': credential.pk,
+            'credential_uuid': credential.uuid,
+            'credential_type': credential.credential_type,
+            'public_key': credential.public_key or generated_public_key,
+            'fingerprint': credential.fingerprint,
+            'key_type': credential.key_type,
+            'service_id': service.pk if service is not None else None,
+            'assignment_ids': assignment_ids,
+            'target_type': f'{target._meta.app_label}.{target._meta.model_name}',
+            'target_id': target.pk,
+        })
+        return _no_store(Response(response.data, status=status.HTTP_201_CREATED))
+
     @extend_schema(request=AutomationResolveRequestSerializer, responses={200: AutomationResolveResponseSerializer})
     @action(
         detail=False, methods=['post'], url_path='resolve-automation',
@@ -1143,7 +1241,16 @@ class CredentialViewSet(NetBoxModelViewSet):
             try:
                 instances = []
                 for attributes in serializer.validated_data:
+                    generate = attributes.pop('generate_ssh_key', False)
+                    ssh_key_type = attributes.pop('ssh_key_type', None)
                     payload = attributes.pop('secret_data') if 'secret_data' in attributes else None
+                    if generate:
+                        pair = generate_ssh_keypair(
+                            ssh_key_type
+                            or get_config('default_ssh_key_type')
+                            or SSHKeyTypeChoices.TYPE_ED25519
+                        )
+                        payload = {'private_key': pair['private_key']}
                     credential_type = attributes['credential_type']
 
                     def persist(metadata, *, attributes=attributes):
@@ -1168,8 +1275,17 @@ class CredentialViewSet(NetBoxModelViewSet):
             return
 
         payload = None
+        generate = serializer.validated_data.pop('generate_ssh_key', False)
+        ssh_key_type = serializer.validated_data.pop('ssh_key_type', None)
         if 'secret_data' in serializer.validated_data:
             payload = serializer.validated_data.pop('secret_data')
+        if generate:
+            pair = generate_ssh_keypair(
+                ssh_key_type
+                or get_config('default_ssh_key_type')
+                or SSHKeyTypeChoices.TYPE_ED25519
+            )
+            payload = {'private_key': pair['private_key']}
         credential_type = serializer.validated_data['credential_type']
 
         def persist(metadata):

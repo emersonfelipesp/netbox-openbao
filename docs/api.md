@@ -341,6 +341,59 @@ Creates use `cas=0` against OpenBao, so a create can never silently overwrite
 material already at that path. Updates that include `secret_data` are treated
 as rotations and check-and-set against the recorded `kv_version`.
 
+For a new `ssh-keypair`, the server can generate the key and write its private
+half directly to OpenBao. Set `generate_ssh_key` to `true`, optionally select
+`ssh_key_type` (`ed25519`, `rsa-4096`, or `ecdsa-p256`), and omit
+`secret_data`. Both generation inputs are write-only. The response contains
+the extracted public key, fingerprint, and key type, never the private key.
+
+```bash
+curl -X POST https://netbox.example.net/api/plugins/openbao/credentials/ \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{
+        "name": "core-sw-01 generated admin",
+        "credential_type": "ssh-keypair",
+        "policy": 3,
+        "username": "admin",
+        "generate_ssh_key": true,
+        "ssh_key_type": "ed25519"
+      }'
+```
+
+## Atomic SSH quick-add
+
+`POST /api/plugins/openbao/credentials/quick-add-ssh/` exposes the same atomic
+orchestration as the Device and VirtualMachine **Add SSH access** UI. It
+requires `add_credential`, view access to the target and policy, and view
+access to an existing credential when one is reused. Object-permission
+constraints apply. Only Device and VirtualMachine targets are accepted.
+
+The request identifies the target with `target_type` (a content-type ID) and
+`target_id`, then supplies `name`, `username`, `policy`, `create_service`,
+`port`, and an authentication mode:
+
+- `auth_method=password`: provide the write-only `password`; omit key fields.
+- `auth_method=keypair`, `source=generated`: optionally provide `key_type`.
+- `auth_method=keypair`, `source=provided`: provide write-only `private_key`
+  and optional write-only `passphrase`.
+- `auth_method=keypair`, `source=existing`: provide `existing_credential`.
+
+When reusing a credential, `policy` must identify that credential's existing
+policy. The action never silently ignores a conflicting policy or moves the
+credential between policies.
+
+Incompatible combinations are rejected before mutation. The action delegates
+to the existing transaction-owned service, so service creation or widening,
+credential creation or reuse, assignments, OpenBao writes, password sync, and
+version-scoped compensation remain one operation. Its `201` response is
+`no-store` and contains only the credential ID/UUID/type, generated public
+key, fingerprint, key type, service ID, assignment IDs created or reused for
+this target, and the target type/ID. Submitted or generated private material
+is never returned.
+If OpenBao may have accepted a material mutation but its response was lost,
+the endpoint returns a no-store `503` with `outcome=unknown` and an explicit
+do-not-retry instruction. A normal `502` is reserved for a confirmed failure.
+
 ## Revealing
 
 ```bash

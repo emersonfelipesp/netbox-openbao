@@ -125,6 +125,11 @@ class SerializerSurfaceTest(TestCase):
             'secret_data must be write_only so DRF cannot serialize it into any response.',
         )
 
+    def test_server_side_generation_inputs_are_write_only(self):
+        serializer = CredentialSerializer()
+        self.assertTrue(serializer.fields['generate_ssh_key'].write_only)
+        self.assertTrue(serializer.fields['ssh_key_type'].write_only)
+
     def test_secret_data_absent_from_brief_fields(self):
         self.assertNotIn('secret_data', CredentialSerializer.Meta.brief_fields)
 

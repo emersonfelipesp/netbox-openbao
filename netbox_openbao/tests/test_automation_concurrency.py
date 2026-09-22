@@ -305,6 +305,7 @@ class AutomationPolicyConcurrencyTest(_AutomationFixture, TransactionTestCase):
         from netbox_openbao.backends import get_backend
 
         observed = []
+        metadata_before = len(FakeBackend.metadata_calls)
 
         def inspect_backend(engine, policy):
             observed.append((engine.api_url, policy.approle_env_prefix))
@@ -321,7 +322,9 @@ class AutomationPolicyConcurrencyTest(_AutomationFixture, TransactionTestCase):
                 future = pool.submit(self.write_in_thread, pids)
                 self.wait_for_block(pids.get(timeout=10))
             future.result(timeout=10)
-        self.assertEqual(observed, [('https://new-engine.invalid', 'UPDATED_POLICY')])
+        expected = ('https://new-engine.invalid', 'UPDATED_POLICY')
+        self.assertEqual(observed, [expected, expected])
+        self.assertEqual(len(FakeBackend.metadata_calls) - metadata_before, 1)
 
     def test_persistence_cannot_restore_stale_backend_selectors(self):
         from netbox_openbao.backends import get_backend
@@ -330,6 +333,7 @@ class AutomationPolicyConcurrencyTest(_AutomationFixture, TransactionTestCase):
         type(self.engine).objects.filter(pk=self.engine.pk).update(api_url='https://fresh-engine.invalid')
         CredentialPolicy.objects.filter(pk=self.policy.pk).update(approle_env_prefix='FRESH_POLICY')
         observed = []
+        metadata_before = len(FakeBackend.metadata_calls)
 
         def persist(metadata):
             self.credential.engine, self.credential.policy = stale_engine, stale_policy
@@ -343,4 +347,6 @@ class AutomationPolicyConcurrencyTest(_AutomationFixture, TransactionTestCase):
         with patch('netbox_openbao.services.get_backend', side_effect=inspect_backend):
             store_credential(persist, 'password', {'password': 'fresh-value'}, cas=1,
                              subject=self.credential)
-        self.assertEqual(observed, [('https://fresh-engine.invalid', 'FRESH_POLICY')])
+        expected = ('https://fresh-engine.invalid', 'FRESH_POLICY')
+        self.assertEqual(observed, [expected, expected])
+        self.assertEqual(len(FakeBackend.metadata_calls) - metadata_before, 1)

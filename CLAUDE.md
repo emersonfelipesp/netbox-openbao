@@ -214,6 +214,19 @@ key passphrase). When `netbox-nms` is installed, `sync_ssh_password_to_nms` mirr
 the same login into a `DeviceCredential` and SSH `DeviceService`, using the
 netbox-nms `openbao_write_policy` slug for OpenBao placement. See `docs/quick-add-ssh.md`.
 
+The REST collection action `POST credentials/quick-add-ssh/` delegates to the
+same `quick_add_ssh()` service. Keep password, private-key, and passphrase
+inputs write-only; keep its response limited to the requested target/service
+assignments and public metadata. Credential creation also supports write-only
+`generate_ssh_key` plus `ssh_key_type`; generation must occur inside the
+existing material transaction and the private half must flow directly to
+`store_credential()`.
+Recheck the live assignment allowlist before mutation, and invoke constrained
+`add_credential` conformance after the complete quick-add graph exists but
+before its transaction commits. Reused credentials must retain their policy.
+Never convert `OpenBaoMutationUnknown` into a definite failure: return a
+no-store `503` unknown outcome with an explicit do-not-retry instruction.
+
 ## Traps already paid for
 
 Each of these cost a debugging cycle. They are load-bearing, not stylistic.
@@ -335,6 +348,13 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   credential before it while restoring all their rows. The residue that remains
   in the other direction (row gone, secret present) is recoverable; that one is
   not.
+- **Assignment metadata is a committed projection, not part of the SQL write.**
+  Service writes and assignment signals both call `defer_custom_metadata()`.
+  It captures credential IDs and the database alias, then reloads final state
+  in an empty context after commit. A shared transaction-scoped advisory lock
+  serializes that reload and publication against credential deletion. Preserve
+  old-owner capture on reassignment; never move backend metadata I/O back
+  inside an assignment transaction.
 - **`CredentialVerifyJob` cannot find an orphan.** It iterates existing
   credential rows, so it detects a row whose material is missing and is blind
   to material whose row is missing. Do not write that it reports orphans — the
