@@ -18,22 +18,11 @@ release notes, or rollback records. Follow `docs/release-deployment.md`.
 
 ## Hard constraints
 
-**NetBox 4.6 and 4.7** (`min_version = "4.6.0"`,
-`max_version = "4.7.99"`) and **OpenBao 2.6.x**.
-
-This used to read "4.7 only — do not add 4.6 compatibility shims", on the
-stated grounds that `ipam.Service` had changed in two ways. Only one of them
-had. The parent GenericForeignKey was already present in 4.6; just the port
-representation differs. Checked by importing every name the plugin uses under
-both releases rather than by reading release notes: **61 of 64 NetBox imports
-and 29 of 30 `netbox.ui` attributes are identical**, including the whole
-declarative panel framework, `netbox.api.gfk_fields`, `netbox.jobs` and
-`netbox.forms`, all of which the old note assumed were 4.7-only.
-
-The floor matters operationally, which is why it was worth rechecking: the
-estate still runs 4.6.5 while `netbox-nms` supports 4.5.8–4.7.99. Keeping the
-4.6 floor preserves a common installable version today without preventing the
-exact 4.7 beta source gate.
+**NetBox 4.7** (`min_version = "4.7.0"`, `max_version = "4.7.99"`) and
+**OpenBao 2.6.x**. NetBox 4.6 and earlier are not supported: SSH credentials are
+tied to an Application Service (`Credential > ipam.Service > Device/VM`) whose
+ports use 4.7's `port_mappings`, and the seeded `SSH` service template migration
+depends on the 4.7 `ipam` schema. Do not add 4.6 shims for the service logic.
 
 **Every runtime 4.6/4.7 difference lives in `netbox_openbao/compat.py`** — read
 its docstring before adding a runtime version check anywhere else, and add it
@@ -204,15 +193,22 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
     recursive delete of caller-selected paths.
 
 
+## Quick-add SSH: credential > Application Service > Device/VM
+
+SSH credential types are assigned only to an `ipam.Service` (enforced in
+`CredentialAssignment.clean()`); quick-add builds that service from a
+`ServiceTemplate` (seeded `SSH`, `tcp/22`, migration `0023`) in the same
+transaction. `ipam.service` is in the default `assignable_models`; denying it makes SSH assignment fail with a clear error. NetBox 4.7+ only: no
+`protocol`/`ports` path exists.
+
 ## Quick-add SSH password auth
 
 The **Add SSH access** action (`netbox_openbao/quickadd.py`; UI in `views.py` and
 `forms.py`) accepts **username and password** (`auth_method=password`) as well as
 SSH keypairs. Password auth writes an `ssh-password` credential through
 `store_credential()` with payload key `password` (the SSH **login** password, not a
-key passphrase). When `netbox-nms` is installed, `sync_ssh_password_to_nms` mirrors
-the same login into a `DeviceCredential` and SSH `DeviceService`, using the
-netbox-nms `openbao_write_policy` slug for OpenBao placement. See `docs/quick-add-ssh.md`.
+key passphrase). It never mirrors the login into another plugin; this plugin is
+the sole credential owner. See `docs/quick-add-ssh.md`.
 
 The REST collection action `POST credentials/quick-add-ssh/` delegates to the
 same `quick_add_ssh()` service. Keep password, private-key, and passphrase
@@ -548,6 +544,69 @@ their endpoints are not configured). `ruff check` and
 NetBox 4.6.5 as the backward-regression target.
 
 ## When changing things
+
+- **Device, VM, and service credentials are owned here.** `ServiceEndpoint`
+  stores connection metadata, `SSHPublicKey` stores public material only, and
+  plaintext remains in OpenBao. Source-plugin imports use Django's app registry,
+  copy without deleting, and never introduce a Python import dependency on the
+  source plugins. Resolution returns metadata and reveal URLs only.
+
+- **Endpoint writes and endpoint reveals have one atomic path each.**
+  `POST service-endpoints/with-credential/` creates or updates a ServiceEndpoint
+  and a new or existing credential in one transaction and one material write,
+  rejects protocol-incompatible credential types, enforces constrained
+  add/change ObjectPermissions on the endpoint (`restrict()`, never bare
+  `has_perm()`), and accepts an `idempotency_key` persisted as
+  `import_source="idempotency:<key>"` so a replay reuses the first credential.
+  `POST service-endpoints/{id}/reveal-credential/` reveals only while the
+  endpoint is enabled (`options.enabled` is not false), assigned to the expected
+  object, unchanged since the approved revision, and bound to the expected
+  credential uuid, type, and **required** `kv_version` (compared with the
+  served version — `live_kv_version`, or `kv_version` when nothing was ever
+  promoted — and read at exactly that version). Checks and the read run
+  under `select_for_update()` on both rows, so a concurrent disable, rotation, or
+  reassignment waits; any mismatch is `409` with no material. The locked
+  endpoint must still reference the locked credential (`credential_id`), which
+  catches a rebinding that did not advance `last_updated`. Both paths drop
+  NetBox's per-request `_object_perm_cache` and re-check permissions from
+  committed state once their locks are held, so a permission revoked while the
+  request waited stops the write or reveal. Do not split these back into
+  separate client requests.
+
+- **`ServiceEndpointSerializer.credential` and `ResolveView`'s credential
+  representation are permission-bounded, never the full `CredentialSerializer`.**
+  Nesting `CredentialSerializer(nested=True)` directly would render every
+  brief field of a credential the caller cannot otherwise view, purely because
+  they can view the endpoint or assignment it hangs off of. Both surfaces null
+  the credential unless `Credential.objects.restrict(request.user, 'view')`
+  contains it, and when present render only `id`, `url`, `display`, `name`,
+  `credential_type`, `username` (`ServiceEndpointCredentialSerializer`). Widen
+  that bounded set deliberately, never by swapping back to the full
+  `CredentialSerializer` or its `brief_fields`. See
+  `docs/architecture/service-endpoints-and-import.md`.
+- **`openbao_import_nms_credentials` reconciles an existing `ServiceEndpoint`
+  on every run** (credential, target, host, port, SSH settings, options), and
+  serializes concurrent `Credential` claims for the same source row with a
+  session-scoped PostgreSQL advisory lock plus a partial unique constraint on
+  `Credential.import_source`. Do not go back to "look it up, create if
+  absent" without the lock — the whole point is to survive two overlapping
+  runs claiming the same source row. Detail and the reason it is
+  session-scoped rather than `pg_advisory_xact_lock`:
+  `docs/architecture/service-endpoints-and-import.md`.
+- **Run `openbao_import_nms_credentials_preflight` before either importer
+  mode.** It is the read-only readiness contract: exactly one compact JSON
+  object on stdout, closed categories, bounded database reads, and no source
+  row, credential, backend, or secret access. Keep diagnostic details and
+  exception text out of its output. It validates the effective database-backed
+  `get_config('path_prefix', 'netbox')` value, not only static plugin settings.
+  Preserve the stage order startup, literal database probe, effective
+  configuration, then policy; a `DatabaseError` during effective configuration
+  is a closed `database` failure.
+- **The importer start marker is a process-boundary contract.** After
+  `openbao_import_nms_credentials` enters `handle()`, dry-run and apply must
+  write and flush `{"version":1,"event":"openbao_import_started"}` plus LF as
+  the first stdout bytes, before source discovery or database access, exactly
+  once. Its absence means importer `handle()` never started.
 
 - **A new credential type** → `CredentialTypeChoices` + `CREDENTIAL_SCHEMAS` +
   (if needed) an extractor returning only `EXTRACTABLE_FIELDS` keys +

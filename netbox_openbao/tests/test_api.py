@@ -377,6 +377,10 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
             'netbox_openbao.view_credential',
             'netbox_openbao.view_credentialpolicy',
             'dcim.view_device',
+            'ipam.add_service',
+            'ipam.change_service',
+            'ipam.view_service',
+            'ipam.view_servicetemplate',
         )
 
     def payload(self, **overrides):
@@ -469,7 +473,7 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
         self.assertNotIn(b'PRIVATE KEY', response.content)
         credential = Credential.objects.get(pk=response.data['credential_id'])
         self.assertIn('PRIVATE KEY', FakeBackend.store[credential.path][0]['private_key'])
-        self.assertEqual(CredentialAssignment.objects.filter(credential=credential).count(), 2)
+        self.assertEqual(CredentialAssignment.objects.filter(credential=credential).count(), 1)
         self.assertIn('no-store', response['Cache-Control'])
 
     def test_generated_key_null_key_type_uses_the_configured_default(self):
@@ -578,8 +582,7 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
         self.assertEqual(reused.status_code, 201, reused.content)
         self.assertNotIn(unrelated.pk, reused.data['assignment_ids'])
 
-    @patch('netbox_openbao.quickadd.sync_ssh_password_to_nms')
-    def test_password_auth_syncs_without_reflecting_the_password(self, sync_password):
+    def test_password_auth_stays_in_openbao_without_reflecting_the_password(self):
         self.grant()
         response = self.client.post(
             self.url,
@@ -591,7 +594,6 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
         )
         self.assertEqual(response.status_code, 201, response.content)
         self.assertNotIn(b'api-login-canary', response.content)
-        sync_password.assert_called_once()
         credential = Credential.objects.get(pk=response.data['credential_id'])
         self.assertEqual(FakeBackend.store[credential.path][0], {'password': 'api-login-canary'})
 

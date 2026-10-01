@@ -1,5 +1,7 @@
 """Shared fixtures."""
 
+import importlib
+
 from django.db import connection
 from django.test import TestCase, TransactionTestCase
 
@@ -10,7 +12,41 @@ from netbox_openbao.models import Credential, CredentialPolicy, SecretEngine
 
 from .fakes import FakeBackend
 
-__all__ = ('MaterialTransactionTestMixin', 'OpenBaoTestCase', 'OpenBaoTransactionTestCase')
+__all__ = (
+    'MaterialTransactionTestMixin',
+    'OpenBaoTestCase',
+    'OpenBaoTransactionTestCase',
+    'seed_nms_credential_schemas',
+)
+
+
+def seed_nms_credential_schemas():
+    """Create the `CredentialTypeSchema` rows the NMS import command's
+    non-built-in credential types (`ssh_password`, `ssh_key`, ...) depend on.
+
+    Migration `0021_service_endpoints_and_credential_schemas` seeds these once
+    when the test database is built, but a `TransactionTestCase` — required
+    for anything exercising real commit/rollback semantics, which the import
+    command does — flushes all data after every test, seed rows included.
+    Only the first such test to run after `migrate` sees them; every other
+    one fails with "Unknown credential type" for a slug the migration was
+    supposed to guarantee.
+
+    This reuses migration 0021's own `SCHEMAS` and `_seeded_fields` rather
+    than restating the field lists, so the two cannot drift apart.
+    """
+    from netbox_openbao.models import CredentialTypeSchema
+
+    migration = importlib.import_module(
+        'netbox_openbao.migrations.0021_service_endpoints_and_credential_schemas',
+    )
+    existing = set(
+        CredentialTypeSchema.objects.filter(slug__in=migration.SCHEMAS).values_list('slug', flat=True)
+    )
+    for slug, spec in migration.SCHEMAS.items():
+        if slug in existing:
+            continue
+        CredentialTypeSchema.objects.create(slug=slug, **migration._seeded_fields(*spec))
 
 
 class MaterialTransactionTestMixin:

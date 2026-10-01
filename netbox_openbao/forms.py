@@ -17,6 +17,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
+from ipam.models import ServiceTemplate
 from netbox.context import current_request
 from netbox.forms import NetBoxModelFilterSetForm, NetBoxModelForm, OrganizationalModelForm, PrimaryModelForm
 from users.models import Group, User
@@ -45,6 +46,7 @@ from .choices import (
     CredentialTypeChoices,
     EngineStatusChoices,
     PurposeChoices,
+    ServiceTypeChoices,
     SSHKeyTypeChoices,
 )
 from .config import get_config
@@ -58,6 +60,8 @@ from .models import (
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
+    ServiceEndpoint,
+    SSHPublicKey,
 )
 from .models.settings import STATIC_INTERVAL_SETTINGS
 from .rpc import OPENBAO_READ_PROCEDURES, OPENBAO_WRITE_PROCEDURES
@@ -78,6 +82,10 @@ __all__ = (
     'CredentialTypeSchemaForm',
     'SecretEngineFilterForm',
     'SecretEngineForm',
+    'ServiceEndpointFilterForm',
+    'ServiceEndpointForm',
+    'SSHPublicKeyFilterForm',
+    'SSHPublicKeyForm',
     'RunProcedureForm',
     'OpenBaoProcedureRunFilterForm',
     'OpenBaoClusterFilterForm',
@@ -631,6 +639,74 @@ class CredentialAssignmentFilterForm(NetBoxModelFilterSetForm):
     is_primary = forms.NullBooleanField(required=False)
 
 
+class ServiceEndpointForm(GenericObjectFormMixin, NetBoxModelForm):
+    credential = DynamicModelChoiceField(queryset=Credential.objects.all(), required=False)
+    if HAS_GENERIC_OBJECT_FIELD:
+        assigned_object = GenericObjectChoiceField(
+            content_type_queryset=ContentType.objects.none(), label=_('Object'), selector=True,
+        )
+    else:
+        assigned_object_type = forms.ModelChoiceField(queryset=ContentType.objects.none())
+        assigned_object_id = forms.IntegerField()
+
+    class Meta:
+        model = ServiceEndpoint
+        fields = (
+            'service_type', 'host', 'port', 'ssh_known_hosts_entry',
+            'ssh_strict_host_key_checking', 'options', 'credential', 'tags',
+        )
+
+    def __init__(self, *args, **kwargs):
+        field = 'assigned_object' if HAS_GENERIC_OBJECT_FIELD else 'assigned_object_type'
+        if HAS_GENERIC_OBJECT_FIELD:
+            self.base_fields[field].content_type_queryset = assignable_content_types()
+        else:
+            self.base_fields[field].queryset = assignable_content_types()
+        super().__init__(*args, **kwargs)
+        if not HAS_GENERIC_OBJECT_FIELD and self.instance.pk:
+            self.fields['assigned_object_type'].initial = self.instance.assigned_object_type_id
+            self.fields['assigned_object_id'].initial = self.instance.assigned_object_id
+
+    def clean(self):
+        cleaned = super().clean() or self.cleaned_data
+        if HAS_GENERIC_OBJECT_FIELD:
+            return cleaned
+        object_type = cleaned.get('assigned_object_type')
+        object_id = cleaned.get('assigned_object_id')
+        if object_type and object_id is not None:
+            model = object_type.model_class()
+            if model is None or not model.objects.filter(pk=object_id).exists():
+                raise forms.ValidationError({'assigned_object_id': _('The selected object does not exist.')})
+            self.instance.assigned_object_type = object_type
+            self.instance.assigned_object_id = object_id
+        return cleaned
+
+
+class ServiceEndpointFilterForm(NetBoxModelFilterSetForm):
+    model = ServiceEndpoint
+    service_type = forms.MultipleChoiceField(choices=ServiceTypeChoices, required=False)
+    credential_id = DynamicModelMultipleChoiceField(queryset=Credential.objects.all(), required=False)
+
+
+class SSHPublicKeyForm(NetBoxModelForm):
+    user = DynamicModelChoiceField(queryset=User.objects.all())
+    service_endpoint = DynamicModelChoiceField(
+        queryset=ServiceEndpoint.objects.filter(service_type=ServiceTypeChoices.TYPE_SSH),
+    )
+
+    class Meta:
+        model = SSHPublicKey
+        fields = ('user', 'service_endpoint', 'public_key', 'installed_at', 'tags')
+
+
+class SSHPublicKeyFilterForm(NetBoxModelFilterSetForm):
+    model = SSHPublicKey
+    user_id = DynamicModelMultipleChoiceField(queryset=User.objects.all(), required=False)
+    service_endpoint_id = DynamicModelMultipleChoiceField(
+        queryset=ServiceEndpoint.objects.all(), required=False,
+    )
+
+
 class QuickAddSSHForm(forms.Form):
     """
     Give a device or VM SSH access in one form.
@@ -649,12 +725,23 @@ class QuickAddSSHForm(forms.Form):
     username = forms.CharField(label=_('Username'))
     policy = DynamicModelChoiceField(queryset=CredentialPolicy.objects.all(), label=_('Policy'))
 
-    create_service = forms.BooleanField(
-        required=False,
-        initial=True,
-        label=_('Create or update an SSH service'),
+    service_template = DynamicModelChoiceField(
+        queryset=ServiceTemplate.objects.all(),
+        label=_('Service template'),
+        help_text=_('The SSH Application Service is created on the object from this template.'),
     )
-    port = forms.IntegerField(initial=22, min_value=1, max_value=65535, label=_('Port'))
+    service_name = forms.CharField(
+        required=False,
+        label=_('Service name'),
+        help_text=_('Defaults to the template name, lowercased.'),
+    )
+    port = forms.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=65535,
+        label=_('Port'),
+        help_text=_('Defaults to the template TCP port. Override only for a non-standard SSH port.'),
+    )
 
     source = forms.ChoiceField(
         label=_('Key material'),
@@ -700,7 +787,7 @@ class QuickAddSSHForm(forms.Form):
 
     fieldsets = (
         FieldSet('name', 'username', 'policy', name=_('Credential')),
-        FieldSet('create_service', 'port', name=_('Service')),
+        FieldSet('service_template', 'service_name', 'port', name=_('SSH Application Service')),
         FieldSet('auth_method', 'password', name=_('Authentication')),
         FieldSet('source', 'key_type', 'private_key', 'passphrase', 'existing_credential',
                  name=_('Key material')),
@@ -708,6 +795,11 @@ class QuickAddSSHForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        from .quickadd import get_ssh_service_template
+
+        default_template = get_ssh_service_template()
+        if default_template is not None:
+            self.fields['service_template'].initial = default_template.pk
         self.fields['key_type'].initial = get_config('default_ssh_key_type')
         if not get_config('allow_generation', True):
             self.fields['source'].choices = [

@@ -137,8 +137,10 @@ tier](../how-to/policy-tiers.md).
 
 === "Device page (fastest)"
 
-    **Add SSH access** on the device, which also creates the `ipam.Service`
-    and both assignments. See [Grant a device SSH
+    **Add SSH access** on the device. You pick a service template (the seeded
+    `SSH` one, `tcp/22`, by default); it creates the SSH Application Service
+    and the credential on the same form and assigns the credential to that
+    service. See [Grant a device SSH
     access](../quick-add-ssh.md).
 
 The response carries the **extracted public material** and no private material:
@@ -160,13 +162,19 @@ types](../architecture/credential-types.md).
 
 ## 6. Assign it to something
 
+An SSH credential is always assigned to an **SSH Application Service**
+(`ipam.Service`) on the device or VM, never to the device or VM itself:
+`Credential > Application Service > Device or VM`. The service is created from a
+service template (the seeded `SSH` template is `tcp/22`). Assigning an SSH
+credential to a device or VM directly is rejected.
+
 ```bash
 curl -X POST https://netbox.example.net/api/plugins/openbao/assignments/ \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{
         "credential": 1,
-        "assigned_object_type": "dcim.device",
-        "assigned_object_id": 88,
+        "assigned_object_type": "ipam.service",
+        "assigned_object_id": 412,
         "purpose": "login",
         "is_primary": true
       }'

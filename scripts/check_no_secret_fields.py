@@ -91,6 +91,11 @@ APPROVED_FIELDS = frozenset({
     'staged_kv_version',
     'last_verified',
 
+    # Reverse relation from ServiceEndpoint.credential (related_name=
+    # 'service_endpoints'). It is a manager over other rows' foreign keys, not
+    # a column on Credential, and it can hold no material of its own.
+    'service_endpoints',
+
     # Django/NetBox model machinery, not fields
     'clone_fields',
     'objects',

@@ -15,6 +15,7 @@ from django.utils.translation import gettext_lazy as _
 from netbox.ui import actions, attrs, panels
 
 from netbox_openbao.compat import ArrayAttr
+from netbox_openbao.models.service_endpoints import credential_visible
 
 __all__ = (
     'AccessLogDetailPanel',
@@ -40,6 +41,8 @@ __all__ = (
     'OpenBaoClusterPanel',
     'OpenBaoClusterStatusPanel',
     'OpenBaoAdministrationLogPanel',
+    'ServiceEndpointDetailPanel',
+    'SSHPublicKeyDetailPanel',
 )
 
 
@@ -218,6 +221,38 @@ class CredentialAssignmentDetailPanel(panels.ObjectAttributesPanel):
     purpose = attrs.ChoiceAttr('purpose')
     is_primary = attrs.BooleanAttr('is_primary', label=_('Primary'))
     description = attrs.TextAttr('description')
+
+
+class VisibleCredentialAttr(attrs.RelatedObjectAttr):
+    """A credential link rendered only for users allowed to view that credential."""
+
+    def render(self, obj, context):
+        request = context.get('request')
+        if request is None or not credential_visible(request.user, obj.credential_id):
+            return self.placeholder
+        return super().render(obj, context)
+
+
+class ServiceEndpointDetailPanel(panels.ObjectAttributesPanel):
+    assigned_object = attrs.GenericForeignKeyAttr('assigned_object', label=_('Object'), linkify=True)
+    service_type = attrs.ChoiceAttr('service_type')
+    host = attrs.TextAttr('host')
+    port = attrs.NumericAttr('port')
+    credential = VisibleCredentialAttr('credential', linkify=True)
+    ssh_known_hosts_entry = attrs.TextAttr('ssh_known_hosts_entry', label=_('SSH known hosts'))
+    ssh_strict_host_key_checking = attrs.BooleanAttr(
+        'ssh_strict_host_key_checking', label=_('Strict SSH host key checking'),
+    )
+    options = attrs.TextAttr('options')
+
+
+class SSHPublicKeyDetailPanel(panels.ObjectAttributesPanel):
+    user = attrs.RelatedObjectAttr('user', linkify=True)
+    service_endpoint = attrs.RelatedObjectAttr('service_endpoint', linkify=True)
+    public_key = attrs.TextAttr('public_key', style='font-monospace')
+    fingerprint = attrs.TextAttr('fingerprint', style='font-monospace', copy_button=True)
+    key_type = attrs.TextAttr('key_type', label=_('Key type'))
+    installed_at = attrs.DateTimeAttr('installed_at', label=_('Installed at'))
 
 
 class AccessLogDetailPanel(panels.ObjectAttributesPanel):

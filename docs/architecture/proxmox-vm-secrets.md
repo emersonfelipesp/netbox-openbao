@@ -32,7 +32,9 @@ flowchart TB
 Proxbox sync is read-only against Proxmox. It never carries guest passwords,
 cloud-init secrets, QEMU agent tokens, or SSH private keys. Even when proxbox
 creates or updates an `ipam.Service` named `ssh` with `tcp/22`, that row
-describes reachability — not the login secret.
+describes reachability — not the login secret. It is also the row a
+netbox-openbao SSH credential attaches to: the credential is assigned to the
+`ssh` Application Service, which is what ties it to the VM.
 
 See the netbox-proxbox companion doc:
 [VM inventory without credentials](https://github.com/emersonfelipesp/netbox-proxbox/blob/develop/docs/companion-plugins/netbox-openbao.md).
@@ -56,10 +58,14 @@ flowchart TB
 
 Quick-add SSH on a Device or VM page creates (when modeled):
 
-1. An `ipam.Service` named `ssh` with `tcp/22` — or reuses the existing one.
+1. An SSH Application Service (`ipam.Service`) built from a service template —
+   the seeded `SSH` template is `tcp/22` — or the existing service of that name.
 2. A `Credential` whose material lives in OpenBao.
-3. `CredentialAssignment` rows binding the credential to the service and to the
-   object.
+3. A `CredentialAssignment` binding the credential to the service.
+
+The relation is always `Credential > Application Service > Virtual Machine or
+Device`. An SSH credential is never assigned directly to the VM or device;
+`CredentialAssignment.clean()` rejects it. Requires NetBox 4.7+.
 
 Material writes go through `services.py` to OpenBao directly or via
 **netbox-openbao-broker** when broker mode is enabled — see

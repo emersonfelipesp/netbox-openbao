@@ -33,11 +33,6 @@ jobs:
       max-parallel: 1
       matrix:
         include:
-          - netbox_version: "4.6.5"
-            db_suffix: n465
-            redis_db: "2"
-            redis_cache_db: "3"
-            netbox_sha: ebee3578b90901ba69ea646815f9b0662f627726
           - netbox_version: "4.7.0-beta2"
             db_suffix: n470b2
             redis_db: "4"

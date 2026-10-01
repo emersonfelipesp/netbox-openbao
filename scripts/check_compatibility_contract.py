@@ -7,7 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BETA2_SHA = "aa1d49d0f5021a28e6efc2d0364b84c5bcec7137"
-NETBOX_46_SHA = "ebee3578b90901ba69ea646815f9b0662f627726"
 NETBOX_RPC_SHA = "e8d4ba3535e2b4f33125c16281a34da52b634df0"
 NETBOX_RPC_REQUIREMENT = "netbox-rpc>=0.1.8"
 NETBOX_RPC_VERSION = "0.1.8.post1"
@@ -89,10 +88,9 @@ def validate_contract(
         r"cancel-in-progress: false"
     )
 
-    require("min_version = '4.6.0'" in plugin, "NetBox 4.6 floor drifted")
+    require("min_version = '4.7.0'" in plugin, "NetBox 4.7 floor drifted")
     require("max_version = '4.7.99'" in plugin, "NetBox 4.7 ceiling drifted")
     require(BETA2_SHA in workflow, "exact NetBox beta2 commit is not gated")
-    require(NETBOX_46_SHA in workflow, "NetBox 4.6 regression commit is not gated")
     require(workflow.count(f"NETBOX_RPC_SHA: {NETBOX_RPC_SHA}") == 1, "workflow netbox-rpc SHA binding drifted")
     require(len(checkout_pattern.findall(workflow)) == 1, "netbox-rpc dependency checkout contract drifted")
     require(workflow.count("persist-credentials: false") == 2, "checkout credential persistence contract drifted")
@@ -103,7 +101,7 @@ def validate_contract(
         "exact suite does not receive the checked-out dependency",
     )
     require('netbox_version: "4.7.0-beta2"' in workflow, "beta2 matrix label missing")
-    require('netbox_version: "4.6.5"' in workflow, "4.6 matrix label missing")
+    require('netbox_version: "4.6' not in workflow, "NetBox 4.6 is no longer supported")
     require(concurrency_pattern.search(workflow) is not None, "compatibility runs are not serialized across refs")
     require(
         re.search(r"^\s+pull_request:", workflow, flags=re.MULTILINE) is None,
@@ -175,7 +173,7 @@ def validate_contract(
     require("Found [1-9][0-9]* test" in harness, "zero-test fail-closed guard missing")
 
     require(NETBOX_RPC_REQUIREMENT in dependencies, "project netbox-rpc requirement drifted")
-    require("4.6.0–4.7.99" in readme, "README support range drifted")
+    require("4.7.0–4.7.99" in readme, "README support range drifted")
     require("--branch v4.7.0-beta2" in development, "development checkout is not beta2")
     require(NETBOX_RPC_SHA in development, "documented netbox-rpc SHA drifted")
     require(f"distribution version `{NETBOX_RPC_VERSION}`" in development, "documented netbox-rpc version drifted")

@@ -10,6 +10,7 @@ credential out of the URL bar and the referrer header.
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError
 from django.db.models import Count
@@ -42,6 +43,8 @@ from .models import (
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
+    ServiceEndpoint,
+    SSHPublicKey,
 )
 from .quickadd import quick_add_ssh
 from .rpc import dispatch_openbao_procedure
@@ -823,6 +826,64 @@ class CredentialAssignmentDeleteView(generic.ObjectDeleteView):
     queryset = CredentialAssignment.objects.all()
 
 
+@register_model_view(ServiceEndpoint, 'list', path='', detail=False)
+class ServiceEndpointListView(generic.ObjectListView):
+    queryset = ServiceEndpoint.objects.select_related('assigned_object_type', 'credential')
+    table = tables.ServiceEndpointTable
+    filterset = filtersets.ServiceEndpointFilterSet
+    filterset_form = forms.ServiceEndpointFilterForm
+
+
+@register_model_view(ServiceEndpoint)
+class ServiceEndpointView(generic.ObjectView):
+    queryset = ServiceEndpoint.objects.select_related('assigned_object_type', 'credential')
+    layout = layout.SimpleLayout(
+        left_panels=[openbao_panels.ServiceEndpointDetailPanel()],
+        right_panels=[CustomFieldsPanel(), TagsPanel()],
+    )
+
+
+@register_model_view(ServiceEndpoint, 'add', detail=False)
+@register_model_view(ServiceEndpoint, 'edit')
+class ServiceEndpointEditView(generic.ObjectEditView):
+    queryset = ServiceEndpoint.objects.all()
+    form = forms.ServiceEndpointForm
+
+
+@register_model_view(ServiceEndpoint, 'delete')
+class ServiceEndpointDeleteView(generic.ObjectDeleteView):
+    queryset = ServiceEndpoint.objects.all()
+
+
+@register_model_view(SSHPublicKey, 'list', path='', detail=False)
+class SSHPublicKeyListView(generic.ObjectListView):
+    queryset = SSHPublicKey.objects.select_related('user', 'service_endpoint')
+    table = tables.SSHPublicKeyTable
+    filterset = filtersets.SSHPublicKeyFilterSet
+    filterset_form = forms.SSHPublicKeyFilterForm
+
+
+@register_model_view(SSHPublicKey)
+class SSHPublicKeyView(generic.ObjectView):
+    queryset = SSHPublicKey.objects.select_related('user', 'service_endpoint')
+    layout = layout.SimpleLayout(
+        left_panels=[openbao_panels.SSHPublicKeyDetailPanel()],
+        right_panels=[CustomFieldsPanel(), TagsPanel()],
+    )
+
+
+@register_model_view(SSHPublicKey, 'add', detail=False)
+@register_model_view(SSHPublicKey, 'edit')
+class SSHPublicKeyEditView(generic.ObjectEditView):
+    queryset = SSHPublicKey.objects.all()
+    form = forms.SSHPublicKeyForm
+
+
+@register_model_view(SSHPublicKey, 'delete')
+class SSHPublicKeyDeleteView(generic.ObjectDeleteView):
+    queryset = SSHPublicKey.objects.all()
+
+
 #
 # Credential type schemas
 #
@@ -955,13 +1016,16 @@ class QuickAddSSHView(ObjectPermissionRequiredMixin, View):
                     auth_method=auth_method,
                     generate=(source == 'generate' and auth_method == 'keypair'),
                     key_type=data.get('key_type'),
-                    port=data['port'],
-                    create_service=data['create_service'],
+                    port=data.get('port'),
+                    service_template=data['service_template'],
+                    service_name=data.get('service_name') or None,
                     user=request.user,
                     request=request,
                 )
             except OpenBaoError as exc:
                 form.add_error(None, _('Could not write to OpenBao: {error}').format(error=exc))
+            except DjangoPermissionDenied as exc:
+                form.add_error(None, str(exc) or _('This action is not permitted.'))
             except DjangoValidationError as exc:
                 form.add_error(None, '; '.join(exc.messages))
             else:

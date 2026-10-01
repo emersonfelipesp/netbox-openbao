@@ -1,6 +1,6 @@
 # Data model
 
-Eleven models: configuration and inventory plus three operational evidence
+Thirteen models: configuration and inventory plus three operational evidence
 records, including the internal automation receipt.
 
 ```mermaid
@@ -11,6 +11,8 @@ erDiagram
     SecretEngine ||--o{ Credential : "stores material for"
     CredentialPolicy ||--o{ Credential : "governs"
     Credential ||--o{ CredentialAssignment : "is bound by"
+    Credential ||--o{ ServiceEndpoint : "authenticates"
+    ServiceEndpoint ||--o{ SSHPublicKey : "accepts"
     Credential ||--o{ CredentialAccessLog : "is read through"
     CredentialAssignment }o--|| Device : "GFK"
     CredentialAssignment }o--|| VirtualMachine : "GFK"
@@ -224,6 +226,17 @@ credential-holding models from `AppConfig.ready()` instead of requiring every
 deployment to restate them in a settings file. The deny list exists so that
 adding is not the same as deciding: registration comes from installed code, and
 the operator keeps the final word.
+
+## `ServiceEndpoint` and `SSHPublicKey`
+
+`ServiceEndpoint` applies the assignment registry to connection metadata:
+object, service type, host, port, SSH host-key policy, non-secret options, and
+an optional credential. Its uniqueness constraint is `(object_type, object_id,
+service_type, port)`. Options reject secret-shaped keys.
+
+`SSHPublicKey` binds a NetBox user to an SSH endpoint. It stores public material
+only and computes the OpenSSH SHA256 fingerprint and key type on every save.
+Private key material has no field on this model.
 
 ## `CredentialAccessLog` — evidence, not an object
 

@@ -12,7 +12,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.test import override_settings
 from django.urls import reverse
-from ipam.models import Service
+from ipam.models import Service, ServiceTemplate
 from utilities.testing.views import ModelViewTestCase
 from virtualization.models import Cluster, ClusterType, VirtualMachine
 
@@ -44,6 +44,9 @@ class _QuickAddBase(MaterialTransactionTestMixin, ModelViewTestCase):
             name='Lab', slug='lab', engine=self.engine, openbao_policy='netbox-lab',
         )
 
+        # The seed migration's row does not survive the per-test flush.
+        ServiceTemplate.objects.get_or_create(name='SSH', defaults={'port_mappings': ['tcp/22']})
+
         site = Site.objects.create(name='S', slug='s')
         manufacturer = Manufacturer.objects.create(name='M', slug='m')
         device_type = DeviceType.objects.create(manufacturer=manufacturer, model='T', slug='t')
@@ -58,32 +61,10 @@ class _QuickAddBase(MaterialTransactionTestMixin, ModelViewTestCase):
 
 
 class QuickAddServiceTest(_QuickAddBase):
-    """
-    The created service is asserted in whichever shape the running NetBox uses.
-
-    4.7 represents ports as a `port_mappings` array of `"tcp/22"` strings; 4.6
-    uses `protocol` plus a `ports` list. The generic-FK parent is common to
-    both, contrary to what this docstring claimed before.
-
-    `_assert_tcp_ports` reads the shape rather than the version so the suite
-    checks the branch that actually ran. Asserting only 4.7's shape made these
-    tests error on 4.6 while the code under test was working correctly — the
-    test was the thing that was version-specific.
-    """
+    """The Application Service is always created, from the seeded SSH template."""
 
     def _assert_tcp_ports(self, service, ports):
-        """Assert `service` exposes exactly `ports` over TCP, either shape."""
-        from netbox_openbao.quickadd import _service_uses_port_mappings
-
-        if _service_uses_port_mappings():
-            self.assertEqual(sorted(service.port_mappings),
-                             sorted(f'tcp/{p}' for p in ports))
-            return
-
-        from ipam.choices import ServiceProtocolChoices
-
-        self.assertEqual(service.protocol, ServiceProtocolChoices.PROTOCOL_TCP)
-        self.assertEqual(sorted(service.ports), sorted(ports))
+        self.assertEqual(sorted(service.port_mappings), sorted(f'tcp/{p}' for p in ports))
 
     def test_creates_a_wellformed_service(self):
         _credential, service, _pub = quick_add_ssh(
@@ -97,6 +78,135 @@ class QuickAddServiceTest(_QuickAddBase):
         self.assertEqual(
             service.parent_object_type, ContentType.objects.get_for_model(Device)
         )
+
+    def test_seed_migration_is_idempotent_and_never_overwrites(self):
+        import importlib
+
+        from django.apps import apps as django_apps
+
+        migration = importlib.import_module('netbox_openbao.migrations.0023_seed_ssh_service_template')
+        ServiceTemplate.objects.filter(name='SSH').delete()
+        migration.seed_ssh_service_template(django_apps, None)
+        self.assertEqual(ServiceTemplate.objects.get(name='SSH').port_mappings, ['tcp/22'])
+        ServiceTemplate.objects.filter(name='SSH').update(port_mappings=['tcp/2200'])
+        migration.seed_ssh_service_template(django_apps, None)
+        self.assertEqual(ServiceTemplate.objects.filter(name='SSH').count(), 1)
+        self.assertEqual(ServiceTemplate.objects.get(name='SSH').port_mappings, ['tcp/2200'])
+
+    def test_service_is_created_from_the_chosen_template(self):
+        template = ServiceTemplate.objects.create(name='Bastion SSH', port_mappings=['tcp/2022'])
+        _c, service, _p = quick_add_ssh(
+            self.device, self.policy, username='admin', generate=True, service_template=template,
+        )
+        self.assertEqual(service.name, 'bastion ssh')
+        self._assert_tcp_ports(service, [2022])
+
+    def test_credential_is_assigned_only_to_the_service(self):
+        credential, service, _p = quick_add_ssh(
+            self.device, self.policy, username='admin', generate=True,
+        )
+        assigned = [a.assigned_object for a in credential.assignments.all()]
+        self.assertEqual(assigned, [service])
+
+    def test_ssh_credential_cannot_be_assigned_directly_to_a_device(self):
+        credential, _service, _p = quick_add_ssh(
+            self.device, self.policy, username='admin', generate=True,
+        )
+        assignment = CredentialAssignment(
+            credential=credential,
+            assigned_object_type=ContentType.objects.get_for_model(Device),
+            assigned_object_id=self.device.pk,
+        )
+        with self.assertRaises(ValidationError):
+            assignment.full_clean()
+
+    def test_a_template_without_a_tcp_port_is_rejected(self):
+        template = ServiceTemplate.objects.create(name='DNS-ish', port_mappings=['udp/53'])
+        with self.assertRaises(ValidationError):
+            quick_add_ssh(
+                self.device, self.policy, username='admin', generate=True,
+                service_template=template, port=None,
+            )
+        self.assertEqual(Credential.objects.count(), 0)
+
+    def test_a_conflicting_non_tcp_service_is_not_widened(self):
+        Service.objects.create(
+            parent_object_type=ContentType.objects.get_for_model(Device),
+            parent_object_id=self.device.pk, name='ssh', port_mappings=['udp/22'],
+        )
+        with self.assertRaises(ValidationError):
+            quick_add_ssh(self.device, self.policy, username='admin', generate=True)
+        self.assertEqual(Credential.objects.count(), 0)
+
+    def test_creating_the_service_requires_ipam_add_service(self):
+        from django.core.exceptions import PermissionDenied
+
+        self.add_permissions('netbox_openbao.add_credential', 'ipam.view_servicetemplate')
+        with self.assertRaises(PermissionDenied):
+            quick_add_ssh(
+                self.device, self.policy, username='admin', generate=True, user=self.user,
+            )
+        self.assertEqual(Credential.objects.count(), 0)
+        self.assertEqual(Service.objects.count(), 0)
+
+    def test_automation_finds_a_credential_assigned_through_the_service(self):
+        from types import SimpleNamespace
+
+        from netbox_openbao.automation import _assignment_rows
+
+        credential, service, _pub = quick_add_ssh(
+            self.device, self.policy, username='admin', generate=True,
+        )
+        device_type = ContentType.objects.get_for_model(Device)
+        reference = SimpleNamespace(
+            target=SimpleNamespace(object_id=self.device.pk), purpose='login',
+            assignment_id=None, credential_uuid=credential.uuid,
+        )
+        rows = _assignment_rows(SimpleNamespace(reference=reference), device_type)
+        self.assertEqual([row.assigned_object for row in rows], [service])
+
+    def test_a_reparented_service_no_longer_authorizes_the_original_target(self):
+        from types import SimpleNamespace
+
+        from netbox_openbao.automation import _assignment_rows
+
+        credential, service, _pub = quick_add_ssh(
+            self.device, self.policy, username='admin', generate=True,
+        )
+        service.parent_object_type = ContentType.objects.get_for_model(VirtualMachine)
+        service.parent_object_id = self.vm.pk
+        service.save()
+        reference = SimpleNamespace(
+            target=SimpleNamespace(object_id=self.device.pk), purpose='login',
+            assignment_id=None, credential_uuid=credential.uuid,
+        )
+        rows = _assignment_rows(
+            SimpleNamespace(reference=reference), ContentType.objects.get_for_model(Device),
+        )
+        self.assertEqual(list(rows), [])
+
+    def test_legacy_direct_assignment_stays_editable(self):
+        credential, _service, _pub = quick_add_ssh(
+            self.device, self.policy, username='admin', generate=True,
+        )
+        legacy = CredentialAssignment.objects.create(
+            credential=credential,
+            assigned_object_type=ContentType.objects.get_for_model(Device),
+            assigned_object_id=self.device.pk, purpose='backup',
+        )
+        legacy.description = 'still saveable'
+        legacy.full_clean()
+        legacy.save()
+
+    def test_repeated_quick_add_keeps_one_service_with_every_requested_port(self):
+        for port in (22, 2222, 2200):
+            quick_add_ssh(
+                self.device, self.policy, username='admin', generate=True,
+                port=port, name=f'ssh-{port}',
+            )
+        service = Service.objects.get(name='ssh')
+        self.assertEqual(Service.objects.count(), 1)
+        self._assert_tcp_ports(service, [22, 2222, 2200])
 
     def test_reuses_an_existing_service(self):
         quick_add_ssh(self.device, self.policy, username='admin', generate=True)
@@ -131,25 +241,6 @@ class QuickAddServiceTest(_QuickAddBase):
         self.assertEqual(public_key, '')
         self.assertIsNotNone(service)
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'assignable_models': ['dcim.device']}})
-    def test_service_creation_is_skipped_when_services_are_not_assignable(self):
-        """
-        An estate that does not model services still wants the credential on
-        the device, so this is configured-out rather than an error.
-        """
-        credential, service, _pub = quick_add_ssh(
-            self.device, self.policy, username='admin', generate=True,
-        )
-
-        self.assertIsNone(service)
-        self.assertEqual(Service.objects.count(), 0)
-        self.assertTrue(
-            CredentialAssignment.objects.filter(credential=credential).exists()
-        )
-
-
-class QuickAddMaterialTest(_QuickAddBase):
-
     def test_generate_writes_the_private_half_and_returns_only_the_public(self):
         credential, _service, public_key = quick_add_ssh(
             self.device, self.policy, username='admin', generate=True,
@@ -183,12 +274,15 @@ class QuickAddMaterialTest(_QuickAddBase):
 
         self.assertEqual(second.pk, first.pk)
         self.assertEqual(Credential.objects.count(), 1)
-        # ...but it is now assigned to the VM as well.
+        # ...but it is now assigned to the VM's SSH service as well.
         self.assertTrue(
             CredentialAssignment.objects.filter(
                 credential=first,
-                assigned_object_type=ContentType.objects.get_for_model(VirtualMachine),
-                assigned_object_id=self.vm.pk,
+                assigned_object_type=ContentType.objects.get_for_model(Service),
+                assigned_object_id=Service.objects.get(
+                    parent_object_id=self.vm.pk,
+                    parent_object_type=ContentType.objects.get_for_model(VirtualMachine),
+                ).pk,
             ).exists()
         )
 
@@ -266,7 +360,7 @@ class QuickAddRollbackTest(_QuickAddBase):
 
         self.assertEqual(observed, {
             'credential': True,
-            'assignments': 2,
+            'assignments': 1,
             'services': 1,
             'material': True,
         })
@@ -290,7 +384,8 @@ class QuickAddViewTest(_QuickAddBase):
             'netbox_openbao.add_credential', 'netbox_openbao.view_credential',
             'netbox_openbao.view_credentialpolicy', 'netbox_openbao.view_secretengine',
             'netbox_openbao.add_credentialassignment',
-            'dcim.view_device', 'ipam.add_service', 'ipam.view_service',
+            'dcim.view_device', 'ipam.add_service', 'ipam.change_service', 'ipam.view_service',
+            'ipam.view_servicetemplate',
         )
 
     def test_requires_permission_to_add_credentials(self):
@@ -312,7 +407,7 @@ class QuickAddViewTest(_QuickAddBase):
             'auth_method': 'keypair',
             'key_type': 'ed25519',
             'port': 22,
-            'create_service': 'on',
+            'service_template': ServiceTemplate.objects.get(name='SSH').pk,
         })
 
         self.assertEqual(response.status_code, 200, response.content[:400])

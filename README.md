@@ -88,7 +88,7 @@ test in `netbox_openbao/tests/test_security.py`:
 
 | | |
 |---|---|
-| NetBox | **4.6 or 4.7** (4.6.0–4.7.99; exact 4.7 beta2 evidence below) |
+| NetBox | **4.7** (4.7.0–4.7.99; exact 4.7 beta2 evidence below) |
 | Python | 3.12+ |
 | PostgreSQL | 15+ with the `ltree` extension (a NetBox 4.7 requirement) |
 | Redis | 6+ |
@@ -96,13 +96,12 @@ test in `netbox_openbao/tests/test_security.py`:
 | HashiCorp Vault | supported as an alternative backend — see below |
 | Broker mode | optional; needs [`netbox-openbao-broker`](https://github.com/emersonfelipesp/netbox-openbao-broker) |
 
-NetBox 4.6 and 4.7 are both supported. The releases differ in four capabilities
-used here (notably `ipam.Service` port storage), and those differences are
-isolated in `netbox_openbao/compat.py`. The full suite currently passes on exact
-NetBox `v4.7.0-beta2`; the compatibility gate also retains NetBox 4.6.5 as the
-backward-regression target. See
-[`docs/installation.md`](docs/installation.md#netbox-46-and-47) for the exact
-boundary.
+NetBox 4.7 is required: SSH credentials are tied to an Application Service
+(`ipam.Service`), whose ports 4.7 stores as a `port_mappings` array, and the
+seeded `SSH` service template relies on the same model. NetBox 4.6 and earlier
+are not supported. The full suite currently passes on exact NetBox
+`v4.7.0-beta2`. See [`docs/installation.md`](docs/installation.md#netbox-46-and-47)
+for the history of the former 4.6 boundary.
 
 ## Install
 
@@ -232,6 +231,8 @@ per-user authorization.
 | `CredentialPolicy` | An authorization tier mapped onto a real OpenBao policy, with its own AppRole. |
 | `Credential` | The inventory record: identity, public material, lifecycle. Never the secret. |
 | `CredentialAssignment` | Many-to-many binding to Devices, VMs, and Services, with a purpose. |
+| `ServiceEndpoint` | Connection metadata and an optional credential for an assignable object. |
+| `SSHPublicKey` | A user's public SSH key and computed fingerprint for an SSH endpoint. |
 | `CredentialAccessLog` | Append-only correlation between a NetBox user and an OpenBao read. |
 | `OpenBaoAdministrationLog` | Append-only metadata correlation for administrative probes and operations. |
 
@@ -301,6 +302,28 @@ python manage.py openbao_import_secrets --engine primary --policy imported --dry
 The importer copies — it never deletes — infers each secret's type and proves
 the inference by extraction, and is resumable. See
 [`docs/migration-from-netbox-secrets.md`](docs/migration-from-netbox-secrets.md).
+
+Device, VM, and service credential migration from the optional NMS/network
+plugins uses `openbao_import_nms_credentials`. Its dry run performs no database
+or OpenBao writes, and repeated imports use provenance markers instead of
+creating duplicates. See
+[`docs/architecture/service-endpoints-and-import.md`](docs/architecture/service-endpoints-and-import.md).
+
+Both dry-run and apply write and flush
+`{"version":1,"event":"openbao_import_started"}` as the first stdout record
+after the management command enters `handle()`, before model discovery or any
+database access. Absence means command startup never reached the importer.
+
+Before invoking either importer mode, run the dedicated read-only preflight:
+
+```bash
+python manage.py openbao_import_nms_credentials_preflight
+```
+
+It validates plugin startup, the effective database-backed storage-path configuration, the
+required credential policy, and database connectivity. Standard output is
+exactly one compact, closed JSON record; it never contains exception text,
+URLs, paths, rows, credential metadata, command output, or secret material.
 
 ## Development
 

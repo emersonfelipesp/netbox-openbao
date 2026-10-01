@@ -11,6 +11,7 @@ from .choices import (
     CredentialStatusChoices,
     EngineStatusChoices,
     PurposeChoices,
+    ServiceTypeChoices,
 )
 from .models import (
     Credential,
@@ -23,6 +24,8 @@ from .models import (
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
+    ServiceEndpoint,
+    SSHPublicKey,
 )
 
 __all__ = (
@@ -36,6 +39,8 @@ __all__ = (
     'OpenBaoClusterFilterSet',
     'OpenBaoSettingsFilterSet',
     'SecretEngineFilterSet',
+    'ServiceEndpointFilterSet',
+    'SSHPublicKeyFilterSet',
 )
 
 
@@ -136,6 +141,9 @@ class CredentialFilterSet(NetBoxModelFilterSet):
     # A plain char filter rather than a choice filter: the valid set now
     # includes operator-defined types, which a static choice list cannot know.
     credential_type = MultiValueCharFilter()
+    # Exact provenance lookup, used by consumers mapping a migrated legacy row
+    # (for example ``netbox_nms.DeviceCredential:<pk>``) to its Credential.
+    import_source = MultiValueCharFilter()
     status = django_filters.MultipleChoiceFilter(choices=CredentialStatusChoices)
     policy_id = django_filters.ModelMultipleChoiceFilter(
         queryset=CredentialPolicy.objects.all(),
@@ -234,6 +242,39 @@ class CredentialAssignmentFilterSet(NetBoxModelFilterSet):
         return queryset.filter(
             Q(credential__name__icontains=value) | Q(description__icontains=value)
         )
+
+
+class ServiceEndpointFilterSet(NetBoxModelFilterSet):
+    assigned_object_type = ContentTypeFilter()
+    service_type = django_filters.MultipleChoiceFilter(choices=ServiceTypeChoices)
+    credential_id = django_filters.ModelMultipleChoiceFilter(
+        field_name='credential', queryset=Credential.objects.all(), label=_('Credential (ID)'),
+    )
+
+    class Meta:
+        model = ServiceEndpoint
+        fields = ('id', 'assigned_object_id', 'host', 'port', 'ssh_strict_host_key_checking')
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(Q(host__icontains=value) | Q(ssh_known_hosts_entry__icontains=value))
+
+
+class SSHPublicKeyFilterSet(NetBoxModelFilterSet):
+    user_id = django_filters.ModelMultipleChoiceFilter(
+        field_name='user', queryset=User.objects.all(), label=_('User (ID)'),
+    )
+    service_endpoint_id = MultiValueNumberFilter(field_name='service_endpoint_id')
+
+    class Meta:
+        model = SSHPublicKey
+        fields = ('id', 'fingerprint', 'key_type', 'installed_at')
+
+    def search(self, queryset, name, value):
+        if not value.strip():
+            return queryset
+        return queryset.filter(Q(fingerprint__icontains=value) | Q(public_key__icontains=value))
 
 
 class CredentialAccessLogFilterSet(BaseFilterSet):

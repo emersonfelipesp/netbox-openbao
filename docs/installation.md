@@ -4,7 +4,7 @@
 
 | Component | Version | Why |
 |---|---|---|
-| NetBox | **4.6.0 – 4.7.99** | See [NetBox 4.6 and 4.7](#netbox-46-and-47) |
+| NetBox | **4.7.0 – 4.7.99** | See [NetBox 4.6 and 4.7](#netbox-46-and-47) |
 | Python | 3.12+ | NetBox 4.7 requires it |
 | PostgreSQL | 15+ **with `ltree`** | NetBox 4.7 backs hierarchical models with ltree |
 | Redis | 6+ | Job queue and the OpenBao token cache |
@@ -252,8 +252,8 @@ imports, and 29 of 30 `netbox.ui` attributes, are identical.**
 
 So the real differences are four, all handled in `netbox_openbao/compat.py`:
 
-- **Service ports.** 4.7 uses a `port_mappings` array; 4.6 uses `protocol` +
-  `ports`. Quick-add writes whichever the model has.
+- **Service ports.** 4.7 uses a `port_mappings` array; 4.6 used `protocol` +
+  `ports`. Quick-add writes `port_mappings` only; 4.6 is no longer supported.
 - **`Choice`.** 4.7 wraps choice entries in a class carrying a description;
   4.6 uses plain tuples. Descriptions do not render on 4.6.
 - **`ArrayAttr`.** 4.7 renders list attributes as chips; on 4.6 they are joined

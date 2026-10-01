@@ -11,13 +11,25 @@ for its write-only request fields and bounded response.
 
 ## What it creates
 
-1. An `ipam.Service` named `ssh` on the object, with a `tcp/22` port mapping —
-   or the existing one, with the port added if it is not already there.
+The chain is mandatory and always the same:
+
+`OpenBao Credential > SSH Application Service > Virtual Machine or Device`
+
+1. An `ipam.Service` (an Application Service) on the object, built from the
+   **service template** chosen in the form — the pre-seeded `SSH` template
+   (`tcp/22`) by default. The port is taken from the template and may be
+   overridden for a non-standard SSH port. An existing service of the same name
+   on the object is reused, with the port added if it is not already there.
 2. A `Credential` written to OpenBao — either `ssh-password` (login password)
    or `ssh-keypair` (private key + optional passphrase), with public metadata
    extracted into NetBox for keypairs.
-3. A `CredentialAssignment` binding the credential to the service, and a second
-   binding it to the object itself.
+3. A `CredentialAssignment` binding the credential to the service. SSH
+   credentials are **never** assigned directly to the Device or VM:
+   `CredentialAssignment.clean()` rejects it, for the UI, REST and ORM alike.
+
+The `SSH` service template is created by migration `0023` if no template of that
+name exists, and is never overwritten. If an operator deletes it, pick or create
+another template in the form.
 
 When audited host automation is needed, `netbox-rpc` resolves the credential
 through the same reveal contract and dispatches an approved procedure through
@@ -47,24 +59,15 @@ Generation happens in the NetBox process, never in browser JavaScript and never
 through OpenBao's SSH secrets engine. Both alternatives would put the private
 key somewhere this plugin does not control at the moment it exists.
 
-## Services on 4.6 and 4.7
+## NetBox 4.7 only
 
-The service this creates is shaped for whichever release is running:
+Service ports are a single `port_mappings` array of `"tcp/22"` strings, and a
+service binds to its parent through a generic foreign key. NetBox 4.6 and
+earlier are not supported; there is no `protocol` + `ports` fallback.
 
-- Protocol and port are a single `port_mappings` array of `"tcp/22"` strings,
-  not separate `protocol` and `ports` fields.
-- A service binds to its parent through a **generic foreign key**, not a device
-  or VM foreign key.
-
-Code written against 4.6 fails on both, which is why the tests assert the
-created service's shape directly rather than just its existence.
-
-## If you do not model services
-
-If `ipam.service` is not in `assignable_models`, the service step is skipped and
-the credential is assigned to the device or VM directly. An estate that does not
-model services still wants the credential attached, so this is configured-out
-rather than an error.
+`ipam.service` is in the default `assignable_models`. Denying it through
+`assignable_models_deny` makes SSH assignments made through the UI or REST API
+fail validation, because SSH access is addressed through the service.
 
 ## Permissions
 

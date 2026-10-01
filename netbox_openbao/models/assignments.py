@@ -4,10 +4,15 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from netbox.models import NetBoxModel
 
-from netbox_openbao.choices import PurposeChoices
+from netbox_openbao.choices import CredentialTypeChoices, PurposeChoices
 from netbox_openbao.config import assignable_model_labels
 
 __all__ = ('CredentialAssignment',)
+
+SSH_CREDENTIAL_TYPES = (
+    CredentialTypeChoices.TYPE_SSH_KEYPAIR,
+    CredentialTypeChoices.TYPE_SSH_PASSWORD,
+)
 
 
 class CredentialAssignment(NetBoxModel):
@@ -100,4 +105,22 @@ class CredentialAssignment(NetBoxModel):
                     'assigned_object_type': _(
                         'Credentials may not be assigned to {label}. Permitted types: {permitted}.'
                     ).format(label=label, permitted=', '.join(permitted) or _('none configured')),
+                })
+
+        # An SSH credential authenticates against an SSH endpoint, so it is
+        # bound to the Application Service that models that endpoint rather
+        # than to the Device or VM directly (Credential > Service > Device/VM).
+        if self.assigned_object_type_id and self.credential_id:
+            is_service = (
+                self.assigned_object_type.app_label == 'ipam'
+                and self.assigned_object_type.model == 'service'
+            )
+            # New assignments only: existing direct rows stay editable so a
+            # production estate is never left unable to save legacy data.
+            if self._state.adding and self.credential.credential_type in SSH_CREDENTIAL_TYPES and not is_service:
+                raise ValidationError({
+                    'assigned_object_type': _(
+                        'SSH credentials must be assigned to an SSH Application Service, '
+                        'not directly to a device or virtual machine.'
+                    ),
                 })

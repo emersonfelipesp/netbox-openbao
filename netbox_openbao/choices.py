@@ -173,3 +173,23 @@ class SSHKeyTypeChoices(ChoiceSet):
         Choice(TYPE_RSA_4096, _('RSA 4096')),
         Choice(TYPE_ECDSA_P256, _('ECDSA P-256')),
     ]
+
+
+class ServiceTypeChoices(ChoiceSet):
+    TYPE_SSH = 'ssh'
+    TYPE_TELNET = 'telnet'
+    TYPE_NETCONF = 'netconf'
+    TYPE_RESTCONF = 'restconf'
+    TYPE_GNMI = 'gnmi'
+    TYPE_SNMP = 'snmp'
+    TYPE_HTTP = 'http'
+
+    CHOICES = [
+        Choice(TYPE_SSH, _('SSH')),
+        Choice(TYPE_TELNET, _('Telnet')),
+        Choice(TYPE_NETCONF, _('NETCONF')),
+        Choice(TYPE_RESTCONF, _('RESTCONF')),
+        Choice(TYPE_GNMI, _('gNMI')),
+        Choice(TYPE_SNMP, _('SNMP')),
+        Choice(TYPE_HTTP, _('HTTP')),
+    ]

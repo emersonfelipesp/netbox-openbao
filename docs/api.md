@@ -370,7 +370,7 @@ constraints apply. Only Device and VirtualMachine targets are accepted.
 
 The request identifies the target with `target_type` (the numeric content-type
 ID; `<app_label>.<model>` strings are not accepted) and `target_id`, then
-supplies `name`, `username`, `policy`, `create_service`, `port`, and an
+supplies `name`, `username`, `policy`, an optional `service_template` (the seeded `SSH` template by default), an optional `service_name`, an optional `port`, and an
 authentication mode. An explicit JSON `null` for `key_type` is normalized as
 omission before mode-aware validation:
 

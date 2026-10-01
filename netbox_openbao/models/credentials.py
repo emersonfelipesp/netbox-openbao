@@ -206,6 +206,17 @@ class Credential(PrimaryModel):
                 name='%(app_label)s_%(class)s_unique_engine_path',
                 violation_error_message=_('A credential already occupies this path on this engine.'),
             ),
+            # Every non-blank `import_source` is a provenance marker stamped
+            # by exactly one writer for exactly one source row (see
+            # migrations/0022_credential_import_source_unique.py); two rows
+            # sharing one is always a duplicate claim, never a legitimate
+            # shared value. Partial so credentials nobody imported (a blank
+            # column) never collide with each other.
+            models.UniqueConstraint(
+                fields=('import_source',),
+                condition=~models.Q(import_source=''),
+                name='%(app_label)s_%(class)s_unique_import_source',
+            ),
         )
         # Registers the `reveal` model action, yielding the assignable and
         # constrainable permission `netbox_openbao.reveal_credential`, entirely

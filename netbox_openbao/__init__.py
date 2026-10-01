@@ -29,13 +29,13 @@ class NetBoxOpenBaoConfig(PluginConfig):
     # `quickadd` now handles both, detecting which from the model's own field
     # set. Every other NetBox API this plugin imports exists in both releases.
     #
-    # The floor matters operationally: the estate runs 4.6.5, and netbox-nms
-    # supports 4.5.8-4.6.99, so a 4.7 floor left no version where the two could
-    # be installed together and made netbox-nms#213 permanently dormant.
+    # 4.7 is the floor because SSH credentials are tied to an Application
+    # Service (`ipam.Service`) whose ports are stored as `port_mappings`, the
+    # representation NetBox 4.7 introduced. Earlier releases are not supported.
     #
     # The gate compares RELEASE.version, which is "4.7.0" on 4.7.0-beta2 (the
     # beta designation is a separate field), so this still loads on the beta.
-    min_version = '4.6.0'
+    min_version = '4.7.0'
     max_version = '4.7.99'
 
     required_plugins = ['netbox_rpc']

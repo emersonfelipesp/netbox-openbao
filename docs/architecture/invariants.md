@@ -133,6 +133,7 @@ Fix the test.
 | Claim | Enforced by | Test |
 |---|---|---|
 | Only permitted object types accept credentials | `CredentialAssignment.clean()` — on the **model**, so the API and direct ORM callers are held to it too | `test_assignments.test_assignment_to_forbidden_type_is_rejected`, `test_quickadd.test_unassignable_target_is_a_404` |
+| An SSH credential is tied to an Application Service, never directly to a Device or VM (`Credential > ipam.Service > Device/VM`) | `CredentialAssignment.clean()` — on the **model**, so UI, API and ORM are held to it | `test_quickadd.test_ssh_credential_cannot_be_assigned_directly_to_a_device` |
 | Exactly one primary per object and purpose | a partial unique constraint | `test_assignments.test_only_one_primary_per_object_and_purpose` |
 | At most one default engine | a partial unique constraint | `test_models.test_only_one_engine_may_be_default` |
 | A credential's engine matches its policy's | `Credential.clean()` | `test_models.test_engine_must_match_policy_engine` |

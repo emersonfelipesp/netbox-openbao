@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from dcim.models import Device
 from django.core.exceptions import ValidationError as DjangoValidationError
+from ipam.models import ServiceTemplate
 from netbox.api.fields import ChoiceField, ContentTypeField
 from netbox.api.gfk_fields import GFKSerializerField
 from netbox.api.serializers import (
@@ -35,6 +36,7 @@ from netbox_openbao.choices import (
     CredentialTypeChoices,
     EngineStatusChoices,
     PurposeChoices,
+    ServiceTypeChoices,
     SSHKeyTypeChoices,
 )
 from netbox_openbao.config import get_config
@@ -49,6 +51,8 @@ from netbox_openbao.models import (
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
+    ServiceEndpoint,
+    SSHPublicKey,
 )
 from netbox_openbao.rpc import ENGINE_BOUND_PARAM_KEYS, OPENBAO_READ_PROCEDURES, OPENBAO_WRITE_PROCEDURES
 from netbox_openbao.secrets.registry import validate_payload
@@ -77,6 +81,8 @@ __all__ = (
     'ConfirmClusterActionSerializer',
     'RemoveRaftPeerSerializer',
     'RestoreRaftSnapshotSerializer',
+    'ServiceEndpointSerializer',
+    'SSHPublicKeySerializer',
 )
 
 
@@ -526,6 +532,18 @@ class CredentialSerializer(PrimaryModelSerializer):
             })
 
     def validate(self, data):
+        # A `CredentialSerializer(nested=True)` field (ServiceEndpoint.credential,
+        # CredentialAssignment.credential) resolves a bare PK straight to the
+        # `Credential` instance in `to_internal_value` — see
+        # `BaseModelSerializer.to_internal_value` — and DRF's `Field.run_validation`
+        # still calls `self.validate(value)` on it regardless. `data` is then a
+        # model instance, not a dict, and `ValidatedModelSerializer.validate()`
+        # already returns early for this case. Do the same before treating `data`
+        # as a dict, or a bare-PK write 500s on `AttributeError: 'Credential'
+        # object has no attribute 'pop'`.
+        if self.nested:
+            return data
+
         # NetBox's ValidatedModelSerializer builds `Model(**attrs)` to run
         # full_clean(), so `secret_data` must not be present when super() runs
         # — Credential has no such field, by design. Pop it, validate it on its
@@ -571,8 +589,11 @@ class QuickAddSSHRequestSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True, max_length=200)
     username = serializers.CharField(max_length=200)
     policy = serializers.PrimaryKeyRelatedField(queryset=CredentialPolicy.objects.all())
-    create_service = serializers.BooleanField(required=False, default=True)
-    port = serializers.IntegerField(required=False, default=22, min_value=1, max_value=65535)
+    service_template = serializers.PrimaryKeyRelatedField(
+        queryset=ServiceTemplate.objects.all(), required=False, allow_null=True,
+    )
+    service_name = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    port = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=65535)
     auth_method = serializers.ChoiceField(choices=('password', 'keypair'))
     source = serializers.ChoiceField(
         choices=('existing', 'generated', 'provided'), required=False, allow_null=True,
@@ -709,6 +730,99 @@ class CredentialAssignmentSerializer(NetBoxModelSerializer):
         brief_fields = ('id', 'url', 'display', 'credential', 'purpose')
 
 
+class ServiceEndpointCredentialSerializer(CredentialSerializer):
+    """
+    Bounded credential brief for nesting under `ServiceEndpoint` and the
+    `resolve` view.
+
+    Deliberately narrower than `CredentialSerializer.Meta.brief_fields`: it
+    adds `username` (a caller resolving an endpoint needs to know *who* it
+    authenticates as) and omits `status`/`description`, which resolution
+    callers do not need. Kept separate from `brief_fields` so widening the
+    generic credential brief elsewhere never widens what an endpoint or
+    resolve response exposes about a credential the caller cannot otherwise
+    view.
+    """
+
+    class Meta(CredentialSerializer.Meta):
+        fields = ('id', 'url', 'display', 'name', 'credential_type', 'username')
+
+
+class ServiceEndpointSerializer(NetBoxModelSerializer):
+    url = serializers.HyperlinkedIdentityField(
+        view_name='plugins-api:netbox_openbao-api:serviceendpoint-detail'
+    )
+    assigned_object_type = ContentTypeField(queryset=assignable_content_types())
+    assigned_object = GFKSerializerField(read_only=True)
+    service_type = ChoiceField(choices=ServiceTypeChoices)
+    # Writable exactly like any other `nested=True` field (accepts a PK or
+    # attrs; see `BaseModelSerializer.to_internal_value`). Read output is
+    # overridden below so a credential the caller cannot view never renders,
+    # even though `CredentialSerializer(nested=True)` would otherwise expose
+    # its full `Meta.fields` here regardless of credential object permissions.
+    credential = CredentialSerializer(nested=True, required=False, allow_null=True)
+
+    class Meta:
+        model = ServiceEndpoint
+        fields = (
+            'id', 'url', 'display_url', 'display', 'assigned_object_type',
+            'assigned_object_id', 'assigned_object', 'service_type', 'host', 'port',
+            'ssh_known_hosts_entry', 'ssh_strict_host_key_checking', 'options',
+            'credential', 'tags', 'custom_fields', 'created', 'last_updated',
+        )
+        brief_fields = ('id', 'url', 'display', 'service_type', 'host', 'port')
+
+    def validate_credential(self, credential):
+        """Reject a credential the requesting user may not view.
+
+        Endpoint permissions do not imply credential permissions; without this
+        check a caller could attach, and pin against deletion, a credential it
+        cannot see.
+        """
+        if credential is None:
+            return credential
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user is None or not Credential.objects.restrict(user, 'view').filter(pk=credential.pk).exists():
+            raise serializers.ValidationError('Credential not found or not permitted.')
+        return credential
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if 'credential' in data:
+            data['credential'] = self._bounded_credential(instance)
+        return data
+
+    def _bounded_credential(self, instance):
+        """Null unless the requesting user may view the credential itself."""
+        if instance.credential_id is None:
+            return None
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user is None:
+            return None
+        visible = Credential.objects.restrict(user, 'view').filter(pk=instance.credential_id).exists()
+        if not visible:
+            return None
+        return ServiceEndpointCredentialSerializer(instance.credential, context=self.context).data
+
+
+class SSHPublicKeySerializer(NetBoxModelSerializer):
+    url = serializers.HyperlinkedIdentityField(
+        view_name='plugins-api:netbox_openbao-api:sshpublickey-detail'
+    )
+
+    class Meta:
+        model = SSHPublicKey
+        fields = (
+            'id', 'url', 'display_url', 'display', 'user', 'service_endpoint',
+            'public_key', 'fingerprint', 'key_type', 'installed_at', 'tags',
+            'custom_fields', 'created', 'last_updated',
+        )
+        read_only_fields = ('fingerprint', 'key_type')
+        brief_fields = ('id', 'url', 'display', 'user', 'fingerprint', 'key_type')
+
+
 class CredentialAccessLogSerializer(BaseModelSerializer):
     """
     Read-only. The log is append-only evidence, not an editable object.
@@ -824,3 +938,50 @@ class OpenBaoProcedureRunSerializer(NetBoxModelSerializer):
         read_only_fields = (
             'engine', 'procedure_name', 'initiated_by', 'rpc_execution_id', 'status', 'result', 'error_message',
         )
+
+
+class _NewCredentialSerializer(serializers.Serializer):
+    """A credential to create together with its endpoint; material is write-only."""
+
+    name = serializers.CharField(max_length=200)
+    credential_type = serializers.CharField(max_length=100)
+    policy = serializers.PrimaryKeyRelatedField(queryset=CredentialPolicy.objects.all())
+    username = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    secret_data = serializers.DictField(write_only=True)
+
+
+class EndpointWithCredentialRequestSerializer(serializers.Serializer):
+    """Atomic create-or-update of a ServiceEndpoint and the credential it uses."""
+
+    assigned_object_type = ContentTypeField(queryset=assignable_content_types())
+    assigned_object_id = serializers.IntegerField(min_value=1)
+    service_type = ChoiceField(choices=ServiceTypeChoices)
+    host = serializers.CharField(required=False, allow_blank=True, max_length=255, default='')
+    port = serializers.IntegerField(min_value=1, max_value=65535)
+    options = serializers.DictField(required=False, default=dict)
+    ssh_known_hosts_entry = serializers.CharField(required=False, allow_blank=True, default='')
+    ssh_strict_host_key_checking = serializers.BooleanField(required=False, default=True)
+    existing_credential = serializers.PrimaryKeyRelatedField(
+        queryset=Credential.objects.all(), required=False, allow_null=True,
+    )
+    new_credential = _NewCredentialSerializer(required=False, allow_null=True)
+    idempotency_key = serializers.CharField(required=False, allow_blank=False, max_length=120)
+
+    def validate(self, attrs):
+        if bool(attrs.get('existing_credential')) == bool(attrs.get('new_credential')):
+            raise serializers.ValidationError(
+                'Provide exactly one of existing_credential or new_credential.'
+            )
+        return attrs
+
+
+class EndpointRevealRequestSerializer(serializers.Serializer):
+    """What the caller approved; the reveal is refused unless all of it still holds."""
+
+    reason = serializers.CharField(max_length=500)
+    endpoint_revision = serializers.CharField(max_length=64)
+    object_type = serializers.CharField(max_length=100)
+    object_id = serializers.IntegerField(min_value=1)
+    credential_uuid = serializers.UUIDField()
+    credential_type = serializers.CharField(max_length=100)
+    kv_version = serializers.IntegerField(min_value=0)

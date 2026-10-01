@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- SSH credentials (`ssh-keypair`, `ssh-password`) must now be tied to an SSH
+  Application Service: the chain is OpenBao Credential > Application Service
+  (`ipam.Service`) > Device or Virtual Machine. Assigning an SSH credential
+  directly to a Device or VM is rejected.
+- Added a seeded `SSH` service template (`tcp/22`). Quick-add now builds the
+  Application Service from a chosen service template and creates the
+  credential on the same form; the optional "create service" checkbox is gone
+  and the REST quick-add accepts `service_template` and `service_name` instead
+  of `create_service`.
+- NetBox 4.7 is now required; the 4.6 `protocol` + `ports` service path was
+  removed. Existing direct Device/VM assignments of SSH credentials are not
+  rewritten and stay editable; the Application Service rule applies to new
+  assignments.
+
 ## 0.1.0.post2 - 2026-10-01
 
 - Added atomic SSH quick-add and server-side SSH key-generation REST actions
@@ -48,6 +64,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+
+- Added authoritative service endpoint and SSH public-key inventory, a
+  permission-constrained metadata-only credential resolver, and an idempotent
+  copy-only importer for legacy NMS/network device, VM, service, and
+  observability credentials. Dry runs perform no database or OpenBao writes.
 
 - Complete the pinned OpenBao 2.6.2 Web UI replacement with guarded Raft join;
   typed lease lookup, renewal, revocation, prefix revocation, and force

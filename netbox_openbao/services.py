@@ -385,6 +385,43 @@ def defer_custom_metadata(credential_ids, *, using):
         transaction.on_commit(callback, using=using)
 
 
+def create_service_endpoint(**fields):
+    """Create or update endpoint metadata through the validated write boundary."""
+    from netbox_openbao.models import ServiceEndpoint
+
+    endpoint = fields.pop('instance', None) or ServiceEndpoint()
+    for name, value in fields.items():
+        setattr(endpoint, name, value)
+    endpoint.full_clean()
+    endpoint.save()
+    return endpoint
+
+
+def create_ssh_public_key(**fields):
+    """Create or update public SSH material through the validated write boundary."""
+    from netbox_openbao.models import SSHPublicKey
+
+    public_key = fields.pop('instance', None) or SSHPublicKey()
+    for name, value in fields.items():
+        setattr(public_key, name, value)
+    public_key.full_clean(exclude=('fingerprint', 'key_type'))
+    public_key.save()
+    return public_key
+
+
+def assign_credential(**fields):
+    """Create a validated assignment and publish its committed metadata projection."""
+    from netbox_openbao.models import CredentialAssignment
+
+    assignment = fields.pop('instance', None) or CredentialAssignment()
+    for name, value in fields.items():
+        setattr(assignment, name, value)
+    assignment.full_clean()
+    assignment.save()
+    defer_custom_metadata((assignment.credential_id,), using=assignment._state.db or 'default')
+    return assignment
+
+
 @sensitive_variables()
 def prepare_material(credential_type, payload):
     """

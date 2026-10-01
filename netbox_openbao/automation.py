@@ -15,6 +15,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
@@ -109,9 +110,23 @@ def _target(authority: Any, actor: Any) -> ContentType:
 
 
 def _assignment_rows(authority: Any, content_type: ContentType) -> Any:
+    """Assignments that bind a credential to the target.
+
+    A credential reaches a Device or VM either directly (legacy assignments) or
+    through an Application Service on it (Credential > Service > Device/VM),
+    which is how SSH credentials are always bound.
+    """
+    from ipam.models import Service
+
     reference = authority.reference
+    target_id = reference.target.object_id
+    service_ids = Service.objects.filter(
+        parent_object_type=content_type, parent_object_id=target_id,
+    ).values('pk')
+    service_type = ContentType.objects.get_for_model(Service)
     rows = CredentialAssignment.objects.filter(
-        assigned_object_type=content_type, assigned_object_id=reference.target.object_id,
+        Q(assigned_object_type=content_type, assigned_object_id=target_id)
+        | Q(assigned_object_type=service_type, assigned_object_id__in=service_ids),
         purpose=reference.purpose, enabled=True,
     )
     if reference.assignment_id is not None:
@@ -119,6 +134,28 @@ def _assignment_rows(authority: Any, content_type: ContentType) -> Any:
     else:
         rows = rows.filter(credential__uuid=reference.credential_uuid)
     return rows
+
+
+def _check_service_visible(assignment: CredentialAssignment, actor: Any) -> None:
+    """A service-bound assignment also requires the actor to see the service."""
+    from ipam.models import Service
+
+    if assignment.assigned_object_type.model_class() is not Service:
+        return
+    if not Service.objects.restrict(actor, 'view').filter(pk=assignment.assigned_object_id).exists():
+        raise AutomationResolutionDenied()
+
+
+def _lock_candidate_service(assignment: CredentialAssignment) -> Any:
+    """Lock the Service a service-bound assignment points at, if any."""
+    from ipam.models import Service
+
+    if assignment.assigned_object_type.model_class() is not Service:
+        return None
+    service = Service.objects.select_for_update().filter(pk=assignment.assigned_object_id).first()
+    if service is None:
+        raise AutomationResolutionDenied()
+    return service
 
 
 def _lock_metadata(authority: Any) -> tuple[CredentialAssignment, Credential]:
@@ -134,9 +171,16 @@ def _lock_metadata(authority: Any) -> tuple[CredentialAssignment, Credential]:
     if len(matches) != 1:
         raise AutomationResolutionDenied()
     candidate = matches[0]
+    # A service-bound assignment authorizes the target only through the
+    # Service's parent. Lock that row first (always before the credential
+    # graph) so a concurrent reparent or delete cannot detach it between the
+    # check and delivery, then revalidate once every wait is over.
+    service = _lock_candidate_service(candidate)
     credential = lock_credential_graph(candidate.credential_id)
     assignment = CredentialAssignment.objects.select_for_update().get(pk=candidate.pk)
     if assignment.credential_id != credential.pk:
+        raise AutomationResolutionDenied()
+    if service is not None and not _assignment_rows(authority, content_type).filter(pk=assignment.pk).exists():
         raise AutomationResolutionDenied()
     stored = get_schema(credential.credential_type).get('stored')
     if stored is not None:
@@ -189,6 +233,7 @@ def _resolve_metadata(authority: Any) -> tuple[CredentialAssignment, Credential,
     content_type = _target(authority, actor)
     if not _assignment_rows(authority, content_type).restrict(actor, 'view').filter(pk=assignment.pk).exists():
         raise AutomationResolutionDenied()
+    _check_service_visible(assignment, actor)
     _check_credential(credential, actor)
     if credential.policy.require_reason and not authority.reason.strip():
         raise AutomationResolutionDenied()

@@ -13,24 +13,24 @@ the single-chokepoint design exists to prevent.
 
 import logging
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 
 from netbox_openbao.choices import CredentialTypeChoices, PurposeChoices, SSHKeyTypeChoices
-from netbox_openbao.config import assignable_model_labels, get_config
+from netbox_openbao.config import get_config
 from netbox_openbao.material_transactions import material_operation
 from netbox_openbao.models import Credential, CredentialAssignment
-from netbox_openbao.nms_bridge import sync_ssh_password_to_nms
 from netbox_openbao.secrets.generators import generate_ssh_keypair
 from netbox_openbao.services import store_credential
 
-__all__ = ('SSH_SERVICE_NAME', 'quick_add_ssh')
+__all__ = ('SSH_SERVICE_NAME', 'SSH_TEMPLATE_NAME', 'get_ssh_service_template', 'quick_add_ssh')
 
 logger = logging.getLogger('netbox.plugins.netbox_openbao.quickadd')
 
 SSH_SERVICE_NAME = 'ssh'
 DEFAULT_SSH_PORT = 22
+SSH_TEMPLATE_NAME = 'SSH'
 
 
 def _accept_credential(_credential):
@@ -43,97 +43,97 @@ def _service_model():
     return Service
 
 
-def _services_are_assignable():
-    return 'ipam.service' in assignable_model_labels()
+def get_ssh_service_template():
+    """The seeded `SSH` service template, or None if an operator removed it."""
+    from ipam.models import ServiceTemplate
+
+    return ServiceTemplate.objects.filter(name__iexact=SSH_TEMPLATE_NAME).first()
 
 
-def _service_uses_port_mappings():
-    """Whether this NetBox represents a service's ports as `port_mappings`.
-
-    4.7 replaced `protocol` + `ports` with a single `port_mappings` array of
-    `"tcp/22"` strings. Detected from the model's own field set rather than
-    from a version string, because the field is the thing actually being used —
-    a version comparison would be a second, weaker statement of the same fact,
-    and would need editing again at 4.8.
+def _port_mappings(template, port):
     """
-    Service = _service_model()
-    return any(field.name == 'port_mappings' for field in Service._meta.get_fields())
+    `port_mappings` for a new service: the template's, with `port` applied.
 
-
-def _service_port_kwargs(port):
-    """Model kwargs describing "TCP on `port`", in whichever shape this NetBox uses."""
-    if _service_uses_port_mappings():
-        return {'port_mappings': [f'tcp/{port}']}
-
-    from ipam.choices import ServiceProtocolChoices
-
-    return {'protocol': ServiceProtocolChoices.PROTOCOL_TCP, 'ports': [port]}
-
-
-def _service_has_port(service, port):
-    if _service_uses_port_mappings():
-        return f'tcp/{port}' in service.port_mappings
-    from ipam.choices import ServiceProtocolChoices
-
-    return service.protocol == ServiceProtocolChoices.PROTOCOL_TCP and port in service.ports
-
-
-def _add_port_to_service(service, port):
-    """Widen an existing service to also cover `port`.
-
-    On 4.6 a service carries one protocol and a list of ports, so a service
-    that is not already TCP cannot be widened to a TCP port by appending — the
-    protocol itself would have to change, silently altering what the existing
-    service means. That is left alone and reported, rather than repurposed.
+    NetBox 4.7 stores a service's ports as one `protocol/port` array. The first
+    TCP mapping of the template is replaced by the chosen port; a template with
+    no TCP mapping gains one. `port=None` keeps the template exactly as it is.
     """
-    if _service_uses_port_mappings():
-        service.port_mappings = [*service.port_mappings, f'tcp/{port}']
-        return True
+    mappings = list(template.port_mappings) if template is not None else []
+    if port is None:
+        return mappings or [f'tcp/{DEFAULT_SSH_PORT}']
 
-    from ipam.choices import ServiceProtocolChoices
-
-    if service.protocol != ServiceProtocolChoices.PROTOCOL_TCP:
-        logger.warning(
-            'Service %s on %s is %s, not TCP; leaving it alone rather than '
-            'changing the protocol of an existing service.',
-            service.name, service.parent, service.protocol,
-        )
-        return False
-
-    service.ports = [*service.ports, port]
-    return True
+    chosen = f'tcp/{port}'
+    for index, mapping in enumerate(mappings):
+        if mapping.lower().startswith('tcp/'):
+            mappings[index] = chosen
+            return list(dict.fromkeys(mappings))
+    return [*mappings, chosen]
 
 
-def _get_or_create_service(target, port, ip_addresses=None):
+def _require_service_permission(user, action, service):
+    """Creating or widening a Service needs the caller's own IPAM permission.
+
+    Credential-creation rights do not confer IPAM mutation. `user=None` is a
+    non-HTTP caller that has already been authorized by its own code path.
     """
-    Find or create the SSH service on `target`.
+    if user is None:
+        return
+    if not user.has_perm(f'ipam.{action}_service'):
+        raise PermissionDenied(f'ipam.{action}_service is required to manage the SSH service.')
+    if service is not None:
+        from ipam.models import Service
 
-    Supports both port representations. NetBox 4.7 replaced `protocol` +
-    `ports` with a single `port_mappings` array; the parent GenericForeignKey
-    is common to 4.6 and 4.7, so only the ports differ.
+        if not Service.objects.restrict(user, action).filter(pk=service.pk).exists():
+            raise PermissionDenied(f'ipam.{action}_service does not permit this service.')
+
+
+def _get_or_create_service(target, template, port, name, ip_addresses=None, user=None):
+    """
+    Find or create the Application Service on `target` that holds the credential.
+
+    An existing service of the same name on the same parent is reused and
+    widened to cover the chosen port, never replaced.
     """
     from django.contrib.contenttypes.models import ContentType
 
     Service = _service_model()
     parent_type = ContentType.objects.get_for_model(target)
+    mappings = _port_mappings(template, port)
+    if not any(m.lower().startswith('tcp/') for m in mappings):
+        raise ValidationError(_('The service template must define a TCP port for SSH.'))
 
-    existing = Service.objects.filter(
+    # Service has no uniqueness constraint on (parent, name), so concurrent
+    # quick-adds are serialized on the parent row. The lookup then locks the
+    # existing service, so concurrent widening cannot drop a requested port.
+    type(target).objects.select_for_update().filter(pk=target.pk).first()
+    existing = Service.objects.select_for_update().filter(
         parent_object_type=parent_type,
         parent_object_id=target.pk,
-        name=SSH_SERVICE_NAME,
+        name=name,
     ).first()
     if existing is not None:
-        if not _service_has_port(existing, port) and _add_port_to_service(existing, port):
+        if not any(m.lower().startswith('tcp/') for m in existing.port_mappings):
+            raise ValidationError(
+                _('A service named "%(name)s" already exists on this object and is not a TCP service.')
+                % {'name': name}
+            )
+        missing = [m for m in mappings if m not in existing.port_mappings]
+        if missing:
+            _require_service_permission(user, 'change', existing)
+            existing.port_mappings = [*existing.port_mappings, *missing]
             existing.full_clean()
             existing.save()
         return existing, False
 
+    _require_service_permission(user, 'add', None)
     service = Service(
         parent_object_type=parent_type,
         parent_object_id=target.pk,
-        name=SSH_SERVICE_NAME,
-        **_service_port_kwargs(port),
+        name=name,
+        port_mappings=mappings,
     )
+    if template is not None and template.description:
+        service.description = template.description
     service.full_clean()
     service.save()
     if ip_addresses:
@@ -155,17 +155,22 @@ def quick_add_ssh(
     auth_method='keypair',
     generate=False,
     key_type=None,
-    port=DEFAULT_SSH_PORT,
-    create_service=True,
+    port=None,
+    service_template=None,
+    service_name=None,
     ip_addresses=None,
     purpose=PurposeChoices.PURPOSE_LOGIN,
     user=None,
     request=None,
-    sync_nms=True,
     conform=_accept_credential,
 ):
     """
     Give `target` SSH access, in one transaction.
+
+    The credential is tied to an SSH Application Service (`ipam.Service`) on
+    `target`, created from `service_template` (default: the seeded ``SSH``
+    template) and `port`. The credential is assigned to that service only —
+    the chain is Credential > Application Service > Device or VM.
 
     Password auth stores ``TYPE_SSH_PASSWORD`` in OpenBao. Keypair auth uses
     exactly one of ``existing_credential``, ``private_key``, or ``generate``.
@@ -188,15 +193,20 @@ def quick_add_ssh(
     generated_public_key = ''
 
     with transaction.atomic():
-        service = None
-        if create_service and _services_are_assignable():
-            service, _created = _get_or_create_service(target, port, ip_addresses)
-        elif create_service:
-            # Configured out rather than failed: an estate that does not model
-            # services still wants the credential on the device.
-            logger.info(
-                'ipam.service is not in assignable_models; skipping service creation for %s', target
-            )
+        template = service_template or get_ssh_service_template()
+        if template is not None and user is not None:
+            from ipam.models import ServiceTemplate
+
+            if not ServiceTemplate.objects.restrict(user, 'view').filter(pk=template.pk).exists():
+                raise PermissionDenied('The selected service template is not permitted.')
+        service, _created = _get_or_create_service(
+            target,
+            template,
+            port,
+            service_name or (template.name.lower() if template is not None else SSH_SERVICE_NAME),
+            ip_addresses,
+            user,
+        )
 
         if existing_credential is not None:
             credential = existing_credential
@@ -267,25 +277,7 @@ def quick_add_ssh(
                 subject=credential,
             )
 
-        # Bind to the service when there is one, and to the object itself
-        # otherwise — the point of the action is that the target ends up with a
-        # credential attached, not that a service exists.
-        assignment_target = service if service is not None else target
-        _assign(credential, assignment_target, purpose)
-
-        if service is not None and _is_assignable(target):
-            _assign(credential, target, purpose)
-
-        if auth_method == 'password' and sync_nms:
-            sync_ssh_password_to_nms(
-                target,
-                username=username,
-                password=password,
-                name=name or f'{target} ssh',
-                port=port,
-                user=user,
-                request=request,
-            )
+        _assign(credential, service, purpose)
 
         # Authorization constraints on a newly created credential can only be
         # evaluated after its final metadata and assignments exist. Invoke the
@@ -295,11 +287,6 @@ def quick_add_ssh(
         conform(credential)
 
     return credential, service, generated_public_key
-
-
-def _is_assignable(obj):
-    label = f'{obj._meta.app_label}.{obj._meta.model_name}'
-    return label in assignable_model_labels()
 
 
 def _assign(credential, obj, purpose):
