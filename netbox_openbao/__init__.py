@@ -10,7 +10,7 @@ convention.
 
 from netbox.plugins import PluginConfig
 
-__version__ = '0.1.0.post1'
+__version__ = '0.1.0.post2'
 
 
 class NetBoxOpenBaoConfig(PluginConfig):

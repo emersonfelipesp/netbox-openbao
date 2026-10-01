@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0.post2 - 2026-10-01
+
+- Added atomic SSH quick-add and server-side SSH key-generation REST actions
+  with bounded no-store responses, live target and permission enforcement,
+  request-scoped secret custody, transactional compensation, and explicit
+  unknown-outcome handling.
+- Restored NetBox 4.6 and 4.7 quick-add compatibility by accepting the stable
+  numeric content-type primary-key contract, rejecting labels and unassignable
+  models, and preserving the configured key type when generated-key requests
+  provide JSON `null`.
+- Added exact `import_source` filtering to the credential API so audited RPC
+  consumers resolve one imported legacy credential without receiving unrelated
+  credential metadata and falsely reporting an ambiguous mapping.
+- Added security, transaction, metadata-projection, quick-add compatibility,
+  and credential-provenance regression coverage for these public API changes.
+- No model or migration changes.
+
 ## 0.1.0.post1 - 2026-09-18
 
 - Fixed the OpenBao procedure-run list page (Audit > Procedure runs), which
