@@ -188,8 +188,10 @@ class CredentialFilterSet(NetBoxModelFilterSet):
 
     class Meta:
         model = Credential
-        fields = ('id', 'name', 'uuid', 'username', 'key_type', 'cert_serial', 'path',
-                  'rotation_interval', 'kv_version', 'description')
+        fields = (
+            'id', 'name', 'uuid', 'username', 'key_type', 'cert_serial', 'path',
+            'import_source', 'rotation_interval', 'kv_version', 'description',
+        )
 
     def filter_expires_within_days(self, queryset, name, value):
         if value in (None, ''):

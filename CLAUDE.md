@@ -262,6 +262,10 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
 - **Filterset fields that traverse a relation need an explicit `field_name`.**
   NetBox derives extra lookups from it and raises `ValueError: Invalid field
   name/lookup` when the bare filter name does not resolve on the model.
+- **Keep exact `Credential.import_source` filtering public.** The RPC backend
+  uses this indexed provenance field to map a legacy `DeviceCredential` to one
+  imported OpenBao credential. If the filter disappears, NetBox ignores the
+  unknown parameter and unrelated credentials create a false ambiguity.
 - **`views.py` must be imported in `ready()`.** `@register_model_view`
   decorators live there and `urls.py` resolves them via `get_model_urls()`. Drop
   that import and every plugin URL 404s.

@@ -62,6 +62,33 @@ class OpenBaoAPITestCase(MaterialTransactionTestMixin, APITestCase):
 
 class CredentialReadTest(OpenBaoAPITestCase):
 
+    def test_list_filters_exact_import_source(self):
+        self.add_permissions('netbox_openbao.view_credential')
+        self.credential.import_source = 'netbox_nms.DeviceCredential:77'
+        self.credential.save(update_fields=('import_source',))
+
+        response = self.client.get(
+            reverse('plugins-api:netbox_openbao-api:credential-list'),
+            {'import_source': 'netbox_nms.DeviceCredential:77'},
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['id'], self.credential.pk)
+
+    def test_list_import_source_filter_returns_no_unrelated_credentials(self):
+        self.add_permissions('netbox_openbao.view_credential')
+
+        response = self.client.get(
+            reverse('plugins-api:netbox_openbao-api:credential-list'),
+            {'import_source': 'netbox_nms.DeviceCredential:77'},
+            **self.header,
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.data['count'], 0)
+
     def test_detail_never_returns_material(self):
         self.add_permissions('netbox_openbao.view_credential')
         url = reverse('plugins-api:netbox_openbao-api:credential-detail', kwargs={'pk': self.credential.pk})

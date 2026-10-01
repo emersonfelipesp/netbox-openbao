@@ -39,7 +39,7 @@ internal automation resolution receipts have no CRUD endpoint.
 | `GET/POST /engines/` | Secret engines |
 | `GET /engines/{id}/health/` | Probe and record engine status |
 | `GET/POST /policies/` | Credential policy tiers |
-| `GET/POST /credentials/` | Credential inventory |
+| `GET/POST /credentials/` | Credential inventory; supports exact `import_source` provenance filtering |
 | `GET`/`POST` `/credentials/{id}/reveal/` | **Resolve material** — needs `view_credential` + `reveal_credential` |
 | `POST /credentials/{id}/rotate/` | Write a new version and make it live immediately |
 | `POST /credentials/{id}/stage/` | Write a new version **without** putting it into service |
