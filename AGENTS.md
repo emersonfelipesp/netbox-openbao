@@ -1,8 +1,5 @@
 # netbox-openbao — Agent Guide
 
-> Identical to `CLAUDE.md`; kept as a separate file so Codex CLI and other
-> agents that look for `AGENTS.md` find the same guidance.
-
 A NetBox plugin that keeps **secret material in OpenBao** while **NetBox owns
 credential inventory and relationships**.
 
@@ -564,11 +561,17 @@ NetBox 4.6.5 as the backward-regression target.
   `POST service-endpoints/{id}/reveal-credential/` reveals only while the
   endpoint is enabled (`options.enabled` is not false), assigned to the expected
   object, unchanged since the approved revision, and bound to the expected
-  credential uuid, type, and **required** `kv_version` (compared with
-  `live_kv_version` and read at exactly that version). Checks and the read run
+  credential uuid, type, and **required** `kv_version` (compared with the
+  served version — `live_kv_version`, or `kv_version` when nothing was ever
+  promoted — and read at exactly that version). Checks and the read run
   under `select_for_update()` on both rows, so a concurrent disable, rotation, or
-  reassignment waits; any mismatch is `409` with no material. Do not split these
-  back into separate client requests.
+  reassignment waits; any mismatch is `409` with no material. The locked
+  endpoint must still reference the locked credential (`credential_id`), which
+  catches a rebinding that did not advance `last_updated`. Both paths drop
+  NetBox's per-request `_object_perm_cache` and re-check permissions from
+  committed state once their locks are held, so a permission revoked while the
+  request waited stops the write or reveal. Do not split these back into
+  separate client requests.
 
 - **`ServiceEndpointSerializer.credential` and `ResolveView`'s credential
   representation are permission-bounded, never the full `CredentialSerializer`.**

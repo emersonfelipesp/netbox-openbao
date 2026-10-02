@@ -236,7 +236,7 @@ class SettingsNavigationTest(TestCase):
         """
         NetBox resolves <app_label>/<model_name>.html for every ObjectView even
         when the page is entirely panel-driven; without the stub the page raises
-        TemplateDoesNotExist. This trap is already recorded in CLAUDE.md and has
+        TemplateDoesNotExist. This trap is already recorded in AGENTS.md and has
         cost this plugin a debugging cycle before.
         """
         from django.template.loader import get_template

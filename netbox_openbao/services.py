@@ -197,7 +197,7 @@ def enforce_policy_access(credential, user, action=None, request=None):
 
     It was. The check lived only in `api/views.CredentialViewSet._authorize`,
     so a user in none of the tier's groups was refused by the API and served
-    by the web UI — which is the drift `CLAUDE.md` warns about, and a
+    by the web UI — which is the drift `AGENTS.md` warns about, and a
     disclosure bug rather than an inconsistency.
 
     An empty group list means the tier does not use the gate, which is the
