@@ -17,14 +17,17 @@ You need:
 
 `argv` is readable by any process on the host via `/proc/<pid>/cmdline`, and it
 lands in shell history. A key passed that way is compromised the moment it is
-typed, so the command does not accept one. Use the environment:
+typed, so the command does not accept one. Run interactively for a hidden
+prompt, or put the key in a protected file:
 
 ```bash
-read -rs NETBOX_SECRETS_SESSION_KEY   # not echoed, not in history
-export NETBOX_SECRETS_SESSION_KEY
+install -m 600 /dev/null /run/netbox-secrets-session-key
+# Populate the file through the deployment secret mechanism, then:
+python manage.py openbao_import_secrets --engine primary --policy imported \
+  --session-key-file /run/netbox-secrets-session-key --dry-run
 ```
 
-or run interactively and be prompted.
+Delete the file after the import.
 
 ## Dry run first
 

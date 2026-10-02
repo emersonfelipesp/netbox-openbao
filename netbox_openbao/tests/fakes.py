@@ -3,7 +3,27 @@
 from netbox_openbao.backends.base import SecretBackend
 from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoError, OpenBaoNotFound
 
-__all__ = ('FakeBackend', 'install_fake_backend')
+__all__ = ('AuthMaterialStub', 'FakeBackend', 'install_fake_backend')
+
+
+class AuthMaterialStub:
+    """Minimal auth-record interface for transport-only unit tests."""
+
+    pk = 'test'
+    revision = 1
+    cache_identity = 'test:1'
+
+    def __init__(self, **values):
+        self.values = values
+
+    def is_configured(self, name):
+        return bool(self.values.get(name))
+
+    def get_secret(self, name):
+        return self.values.get(name, '')
+
+    def token_cache_key(self, engine_slug):
+        return f'netbox_openbao:test-token:{engine_slug}'
 
 
 class FakeBackend(SecretBackend):
@@ -16,8 +36,8 @@ class FakeBackend(SecretBackend):
     delete_calls = []
     metadata_calls = []
 
-    def __init__(self, engine, env_prefix=None):
-        super().__init__(engine, env_prefix=env_prefix)
+    def __init__(self, engine, auth_material=None):
+        super().__init__(engine, auth_material=auth_material)
 
     @classmethod
     def reset(cls):
@@ -128,6 +148,9 @@ class FakeBackend(SecretBackend):
     def health(self):
         from netbox_openbao.choices import EngineStatusChoices
         return {'status': EngineStatusChoices.STATUS_HEALTHY, 'message': 'Version test.', 'raw': {}}
+
+    def authenticate(self):
+        return None
 
 
 def install_fake_backend(monkeypatch_target=None):

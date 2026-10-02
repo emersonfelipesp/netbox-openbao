@@ -66,7 +66,7 @@ the REST API and management commands as well as the UI. A permission this
 consequential should not be auditable on only one of its surfaces.
 
 
-## 1. No model field can hold secret material
+## 1. No `Credential` model field can hold credential material
 
 `Credential` has no column that material could be written to. That is the claim
 everything else rests on, because it makes whole categories of leak impossible
@@ -81,6 +81,11 @@ rather than merely unlikely:
 
 The test walks `Credential._meta.get_fields()` and fails on any name containing
 `password`, `private`, `secret`, `passphrase`, or `token`.
+
+OpenBao service identities are deliberately separate. `EngineAuthMaterial`
+stores only versioned ciphertext derived from Django's `SECRET_KEY`; its safe
+snapshot, API, table, filter, export, GraphQL, search, and audit surfaces expose
+configured/missing status rather than ciphertext or plaintext.
 
 ## 2. Material-bearing API inputs are write-only
 
@@ -138,16 +143,23 @@ by most gateways, and a graph API's response shape is harder to audit than a
 single named REST action. If metadata-only GraphQL types are added later, a
 reveal field must never be among them.
 
-## 6. No auth material in the database
+## 6. Encrypted service identities
 
-`SecretEngine` and `OpenBaoSettings` have no `role_id`, `secret_id`, or `token`
-column. Material is read from the process environment at login, or from a file
-the environment points at. Storing the vault's own credentials in the database
-this plugin exists to keep secrets out of would defeat the entire design.
+`SecretEngine`, `CredentialPolicy`, `OpenBaoCluster`, and `OpenBaoSettings`
+contain no plaintext authentication fields. `EngineAuthMaterial` stores only
+versioned ciphertext derived from Django's `SECRET_KEY`, with exactly one
+engine, policy, or cluster owner. Plaintext exists only during the request that
+sets a value or performs authentication.
 
-The standalone field checker and the live model test maintain a reviewed
-allowlist for both `Credential` and `OpenBaoSettings`, so a newly added settings
-field receives the same scrutiny as a credential column.
+Secret inputs are write-only. API responses and operator pages expose only
+configured/missing booleans. Changelog and event snapshots use the model's safe
+status serializer; GraphQL, search, filters, CSV and bulk import/export, clone
+fields, and administration-audit targets omit the encrypted columns entirely.
+Broker PEM material is written only to process-private mode-0600 temporary
+files and removed with the session or at process exit.
+
+`SECRET_KEY` is the root of trust and must remain outside the database. Rotate
+it with `openbao_configure reencrypt` before serving requests under the new key.
 
 ## 7. Per-tier AppRoles
 

@@ -68,6 +68,7 @@ from netbox_openbao.models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    EngineAuthMaterial,
     OpenBaoAdministrationLog,
     OpenBaoCluster,
     OpenBaoProcedureRun,
@@ -106,6 +107,7 @@ from .serializers import (
     CredentialTypeSchemaSerializer,
     EndpointRevealRequestSerializer,
     EndpointWithCredentialRequestSerializer,
+    EngineAuthMaterialSerializer,
     InitializeClusterSerializer,
     JoinRaftSerializer,
     OpenBaoAdministrationLogSerializer,
@@ -131,6 +133,7 @@ __all__ = (
     'CredentialAssignmentViewSet',
     'CredentialPolicyViewSet',
     'CredentialTypeSchemaViewSet',
+    'EngineAuthMaterialViewSet',
     'CredentialViewSet',
     'OpenBaoProcedureRunViewSet',
     'OpenBaoAdministrationLogViewSet',
@@ -141,6 +144,14 @@ __all__ = (
     'SSHPublicKeyViewSet',
     'ResolveView',
 )
+
+
+class EngineAuthMaterialViewSet(NetBoxModelViewSet):
+    """Encrypted identities; responses expose status booleans, never values."""
+
+    queryset = EngineAuthMaterial.objects.select_related('engine', 'policy', 'cluster')
+    serializer_class = EngineAuthMaterialSerializer
+    filterset_class = filtersets.EngineAuthMaterialFilterSet
 
 
 class OpenBaoAdministrationUnavailable(APIException):
@@ -1004,6 +1015,45 @@ class OpenBaoSettingsViewSet(NetBoxModelViewSet):
     queryset = OpenBaoSettings.objects.all().order_by('id')
     serializer_class = OpenBaoSettingsSerializer
     filterset_class = filtersets.OpenBaoSettingsFilterSet
+
+    @action(detail=False, methods=['get', 'patch'], url_path='singleton')
+    def singleton(self, request):
+        instance = self.get_queryset().first()
+        if instance is None and OpenBaoSettings.objects.exists():
+            get_object_or_404(self.get_queryset())
+        if request.method == 'GET':
+            if instance is not None:
+                response = Response(self.get_serializer(instance).data)
+                if etag := self._get_etag(instance):
+                    response['ETag'] = etag
+                return response
+            serializer = self.get_serializer(
+                OpenBaoSettings(),
+                omit=('url', 'tags', 'custom_fields'),
+            )
+            data = dict(serializer.data)
+            data.update({'url': None, 'tags': [], 'custom_fields': {}})
+            return Response(data)
+
+        if instance is None:
+            if not request.user.has_perm('netbox_openbao.add_openbaosettings'):
+                raise PermissionDenied()
+            self.queryset = OpenBaoSettings.objects.all().order_by('id').restrict(
+                request.user, 'add',
+            )
+            serializer = self.get_serializer(data=request.data, partial=True)
+        else:
+            self._validate_etag(request, instance)
+            serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        if instance is None:
+            self.perform_create(serializer)
+        else:
+            self.perform_update(serializer)
+        response = Response(self.get_serializer(serializer.instance).data)
+        if etag := self._get_etag(serializer.instance):
+            response['ETag'] = etag
+        return response
 
     def perform_create(self, serializer):
         # The serializer's exists() check provides a useful early error, but it

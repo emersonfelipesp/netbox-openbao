@@ -1,22 +1,14 @@
 from django.core.exceptions import ValidationError
 from django.db.utils import IntegrityError
 
+from netbox_openbao.backends import get_backend
 from netbox_openbao.choices import CredentialTypeChoices
-from netbox_openbao.models import Credential, CredentialPolicy, SecretEngine
+from netbox_openbao.models import Credential, EngineAuthMaterial, SecretEngine
 
 from .base import OpenBaoTestCase
 
 
 class SecretEngineTest(OpenBaoTestCase):
-
-    def test_env_prefix_is_derived_from_slug(self):
-        """
-        The prefix is the deployment contract: operators must export
-        <prefix>_ROLE_ID and <prefix>_SECRET_ID, so its derivation must be
-        stable and obvious.
-        """
-        engine = SecretEngine(slug='prod-core')
-        self.assertEqual(engine.env_prefix, 'NETBOX_BAO_PROD_CORE')
 
     def test_only_one_engine_may_be_default(self):
         with self.assertRaises(IntegrityError):
@@ -26,7 +18,7 @@ class SecretEngineTest(OpenBaoTestCase):
             )
 
     def test_no_auth_material_fields_exist(self):
-        """Auth material must come from the environment, never the database."""
+        """The engine inventory row must never hold plaintext auth material."""
         names = {f.name for f in SecretEngine._meta.get_fields()}
         for forbidden in ('role_id', 'secret_id', 'token', 'password'):
             self.assertNotIn(forbidden, names)
@@ -101,12 +93,14 @@ class CredentialPathTest(OpenBaoTestCase):
 
 class CredentialPolicyTest(OpenBaoTestCase):
 
-    def test_env_prefix_falls_back_to_engine(self):
-        self.assertEqual(self.policy.env_prefix, self.engine.env_prefix)
+    def test_auth_material_falls_back_to_engine(self):
+        material = EngineAuthMaterial(engine=self.engine)
+        material.set_secret('role_id', 'engine-role')
+        material.save()
+        self.assertEqual(get_backend(self.engine, self.policy).auth_material, material)
 
-    def test_env_prefix_override(self):
-        policy = CredentialPolicy(
-            name='Prod', slug='prod', engine=self.engine,
-            openbao_policy='netbox-prod', approle_env_prefix='NETBOX_BAO_PROD_CORE',
-        )
-        self.assertEqual(policy.env_prefix, 'NETBOX_BAO_PROD_CORE')
+    def test_policy_auth_material_overrides_engine(self):
+        engine_material = EngineAuthMaterial.objects.create(engine=self.engine)
+        policy_material = EngineAuthMaterial.objects.create(policy=self.policy)
+        self.assertNotEqual(engine_material, policy_material)
+        self.assertEqual(get_backend(self.engine, self.policy).auth_material, policy_material)

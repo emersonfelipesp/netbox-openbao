@@ -11,7 +11,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 from utilities.exceptions import AbortRequest
-from utilities.testing import ModelViewTestCase
+from utilities.testing import ModelViewTestCase, create_test_device
 
 from netbox_openbao.checks import check_superseded_plugins_config
 from netbox_openbao.choices import AccessActionChoices, CredentialTypeChoices
@@ -20,6 +20,8 @@ from netbox_openbao.models import (
     Credential,
     CredentialAccessLog,
     CredentialPolicy,
+    EngineAuthMaterial,
+    OpenBaoCluster,
     OpenBaoSettings,
     SecretEngine,
 )
@@ -30,17 +32,16 @@ from .base import OpenBaoTestCase
 
 class SettingsFormTest(OpenBaoTestCase):
 
-    def test_interval_fields_are_disabled_with_the_reason(self):
+    def test_interval_fields_are_editable_with_the_restart_reason(self):
         """
-        They are stored but not yet honoured. A field that looks editable and
-        reverts at the next worker restart is worse than one that says so.
+        They are stored in the singleton row and applied when workers restart.
         """
         form = OpenBaoSettingsForm(instance=OpenBaoSettings.get_solo())
 
         for name in STATIC_INTERVAL_SETTINGS:
             with self.subTest(field=name):
-                self.assertTrue(form.fields[name].disabled)
-                self.assertIn('PLUGINS_CONFIG', str(form.fields[name].help_text))
+                self.assertFalse(form.fields[name].disabled)
+                self.assertIn('Restart NetBox workers', str(form.fields[name].help_text))
 
     def test_path_prefix_is_editable_with_no_credentials(self):
         form = OpenBaoSettingsForm(instance=OpenBaoSettings.get_solo())
@@ -69,21 +70,162 @@ class SettingsFormTest(OpenBaoTestCase):
             self.assertIn(name, OpenBaoSettingsForm.Meta.fields)
 
 
+class SettingsDashboardTest(ModelViewTestCase):
+    model = OpenBaoSettings
+
+    def test_fresh_install_lists_defaults_and_every_engine_parameter(self):
+        OpenBaoSettings.objects.all().delete()
+        engine = SecretEngine.objects.create(
+            name='Dashboard engine',
+            slug='dashboard-engine',
+            api_url='https://bao.example.net:8200',
+        )
+        EngineAuthMaterial.objects.create(engine=engine)
+        self.add_permissions(
+            'netbox_openbao.view_openbaosettings',
+            'netbox_openbao.view_secretengine',
+            'netbox_openbao.view_engineauthmaterial',
+        )
+
+        response = self.client.get(reverse('plugins:netbox_openbao:openbaosettings_list'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(all(row['description'] for row in response.context['setting_rows']))
+        self.assertTrue(all(row['description'] for row in response.context['engine_parameter_rows']))
+        self.assertContains(response, '>default<')
+        for name in OpenBaoSettingsForm.Meta.fields:
+            self.assertContains(response, name)
+        for name in (
+            'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version',
+            'auth_method', 'tls_verify', 'ca_cert_path', 'host_device',
+        ):
+            self.assertContains(response, name)
+        self.assertContains(response, 'AppRole: role_id, secret_id missing - required')
+
+    def test_auth_edit_action_requires_auth_material_permission(self):
+        row = OpenBaoSettings.get_solo()
+        engine = SecretEngine.objects.create(
+            name='Dashboard auth engine',
+            slug='dashboard-auth-engine',
+            api_url='https://bao.example.net:8200',
+        )
+        material = EngineAuthMaterial.objects.create(engine=engine)
+        url = reverse('plugins:netbox_openbao:openbaosettings_list')
+        edit_url = reverse(
+            'plugins:netbox_openbao:engineauthmaterial_edit',
+            kwargs={'pk': material.pk},
+        )
+        self.add_permissions(
+            'netbox_openbao.view_openbaosettings',
+            'netbox_openbao.view_secretengine',
+            'netbox_openbao.view_engineauthmaterial',
+        )
+
+        response = self.client.get(url)
+        self.assertNotContains(response, edit_url)
+
+        self.add_permissions('netbox_openbao.add_engineauthmaterial')
+        response = self.client.get(url)
+        self.assertNotContains(response, edit_url)
+
+        self.add_permissions('netbox_openbao.change_engineauthmaterial')
+        response = self.client.get(url)
+        self.assertContains(response, edit_url)
+        self.assertTrue(row.pk)
+
+    def test_settings_only_user_sees_no_restricted_inventory_or_auth_urls(self):
+        OpenBaoSettings.get_solo()
+        device = create_test_device('Restricted OpenBao host')
+        engine = SecretEngine.objects.create(
+            name='Restricted dashboard engine',
+            slug='restricted-dashboard-engine',
+            api_url='https://restricted-bao.invalid:8200',
+            host_device=device,
+        )
+        policy = CredentialPolicy.objects.create(
+            name='Restricted dashboard policy',
+            slug='restricted-dashboard-policy',
+            engine=engine,
+            openbao_policy='restricted-dashboard-policy',
+        )
+        cluster = OpenBaoCluster.objects.create(
+            name='Restricted dashboard cluster',
+            slug='restricted-dashboard-cluster',
+            api_url='https://restricted-cluster.invalid:8200',
+            host_device=device,
+        )
+        EngineAuthMaterial.objects.create(engine=engine)
+        EngineAuthMaterial.objects.create(policy=policy)
+        EngineAuthMaterial.objects.create(cluster=cluster)
+        self.add_permissions('netbox_openbao.view_openbaosettings')
+
+        response = self.client.get(reverse('plugins:netbox_openbao:openbaosettings_list'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['engine_parameter_rows'], [])
+        self.assertEqual(response.context['scoped_auth_rows'], [])
+        rendered = response.content.decode()
+        for value in (
+            engine.name,
+            policy.name,
+            cluster.name,
+            device.name,
+            reverse('plugins:netbox_openbao:engineauthmaterial_edit', kwargs={
+                'pk': EngineAuthMaterial.objects.get(engine=engine).pk,
+            }),
+        ):
+            self.assertNotIn(value, rendered)
+
+    def test_engine_view_user_sees_only_visible_engine_without_auth_or_host(self):
+        OpenBaoSettings.get_solo()
+        device = create_test_device('Hidden OpenBao host')
+        engine = SecretEngine.objects.create(
+            name='Visible dashboard engine',
+            slug='visible-dashboard-engine',
+            api_url='https://visible-bao.invalid:8200',
+            host_device=device,
+        )
+        policy = CredentialPolicy.objects.create(
+            name='Hidden dashboard policy',
+            slug='hidden-dashboard-policy',
+            engine=engine,
+            openbao_policy='hidden-dashboard-policy',
+        )
+        cluster = OpenBaoCluster.objects.create(
+            name='Hidden dashboard cluster',
+            slug='hidden-dashboard-cluster',
+            api_url='https://hidden-cluster.invalid:8200',
+        )
+        EngineAuthMaterial.objects.create(engine=engine)
+        EngineAuthMaterial.objects.create(policy=policy)
+        EngineAuthMaterial.objects.create(cluster=cluster)
+        self.add_permissions(
+            'netbox_openbao.view_openbaosettings',
+            'netbox_openbao.view_secretengine',
+        )
+
+        response = self.client.get(reverse('plugins:netbox_openbao:openbaosettings_list'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['engine_parameter_rows'])
+        self.assertEqual(response.context['scoped_auth_rows'], [])
+        rendered = response.content.decode()
+        self.assertIn(engine.name, rendered)
+        self.assertNotIn(policy.name, rendered)
+        self.assertNotIn(cluster.name, rendered)
+        self.assertNotIn(device.name, rendered)
+
+
 class SupersededConfigTest(OpenBaoTestCase):
     """
-    A key left in `PLUGINS_CONFIG` after a row exists does nothing.
-
-    That is the most likely support question this whole change creates: an
-    operator edits a value they can see and observes no effect. It is reported
-    at startup and on the settings page.
+    Every legacy plugin key is ignored and named by the system check.
     """
 
-    def test_nothing_is_reported_without_a_settings_row(self):
-        self.assertEqual(check_superseded_plugins_config(None), [])
+    def test_nothing_is_reported_without_plugin_keys(self):
+        with self.settings(PLUGINS_CONFIG={}):
+            self.assertEqual(check_superseded_plugins_config(None), [])
 
     def test_a_superseded_key_is_named(self):
-        OpenBaoSettings.get_solo()
-
         with self.settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_ttl': 900}}):
             issues = check_superseded_plugins_config(None)
 
@@ -91,15 +233,12 @@ class SupersededConfigTest(OpenBaoTestCase):
         self.assertIn('reveal_ttl', issues[0].msg)
         self.assertEqual(issues[0].id, 'netbox_openbao.W001')
 
-    def test_interval_keys_are_not_reported_as_superseded(self):
-        """
-        They really are still read from the file. Naming them would be the
-        opposite error to the one this check exists to prevent.
-        """
-        OpenBaoSettings.get_solo()
-
+    def test_interval_keys_are_reported_as_ignored(self):
         with self.settings(PLUGINS_CONFIG={'netbox_openbao': {'engine_health_interval': 15}}):
-            self.assertEqual(check_superseded_plugins_config(None), [])
+            issues = check_superseded_plugins_config(None)
+
+        self.assertEqual(len(issues), 1)
+        self.assertIn('engine_health_interval', issues[0].msg)
 
     def test_the_check_does_not_query_during_app_initialization(self):
         """
@@ -111,22 +250,6 @@ class SupersededConfigTest(OpenBaoTestCase):
 
         source = open(netbox_openbao.__file__).read()
         self.assertNotIn('superseded', source)
-
-    def test_the_object_page_reports_the_same_list(self):
-        row = OpenBaoSettings.get_solo()
-
-        with self.settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_ttl': 900, 'allow_generation': False}}):
-            reported = row.superseded_plugins_config_keys
-
-        self.assertIn('reveal_ttl', reported)
-        self.assertIn('allow_generation', reported)
-
-    def test_nothing_superseded_reads_as_none_rather_than_blank(self):
-        row = OpenBaoSettings.get_solo()
-
-        with self.settings(PLUGINS_CONFIG={'netbox_openbao': {}}):
-            self.assertEqual(str(row.superseded_plugins_config_keys), 'None')
-
 
 class SettingsAuditTest(ModelViewTestCase):
     """
@@ -216,6 +339,8 @@ class SettingsAuditTest(ModelViewTestCase):
             'assignable_models_deny': ','.join(row.assignable_models_deny),
             'expiry_warning_days': ','.join(str(d) for d in row.expiry_warning_days),
         }
+        for name in STATIC_INTERVAL_SETTINGS:
+            data[name] = getattr(row, name)
         if row.store_public_material:
             data['store_public_material'] = 'on'
         if row.allow_generation:
@@ -357,8 +482,8 @@ class RefusalAuditTest(OpenBaoTestCase):
 
     def test_deleting_the_row_is_recorded_as_a_change(self):
         """
-        Configuration falls back to PLUGINS_CONFIG, which can mean a different
-        prefix and weaker defaults. That is a change, not an absence of one.
+        Configuration falls back to model defaults. That is still a change,
+        not an absence of one.
         """
         row = OpenBaoSettings.get_solo()
         CredentialAccessLog.objects.all().delete()
@@ -367,7 +492,7 @@ class RefusalAuditTest(OpenBaoTestCase):
 
         entry = CredentialAccessLog.objects.filter(action=AccessActionChoices.ACTION_CONFIGURE).first()
         self.assertIsNotNone(entry)
-        self.assertIn('PLUGINS_CONFIG', entry.message)
+        self.assertIn('model defaults', entry.message)
 
 
 class SingletonAddTest(ModelViewTestCase):
@@ -403,35 +528,20 @@ class CheckFailureTest(TestCase):
     A check that cannot evaluate must say so, not return nothing.
 
     Returning `[]` on an unexpected failure would remove the only signal telling
-    an operator their file-based values are being ignored — making the
-    precedence problem undiagnosable, which is the opposite of what the check is
-    for. Only the bootstrap case (no table yet) is silent.
+    an operator that legacy values are being ignored.
     """
 
-    def test_an_unexpected_failure_reports_w002(self):
+    def test_an_unexpected_failure_reports_error(self):
         from unittest.mock import patch
 
-        OpenBaoSettings.get_solo()
-
         with patch(
-            'netbox_openbao.models.settings.OpenBaoSettings.objects.exists',
+            'netbox_openbao.checks._ignored_plugin_keys',
             side_effect=RuntimeError('something unforeseen'),
         ):
             issues = check_superseded_plugins_config(None)
 
         self.assertEqual(len(issues), 1)
-        self.assertEqual(issues[0].id, 'netbox_openbao.W002')
-
-    def test_a_missing_table_stays_silent(self):
-        from unittest.mock import patch
-
-        from django.db.utils import DatabaseError
-
-        with patch(
-            'netbox_openbao.models.settings.OpenBaoSettings.objects.exists',
-            side_effect=DatabaseError('relation does not exist'),
-        ):
-            self.assertEqual(check_superseded_plugins_config(None), [])
+        self.assertEqual(issues[0].id, 'netbox_openbao.E001')
 
 
 class PartialSaveAuditTest(OpenBaoTestCase):

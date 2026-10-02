@@ -4,6 +4,7 @@ import os
 import socket
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import patch
 
 from django.core.cache import cache
@@ -14,7 +15,7 @@ from netbox_openbao.automation import AutomationResolutionDenied, capture_refere
 from netbox_openbao.backends import get_backend
 from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoError
 from netbox_openbao.backends.openbao import OpenBaoBackend
-from netbox_openbao.models import AutomationResolutionReceipt, CredentialAccessLog
+from netbox_openbao.models import AutomationResolutionReceipt, CredentialAccessLog, EngineAuthMaterial
 from netbox_openbao.services import discard_staged, promote_staged, stage_material, write_material
 
 from .test_automation import CANARY, _AutomationFixture
@@ -88,22 +89,22 @@ class _LiveProviderFixture(_AutomationFixture):
     def setUp(self):
         super().setUp()
         backends.BACKENDS['openbao'] = OpenBaoBackend
-        prefix = self.engine.env_prefix
-        environment = {f'{prefix}_TOKEN': DIRECT_TOKEN or ''}
         self.engine.auth_method = 'token'
         self.engine.api_url = DIRECT_ADDR
+        auth_values = {'token': DIRECT_TOKEN or ''}
         if self.broker_mode:
             self.engine.backend = 'broker'
             self.engine.api_url = BROKER_ADDR
             self.engine.ca_cert_path = BROKER_CA or ''
-            environment.update({
-                f'{prefix}_CLIENT_CERT': BROKER_CERT,
-                f'{prefix}_CLIENT_KEY': BROKER_KEY,
-            })
+            auth_values = {
+                'client_cert': Path(BROKER_CERT).read_text(),
+                'client_key': Path(BROKER_KEY).read_text(),
+            }
         self.engine.save()
-        environment_patch = patch.dict(os.environ, environment)
-        environment_patch.start()
-        self.addCleanup(environment_patch.stop)
+        material = EngineAuthMaterial(engine=self.engine)
+        for name, value in auth_values.items():
+            material.set_secret(name, value)
+        material.save()
         self.credential.engine = self.engine
         backend = get_backend(self.engine, self.policy)
         self.addCleanup(backend.delete, self.credential.path)
@@ -224,13 +225,19 @@ class DirectAutomationProviderTest(_LiveProviderFixture, TransactionTestCase):
         cache_key = get_backend(self.engine, self.policy)._cache_key
         cache.delete(cache_key)
         self.addCleanup(cache.delete, cache_key)
-        with patch.dict(os.environ, {f'{self.engine.env_prefix}_TOKEN': 'invalid-disposable-test-token'}):
+        material = self.engine.auth_material
+        material.set_secret('token', 'invalid-disposable-test-token')
+        material.save()
+        try:
             with self.assertRaises(AutomationResolutionDenied):
                 self.resolve()
-        cache.delete(cache_key)
-        self.assertEqual(AutomationResolutionReceipt.objects.count(), 1)
-        with self.assertRaises(AutomationResolutionDenied):
-            self.resolve()
+            cache.delete(cache_key)
+            self.assertEqual(AutomationResolutionReceipt.objects.count(), 1)
+            with self.assertRaises(AutomationResolutionDenied):
+                self.resolve()
+        finally:
+            material.set_secret('token', DIRECT_TOKEN)
+            material.save()
 
 
 @unittest.skipUnless(BROKER_ADDR and BROKER_CERT and BROKER_KEY, 'A real mTLS broker endpoint is not configured.')

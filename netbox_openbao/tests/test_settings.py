@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 
 from dcim.models import Site
 from django.apps import apps
+from django.conf import settings as django_settings
 from django.core.exceptions import FieldDoesNotExist
 from django.db import close_old_connections, transaction
 from django.test import RequestFactory, TestCase, TransactionTestCase, override_settings
@@ -65,42 +66,18 @@ class SettingsTransactionTestCase(TransactionTestCase):
 
 
 class FallbackChainTest(SettingsTestCase):
-    """
-    No row means the deployment's `PLUGINS_CONFIG` still decides.
+    """A missing row resolves model defaults and never process configuration."""
 
-    This is the compatibility guarantee. Nineteen existing tests across six
-    files use `override_settings` to configure this plugin, and they are
-    expected to keep passing untouched — if this chain breaks they do not fail,
-    they quietly start asserting against defaults.
-    """
-
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_ttl': 900}})
-    def test_plugins_config_is_used_when_no_row_exists(self):
-        self.assertEqual(get_config('reveal_ttl'), 900)
-
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {}})
-    def test_default_is_used_when_neither_row_nor_config_has_the_key(self):
+    def test_model_default_is_used_when_no_row_exists(self):
         self.assertEqual(get_config('reveal_ttl', 300), 300)
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_ttl': None}})
-    def test_a_null_resolves_to_the_default(self):
-        """
-        Preserved from the previous implementation, and load-bearing.
-        `get_plugin_config()` returns None rather than raising for a key absent
-        from the merged result, which once turned `store_public_material` off
-        silently and looked exactly like the extractors failing.
-        """
-        self.assertEqual(get_config('reveal_ttl', 300), 300)
-
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_ttl': 900}})
-    def test_the_row_wins_over_plugins_config(self):
+    def test_the_row_wins_over_the_model_default(self):
         OpenBaoSettings.get_solo()
         OpenBaoSettings.objects.update(reveal_ttl=1200)
         clear_config()
 
         self.assertEqual(get_config('reveal_ttl'), 1200)
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {}})
     def test_the_row_supplies_every_non_interval_setting(self):
         values = {
             'path_prefix': 'database',
@@ -120,22 +97,19 @@ class FallbackChainTest(SettingsTestCase):
         for key, expected in values.items():
             self.assertEqual(get_config(key), expected, key)
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'engine_health_interval': 17}})
-    def test_job_intervals_deliberately_remain_static(self):
+    def test_job_intervals_are_read_from_the_row(self):
         from netbox_openbao.jobs import _static_job_interval
 
         OpenBaoSettings.objects.create(engine_health_interval=999)
-        self.assertEqual(_static_job_interval('engine_health_interval', 5), 17)
+        self.assertEqual(_static_job_interval('engine_health_interval', 5), 999)
 
 
 class ReadNeverCreatesTest(SettingsTestCase):
     """
     A read must leave a missing row missing.
 
-    If a read created it, that row would win from then on, `PLUGINS_CONFIG`
-    would be unreachable, and every `override_settings` test in this suite would
-    pass while testing nothing. Creation belongs to the migration and to an
-    explicit save.
+    Reading defaults must remain side-effect free. Creation belongs to the
+    migration and to an explicit save.
     """
 
     def test_reading_does_not_create_the_row(self):
@@ -259,7 +233,7 @@ class CacheInvalidationTest(SettingsTransactionTestCase):
 
         self.assertEqual(get_config('reveal_ttl'), 1500)
 
-    def test_deleting_restores_the_fallback(self):
+    def test_deleting_restores_the_model_default(self):
         settings_row = OpenBaoSettings.get_solo()
         settings_row.reveal_ttl = 1500
         settings_row.save()
@@ -267,8 +241,7 @@ class CacheInvalidationTest(SettingsTransactionTestCase):
 
         settings_row.delete()
 
-        with override_settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_ttl': 42}}):
-            self.assertEqual(get_config('reveal_ttl'), 42)
+        self.assertEqual(get_config('reveal_ttl'), 300)
 
 
 class MiddlewareTest(SettingsTestCase):
@@ -359,14 +332,15 @@ class ModelShapeTest(SettingsTestCase):
             OpenBaoSettings.objects.create()
         self.assertEqual(OpenBaoSettings.objects.count(), 1)
 
-    def test_model_backed_defaults_match_plugin_defaults(self):
+    def test_model_backed_defaults_are_the_only_plugin_defaults(self):
         from netbox_openbao import NetBoxOpenBaoConfig
 
         row = OpenBaoSettings()
+        self.assertEqual(NetBoxOpenBaoConfig.default_settings, {})
         for key in MODEL_BACKED_SETTINGS:
             self.assertEqual(
                 getattr(row, key),
-                NetBoxOpenBaoConfig.default_settings[key],
+                OpenBaoSettings._meta.get_field(key).get_default(),
                 key,
             )
 
@@ -446,52 +420,49 @@ class PathPrefixValidationTest(OpenBaoTestCase):
         self.assertIn('row no longer exists', ctx.exception.messages[0])
         self.assertFalse(OpenBaoSettings.objects.exists())
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'path_prefix': 'legacy'}})
-    def test_first_row_must_match_paths_stamped_under_an_older_fallback(self):
+    def test_first_row_must_match_paths_stamped_before_database_settings(self):
         credential = self.make_credential()
+        credential.path = f'legacy/credentials/{credential.uuid}'
         credential.save()
         self.assertEqual(credential.path, f'legacy/credentials/{credential.uuid}')
 
         from django.core.exceptions import ValidationError
 
-        with override_settings(PLUGINS_CONFIG={'netbox_openbao': {'path_prefix': 'replacement'}}):
-            clear_config()
-            row = OpenBaoSettings(path_prefix='replacement')
-            with self.assertRaises(ValidationError) as ctx:
-                row.full_clean()
-            with self.assertRaises(ValidationError):
-                row.save()
+        row = OpenBaoSettings(path_prefix='replacement')
+        with self.assertRaises(ValidationError) as ctx:
+            row.full_clean()
+        with self.assertRaises(ValidationError):
+            row.save()
 
         message = ctx.exception.message_dict['path_prefix'][0]
         self.assertIn('existing Credential rows are stamped under a different path prefix', message)
         self.assertIn('prefix already encoded in their stored paths', message)
         self.assertFalse(OpenBaoSettings.objects.exists())
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'path_prefix': 'legacy'}})
     def test_first_row_accepts_the_prefix_stamped_on_existing_credentials(self):
-        self.make_credential().save()
+        credential = self.make_credential()
+        credential.path = f'legacy/credentials/{credential.uuid}'
+        credential.save()
 
         row = OpenBaoSettings(path_prefix='legacy')
         row.save()
 
         self.assertEqual(OpenBaoSettings.objects.get().path_prefix, 'legacy')
 
-    def test_unsafe_legacy_fallback_cannot_derive_or_save_a_credential_path(self):
+    def test_unsafe_database_prefix_cannot_be_saved(self):
         from django.core.exceptions import ValidationError
 
         for prefix in ('../netbox', 'estate//netbox', 'net box', 42):
             with self.subTest(prefix=prefix):
-                with override_settings(PLUGINS_CONFIG={'netbox_openbao': {'path_prefix': prefix}}):
-                    clear_config()
-                    credential = self.make_credential()
-                    with self.assertRaises(ValidationError) as ctx:
-                        self.assertIsInstance(credential.derived_path, str)
-                    with self.assertRaises(ValidationError):
-                        credential.save()
+                row = OpenBaoSettings(path_prefix=prefix)
+                with self.assertRaises(ValidationError) as ctx:
+                    row.full_clean()
+                with self.assertRaises(ValidationError):
+                    row.save()
 
                 message = ctx.exception.message_dict['path_prefix'][0]
                 self.assertIn('effective netbox_openbao path_prefix configuration', message)
-                self.assertIsNone(credential.pk)
+                self.assertIsNone(row.pk)
 
     def test_settings_cannot_be_deleted_while_a_credential_exists(self):
         row = OpenBaoSettings.objects.create(path_prefix='estate/netbox')
@@ -559,10 +530,8 @@ class DatabaseUnavailableTest(SettingsTestCase):
         with patch.object(
             OpenBaoSettings.objects.__class__, 'values', side_effect=DatabaseError('no such table'),
         ):
-            with override_settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_ttl': 77}}):
-                self.assertEqual(get_config('reveal_ttl'), 77)
+            self.assertEqual(get_config('reveal_ttl'), 300)
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_ttl': 77}})
     def test_the_next_request_retries_after_a_transient_failure(self):
         """
         A database failure may live for one request, but the next request must
@@ -575,11 +544,11 @@ class DatabaseUnavailableTest(SettingsTestCase):
         with patch.object(
             OpenBaoSettings.objects.__class__, 'values', side_effect=DatabaseError('database unavailable'),
         ):
-            self.assertEqual(get_config('reveal_ttl'), 77)
+            self.assertEqual(get_config('reveal_ttl'), 300)
 
         clear_config()
         with self.assertNumQueries(1):
-            self.assertEqual(get_config('reveal_ttl'), 77)
+            self.assertEqual(get_config('reveal_ttl'), 300)
 
 
 class SettingsMigrationTest(SettingsTestCase):
@@ -590,17 +559,19 @@ class SettingsMigrationTest(SettingsTestCase):
             'netbox_openbao.migrations.0008_openbaosettings'
         )
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'path_prefix': 'estate'}})
     def test_seed_copies_configuration_and_is_idempotent(self):
-        self.migration.seed_settings(apps, None)
-        self.migration.seed_settings(apps, None)
+        configured = {**django_settings.PLUGINS_CONFIG, 'netbox_openbao': {'path_prefix': 'estate'}}
+        with override_settings(PLUGINS_CONFIG=configured):
+            self.migration.seed_settings(apps, None)
+            self.migration.seed_settings(apps, None)
 
         self.assertEqual(OpenBaoSettings.objects.count(), 1)
         self.assertEqual(OpenBaoSettings.objects.get().path_prefix, 'estate')
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {}})
     def test_seed_succeeds_without_operator_configuration(self):
-        self.migration.seed_settings(apps, None)
+        configured = {**django_settings.PLUGINS_CONFIG, 'netbox_openbao': {}}
+        with override_settings(PLUGINS_CONFIG=configured):
+            self.migration.seed_settings(apps, None)
         self.assertFalse(OpenBaoSettings.objects.exists())
 
     def test_seed_ignores_reordered_set_like_defaults(self):
@@ -608,7 +579,7 @@ class SettingsMigrationTest(SettingsTestCase):
         for key in self.migration.ORDER_INSENSITIVE_SETTINGS:
             configured[key] = list(reversed(configured[key]))
 
-        with override_settings(PLUGINS_CONFIG={'netbox_openbao': configured}):
+        with override_settings(PLUGINS_CONFIG={**django_settings.PLUGINS_CONFIG, 'netbox_openbao': configured}):
             self.migration.seed_settings(apps, None)
 
         self.assertFalse(OpenBaoSettings.objects.exists())
@@ -618,7 +589,7 @@ class SettingsMigrationTest(SettingsTestCase):
         configured['assignable_models'] = tuple(configured['assignable_models'])
         configured['expiry_warning_days'] = tuple(configured['expiry_warning_days'])
 
-        with override_settings(PLUGINS_CONFIG={'netbox_openbao': configured}):
+        with override_settings(PLUGINS_CONFIG={**django_settings.PLUGINS_CONFIG, 'netbox_openbao': configured}):
             self.migration.seed_settings(apps, None)
 
         self.assertFalse(OpenBaoSettings.objects.exists())
@@ -629,7 +600,7 @@ class SettingsMigrationTest(SettingsTestCase):
             f' {label.upper()} ' for label in configured['assignable_models']
         ]
 
-        with override_settings(PLUGINS_CONFIG={'netbox_openbao': configured}):
+        with override_settings(PLUGINS_CONFIG={**django_settings.PLUGINS_CONFIG, 'netbox_openbao': configured}):
             self.migration.seed_settings(apps, None)
 
         self.assertFalse(OpenBaoSettings.objects.exists())
@@ -638,7 +609,7 @@ class SettingsMigrationTest(SettingsTestCase):
         configured = dict(self.migration.MODEL_DEFAULTS)
         configured['assignable_models'] = [' DCIM.Site ', 'dcim.site', '', None]
 
-        with override_settings(PLUGINS_CONFIG={'netbox_openbao': configured}):
+        with override_settings(PLUGINS_CONFIG={**django_settings.PLUGINS_CONFIG, 'netbox_openbao': configured}):
             self.migration.seed_settings(apps, None)
 
         self.assertEqual(OpenBaoSettings.objects.get().assignable_models, ['dcim.site'])
@@ -647,17 +618,15 @@ class SettingsMigrationTest(SettingsTestCase):
         configured = dict(self.migration.MODEL_DEFAULTS)
         configured['path_prefix'] = '../netbox'
 
-        with override_settings(PLUGINS_CONFIG={'netbox_openbao': configured}):
+        with override_settings(PLUGINS_CONFIG={**django_settings.PLUGINS_CONFIG, 'netbox_openbao': configured}):
             self.migration.seed_settings(apps, None)
 
         self.assertFalse(OpenBaoSettings.objects.exists())
 
-    def test_seed_ignores_the_complete_merged_defaults(self):
-        from netbox_openbao import NetBoxOpenBaoConfig
+    def test_seed_ignores_the_complete_historical_defaults(self):
+        configured = dict(self.migration.MODEL_DEFAULTS)
 
-        configured = dict(NetBoxOpenBaoConfig.default_settings)
-
-        with override_settings(PLUGINS_CONFIG={'netbox_openbao': configured}):
+        with override_settings(PLUGINS_CONFIG={**django_settings.PLUGINS_CONFIG, 'netbox_openbao': configured}):
             self.migration.seed_settings(apps, None)
 
         self.assertFalse(OpenBaoSettings.objects.exists())

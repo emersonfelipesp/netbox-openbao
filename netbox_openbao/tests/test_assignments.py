@@ -2,10 +2,9 @@ from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.db.utils import IntegrityError
-from django.test import override_settings
 
 from netbox_openbao.choices import PurposeChoices
-from netbox_openbao.models import CredentialAssignment
+from netbox_openbao.models import CredentialAssignment, OpenBaoSettings
 
 from .base import OpenBaoTestCase
 
@@ -40,12 +39,12 @@ class AssignmentTest(OpenBaoTestCase):
         assignment.save()
         self.assertEqual(assignment.assigned_object, self.device)
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'assignable_models': ['ipam.service']}})
     def test_assignment_to_forbidden_type_is_rejected(self):
         """
         The allowlist is enforced on the model, not only the form, so the REST
         API and direct ORM callers are held to the same list.
         """
+        OpenBaoSettings.objects.create(assignable_models=['ipam.service'])
         assignment = self._assignment()
         with self.assertRaises(ValidationError) as ctx:
             assignment.full_clean()

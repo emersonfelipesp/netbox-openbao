@@ -15,9 +15,9 @@ import logging
 from datetime import timedelta
 from functools import wraps
 
+from django.db.utils import DatabaseError
 from django.utils import timezone
 from netbox.jobs import JobRunner, system_job
-from netbox.plugins import get_plugin_config
 
 from .backends import get_backend
 from .backends.exceptions import OpenBaoError
@@ -37,14 +37,16 @@ __all__ = (
 
 
 def _static_job_interval(key, default):
-    """Read an import-time interval directly from PLUGINS_CONFIG.
+    """Read a database interval at import, tolerating bootstrap and outages."""
+    try:
+        from .models.settings import OpenBaoSettings
 
-    The settings row contains these fields as schema foundation, but switching
-    the decorators alone would make a UI/API edit appear live and then revert
-    at worker restart. Interval rescheduling is deliberately a separate change.
-    """
-    value = get_plugin_config('netbox_openbao', key)
-    return int(value or default)
+        value = OpenBaoSettings.objects.values_list(key, flat=True).first()
+        if value is None:
+            value = OpenBaoSettings._meta.get_field(key).get_default()
+    except DatabaseError:
+        value = default
+    return int(value)
 
 
 def _fresh_settings_per_run(run):
@@ -63,9 +65,8 @@ def _fresh_settings_per_run(run):
     return wrapped
 
 
-# `system_job` requires a plain int and reads it at import time. This module is
-# imported from PluginConfig.ready(), by which point PLUGINS_CONFIG is loaded,
-# so the configured interval is honoured rather than documented-and-ignored.
+# `system_job` requires a plain int and reads it at import time. Database values
+# therefore take effect when each worker imports these declarations.
 @system_job(interval=_static_job_interval('engine_health_interval', 5))
 class EngineHealthJob(JobRunner):
     """Probe every engine's `sys/health` and record the observed status."""

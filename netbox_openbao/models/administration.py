@@ -196,11 +196,6 @@ class OpenBaoCluster(PrimaryModel):
     def __str__(self):
         return self.name
 
-    @property
-    def env_prefix(self):
-        """Environment prefix used for this cluster's service identity."""
-        return f"NETBOX_BAO_{self.slug.upper().replace('-', '_')}"
-
     def get_status_color(self):
         return EngineStatusChoices.colors.get(self.status)
 

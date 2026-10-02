@@ -42,8 +42,8 @@ before treating it as a backstop for the other two.
     **What per-tier AppRoles actually buy**, all of it real:
 
     - A leaked SecretID reads only what its tier's policy grants, not the
-      estate. That covers host compromise, a stolen backup, a logged
-      environment, and an over-broad `EnvironmentFile`.
+      estate. That covers host compromise, a stolen backup, or an accidental
+      disclosure of one tier's decrypted identity.
     - A tier whose SecretID was **never delivered** to a given NetBox is
       unreadable *from* that NetBox, whatever NetBox itself decides. That is a
       genuine containment boundary and the argument for keeping your most
@@ -80,43 +80,30 @@ bao write auth/approle/role/netbox-prod-core \
 → [Scope an OpenBao policy](scope-openbao-policies.md) for what these
 capabilities each buy, and why `metadata/` is not optional.
 
-## 2. Deliver its AppRole under its own prefix
+## 2. Store the tier identity
 
-The engine's slug gives the *default* prefix. A tier overrides it with
-`approle_env_prefix`, and that override is what routes reads through a
-different AppRole.
+Create the policy in step 3, then attach a policy-owned authentication row.
+That row overrides the engine identity only for credentials on this tier:
 
-```ini
-# /etc/netbox/openbao.env   (chmod 600)
-
-# engine-wide default — used by tiers that set no override
-NETBOX_BAO_PRIMARY_ROLE_ID=...
-NETBOX_BAO_PRIMARY_SECRET_ID=...
-
-# the prod-core tier
-NETBOX_BAO_PROD_CORE_ROLE_ID=...
-NETBOX_BAO_PROD_CORE_SECRET_ID=...
+```bash
+python manage.py openbao_configure auth --policy prod-core --set role_id
+python manage.py openbao_configure auth --policy prod-core --set secret_id \
+  --file /run/secrets/bao-prod-core-secret-id
+python manage.py openbao_configure test --policy prod-core
 ```
 
-Prefer the `_FILE` form wherever your platform can mount a secret, so the value
-never appears in `/proc/<pid>/environ`:
-
-```ini
-NETBOX_BAO_PROD_CORE_SECRET_ID_FILE=/run/secrets/bao-prod-core-secret-id
-```
-
-Apply to `netbox.service` **and** `netbox-rq.service`, then restart both.
+The command encrypts the values in the database. The UI, API, changelog,
+exports, and audit logs expose only configured/missing status.
 
 !!! danger "Deliver the SecretIDs separately"
 
     Reusing one AppRole across tiers collapses layer 3 entirely. So does
-    putting every tier's SecretID in one file that one compromise reads — the
+    making every tier's decrypted identity available to one compromise — the
     blast-radius argument above is the *only* thing layer 3 gives you, and both
     of those give it away.
 
-    If `prod-core`'s SecretID is only ever present on the host that needs it —
-    or is only mounted into the workload that needs it — then a NetBox that
-    never received it cannot read `prod-core` at all, whatever its own
+    If `prod-core`'s auth row exists only in the NetBox database that needs it,
+    then a NetBox that never received it cannot read `prod-core` at all, whatever its own
     authorization decides. A NetBox that *did* receive it is not protected by
     OpenBao from its own permission bugs; that is what layers 1 and 2 are for.
 
@@ -130,7 +117,6 @@ curl -X POST https://netbox.example.net/api/plugins/openbao/policies/ \
         "slug": "prod-core",
         "engine": 1,
         "openbao_policy": "netbox-prod-core",
-        "approle_env_prefix": "NETBOX_BAO_PROD_CORE",
         "max_reveal_ttl": 120,
         "require_reason": true
       }'
@@ -139,7 +125,7 @@ curl -X POST https://netbox.example.net/api/plugins/openbao/policies/ \
 | Field | Effect |
 |---|---|
 | `openbao_policy` | Documentation of which real policy this maps to. NetBox does not enforce it; OpenBao does. |
-| `approle_env_prefix` | **The load-bearing one.** Blank falls back to the engine's prefix, which means this tier shares the engine-wide AppRole. |
+| policy auth material | A policy-owned row overrides the engine row. Without one, the tier shares the engine identity. |
 | `max_reveal_ttl` | Caps the plugin-wide `reveal_ttl`. Lowers only, never raises. |
 | `require_reason` | Every reveal must carry a justification, recorded in the access log. |
 | `groups` | Layer 2: only members of these groups may reach credentials on this tier. Empty means the gate is unused. |
@@ -216,20 +202,20 @@ a delete destroys material rather than exposing it.
 ## 5. Verify the separation is real
 
 The test that matters is not "can the right person read it" — it is **"does an
-instance without this tier's AppRole fail?"** That is the containment property
+instance without this tier's auth row fail?"** That is the containment property
 layer 3 actually provides.
 
-Temporarily unset the tier's SecretID and restart:
+Temporarily clear the tier's SecretID:
 
 ```bash
-# with NETBOX_BAO_PROD_CORE_SECRET_ID absent
+python manage.py openbao_configure auth --policy prod-core --clear secret_id
 curl -H "Authorization: Bearer $TOKEN" \
   '.../credentials/<a-prod-core-credential>/reveal/?reason=test'
 ```
 
 You should get a `502` naming a configuration problem, **not** material served
-through the engine-wide AppRole. If it succeeds, `approle_env_prefix` is blank
-or misspelled, and the tier is a label.
+through the engine-wide AppRole. If it succeeds, the policy-owned auth row is
+missing and the tier is using the engine identity.
 
 Put the SecretID back and confirm the reveal works again.
 

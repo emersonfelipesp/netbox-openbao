@@ -32,7 +32,7 @@ class OpenBaoError(Exception):
 
 
 class BackendConfigurationError(OpenBaoError):
-    """The engine or its environment is misconfigured; the request never ran."""
+    """The engine or stored service identity is misconfigured; the request never ran."""
 
     default_message = 'Secret backend is not correctly configured.'
 

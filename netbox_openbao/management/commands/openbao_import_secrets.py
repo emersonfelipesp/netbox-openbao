@@ -4,18 +4,16 @@ Copy `netbox-secrets` data into OpenBao.
 The session key is never accepted as a command-line argument. `argv` is
 readable by any process on the host through `/proc/<pid>/cmdline`, and it lands
 in shell history — so a key passed that way is compromised the moment it is
-typed. It comes from the environment or an interactive prompt instead.
+typed. It comes from a protected file or an interactive prompt instead.
 """
 
 import getpass
-import os
+import sys
 
 from django.core.management.base import BaseCommand, CommandError
 
 from netbox_openbao.importers import SourceSecret, import_secrets
 from netbox_openbao.models import CredentialPolicy, SecretEngine
-
-SESSION_KEY_ENV = 'NETBOX_SECRETS_SESSION_KEY'
 
 
 class Command(BaseCommand):
@@ -39,8 +37,10 @@ class Command(BaseCommand):
             help='Report what would be imported, including the inferred type per secret, and write nothing',
         )
         parser.add_argument('--limit', type=int, default=None, help='Import at most N secrets')
-        # Deliberately absent: any flag that would take the session key. See
-        # the module docstring.
+        parser.add_argument(
+            '--session-key-file',
+            help='Read the netbox-secrets session key from this protected file',
+        )
 
     def handle(self, *args, **options):
         engine = self._get(SecretEngine, options['engine'], 'engine')
@@ -52,7 +52,10 @@ class Command(BaseCommand):
                 f"A credential's engine must match its policy's."
             )
 
-        sources = list(self._load_sources(limit=options['limit']))
+        sources = list(self._load_sources(
+            limit=options['limit'],
+            session_key_file=options['session_key_file'],
+        ))
         if not sources:
             self.stdout.write('Nothing to import.')
             return
@@ -95,23 +98,22 @@ class Command(BaseCommand):
             available = ', '.join(model.objects.values_list('slug', flat=True)) or 'none defined'
             raise CommandError(f"No {label} with slug '{slug}'. Available: {available}") from None
 
-    def _resolve_session_key(self):
-        """
-        Read the session key from the environment, or prompt for it.
-
-        Never from `argv` — see the module docstring.
-        """
-        key = os.environ.get(SESSION_KEY_ENV)
-        if key:
-            return key.strip()
-        if not os.isatty(0):
+    def _resolve_session_key(self, session_key_file=None):
+        """Read the session key from a protected file or a hidden prompt."""
+        if session_key_file:
+            try:
+                with open(session_key_file) as handle:
+                    return handle.read().strip()
+            except OSError:
+                raise CommandError('Could not read the netbox-secrets session key file.') from None
+        if not sys.stdin.isatty():
             raise CommandError(
-                f'A netbox-secrets session key is required. Set {SESSION_KEY_ENV}, or run '
-                f'interactively to be prompted. It is deliberately not accepted as an argument.'
+                'A netbox-secrets session key is required. Use --session-key-file or run '
+                'interactively to be prompted.'
             )
         return getpass.getpass('netbox-secrets session key: ').strip()
 
-    def _load_sources(self, limit=None):
+    def _load_sources(self, limit=None, session_key_file=None):
         """
         Adapt `netbox-secrets` rows into `SourceSecret`.
 
@@ -129,7 +131,7 @@ class Command(BaseCommand):
                 'to import from.'
             ) from None
 
-        session_key = self._resolve_session_key()
+        session_key = self._resolve_session_key(session_key_file)
 
         queryset = Secret.objects.select_related('role').all()
         if limit:

@@ -57,8 +57,8 @@ extractor — or a stored schema whose properties happen to be named after model
 fields — cannot introduce a secret-bearing column by accident.
 
 Setting `store_public_material = False` on `OpenBaoSettings` turns extraction
-off immediately. With no settings row, the `PLUGINS_CONFIG` fallback has the
-same effect. It also gives up the zero-read expiry dashboard, which is the main
+off immediately. With no settings row, the model default applies. Disabling it
+also gives up the zero-read expiry dashboard, which is the main
 reason to run this plugin rather than another one.
 
 !!! note "`extract_ssh_metadata` swallows a parse error on purpose"

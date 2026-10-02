@@ -7,13 +7,14 @@ when you break it** — so a reviewer can check the claims rather than take them
 If you change one of these and the named test still passes, the test is wrong.
 Fix the test.
 
-## Nothing secret can be stored, serialized, or logged
+## Credential material cannot be stored, serialized, or logged
 
 | Claim | Enforced by | Test |
 |---|---|---|
 | No `Credential` column can hold material | The absence of a field. `test_credential_has_no_secret_bearing_field` walks `_meta.get_fields()` and fails on any name containing `password`, `private`, `secret`, `passphrase`, or `token` | `test_security.test_credential_has_no_secret_bearing_field` |
 | No `SecretEngine` column holds auth material | Same absence: no `role_id`, `secret_id`, or `token` field | `test_models.test_no_auth_material_fields_exist` |
 | No `OpenBaoCluster` column holds auth material | Same structural absence across the administrative connection model | `test_administration.OpenBaoClusterModelTest.test_cluster_has_no_auth_material_fields` |
+| Auth identity rows expose no material | `EngineAuthMaterial` stores only versioned ciphertext and overrides its safe snapshot; API inputs are write-only and all read surfaces expose configured/missing booleans | `test_auth_material.WriteOnlySurfaceTest` |
 | `secret_data` is never serialized | `write_only=True` — **DRF itself** refuses, so it cannot appear in a `GET`, a `brief=true` response, the browsable API, an export, or an OpenAPI example | `test_security.test_secret_data_is_write_only`, `test_secret_data_absent_from_brief_fields`, `test_no_secret_field_in_read_representation` |
 | No endpoint echoes material | — | `test_api.test_no_endpoint_echoes_material`, `test_detail_never_returns_material`, `test_list_never_returns_material`, `test_brief_never_returns_material` |
 | A rejected form does not echo the key back | `render_value=False` on every sensitive widget | `test_views.test_material_is_not_echoed_back_on_a_validation_error` |
@@ -116,7 +117,7 @@ Fix the test.
 | A malformed broker response is an error, not a crash | `_field()` rather than direct indexing | `test_broker_backend.test_a_missing_field_is_a_scrubbed_error`, `test_a_non_dict_body_is_a_scrubbed_error`, `test_an_undecodable_body_is_an_error_not_a_crash` |
 | Broker mode never sends the mount | `read`/`write`/`delete` payloads omit it | `test_broker_backend.test_the_mount_is_never_sent` |
 | Broker mode refuses unverified TLS | `_get_session` raises when `verify` is falsy | `test_broker_backend.test_verification_cannot_be_turned_off`, `test_a_ca_path_satisfies_it` |
-| Each tier presents its own broker certificate | keyed on `env_prefix` | `test_broker_backend.test_a_policy_tier_uses_its_own_certificate` |
+| Each tier presents its own broker certificate | session key includes auth-record ID and revision | `test_broker_backend.test_a_policy_tier_uses_its_own_certificate` |
 | Broker and direct mode raise the same exceptions | one shared mapping | `test_broker_backend.test_status_codes_map_to_the_same_exceptions_as_direct_mode` |
 
 ## An operator-defined type cannot execute code

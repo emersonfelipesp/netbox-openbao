@@ -4,7 +4,7 @@ The plugin-facing registration API for assignable object types.
 These tests exist because the registry is a *contract with other plugins*, not
 an internal detail: a plugin calls `register_assignable_models()` from its
 `AppConfig.ready()` and expects `CredentialAssignment` to accept its models
-without the operator touching `PLUGINS_CONFIG`. The precedence between the
+without the operator repeating database configuration. The precedence between the
 configured list, the registry, and the deny list is the part most likely to be
 got wrong by a later change, so each edge is pinned rather than inferred.
 
@@ -18,11 +18,11 @@ wrong test entirely.
 from dcim.models import Site
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
 from netbox_openbao import registry
 from netbox_openbao.config import assignable_model_labels
-from netbox_openbao.models import CredentialAssignment
+from netbox_openbao.models import CredentialAssignment, OpenBaoSettings
 
 from .base import OpenBaoTestCase
 
@@ -82,52 +82,46 @@ class RegistrationTest(RegistryCleanupMixin, TestCase):
 
 class PrecedenceTest(RegistryCleanupMixin, TestCase):
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {
-        'assignable_models': ['dcim.device'],
-    }})
     def test_union_of_configuration_and_registry(self):
+        OpenBaoSettings.objects.create(assignable_models=['dcim.device'])
         self.register('dcim.rack')
         self.assertEqual(
             assignable_model_labels(),
             ['dcim.device', 'dcim.rack'],
         )
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {
-        'assignable_models': ['dcim.device'],
-        'assignable_models_deny': ['dcim.rack'],
-    }})
     def test_deny_beats_registration(self):
         """
         Registration comes from installed code, not from the operator. Without
         a subtraction an operator could not refuse an integration's choice
         without patching a plugin they did not write.
         """
+        OpenBaoSettings.objects.create(
+            assignable_models=['dcim.device'], assignable_models_deny=['dcim.rack'],
+        )
         self.register('dcim.rack')
         self.assertEqual(assignable_model_labels(), ['dcim.device'])
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {
-        'assignable_models': ['dcim.device', 'ipam.service'],
-        'assignable_models_deny': ['ipam.service'],
-    }})
     def test_deny_beats_configuration(self):
+        OpenBaoSettings.objects.create(
+            assignable_models=['dcim.device', 'ipam.service'],
+            assignable_models_deny=['ipam.service'],
+        )
         self.assertEqual(assignable_model_labels(), ['dcim.device'])
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {}})
-    def test_missing_keys_yield_the_registry_alone(self):
+    def test_model_defaults_are_combined_with_the_registry(self):
         """
-        NetBox merges `default_settings` at startup, so a deployment that
-        replaces the dict afterwards — or a test like this one — can leave every
-        key absent. An allowlist that raises there is worse than one that is
-        narrow.
+        A missing singleton resolves the model defaults before registrations.
         """
         self.register('dcim.rack')
-        self.assertEqual(assignable_model_labels(), ['dcim.rack'])
+        self.assertEqual(
+            assignable_model_labels(),
+            ['dcim.device', 'dcim.rack', 'ipam.service', 'virtualization.virtualmachine'],
+        )
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {
-        'assignable_models': ['ipam.service', 'dcim.device'],
-    }})
     def test_result_is_sorted(self):
         """The list is rendered into a validation message; order must be stable."""
+        OpenBaoSettings.objects.create(assignable_models=['ipam.service', 'dcim.device'])
         self.register('dcim.rack')
         self.assertEqual(
             assignable_model_labels(),
@@ -138,7 +132,7 @@ class PrecedenceTest(RegistryCleanupMixin, TestCase):
 class RegisteredAssignmentTest(RegistryCleanupMixin, OpenBaoTestCase):
     """
     The end the integrating plugin actually cares about: a registered model can
-    hold a credential, with no change to `PLUGINS_CONFIG`.
+    hold a credential without repeating the registered model in settings.
 
     `dcim.site` stands in for a plugin-owned model. It is a real content type
     that is deliberately *not* in the default allowlist, so the test proves the
@@ -171,11 +165,10 @@ class RegisteredAssignmentTest(RegistryCleanupMixin, OpenBaoTestCase):
         assignment.save()
         self.assertEqual(assignment.assigned_object, self.site)
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {
-        'assignable_models': ['dcim.device'],
-        'assignable_models_deny': ['dcim.site'],
-    }})
     def test_denied_type_is_rejected_even_when_registered(self):
+        OpenBaoSettings.objects.create(
+            assignable_models=['dcim.device'], assignable_models_deny=['dcim.site'],
+        )
         self.register('dcim.site')
         with self.assertRaises(ValidationError) as ctx:
             self._assignment().full_clean()

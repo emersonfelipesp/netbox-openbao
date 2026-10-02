@@ -6,7 +6,7 @@ import unittest
 from django.test import TransactionTestCase
 
 from netbox_openbao.administration.backends import DirectAdministrationBackend
-from netbox_openbao.models import OpenBaoCluster
+from netbox_openbao.models import EngineAuthMaterial, OpenBaoCluster
 
 TEST_ADDR = os.getenv('NETBOX_OPENBAO_TEST_ADDR')
 TEST_TOKEN = os.getenv('NETBOX_OPENBAO_TEST_TOKEN')
@@ -27,16 +27,9 @@ class OpenBaoAdministrationIntegrationTest(TransactionTestCase):
             auth_method='token',
             tls_verify=False,
         )
-        self.token_variable = 'NETBOX_BAO_ITEST_ADMIN_TOKEN'
-        self.previous_token = os.environ.get(self.token_variable)
-        os.environ[self.token_variable] = TEST_TOKEN
-
-    def tearDown(self):
-        if self.previous_token is None:
-            os.environ.pop(self.token_variable, None)
-        else:
-            os.environ[self.token_variable] = self.previous_token
-        super().tearDown()
+        material = EngineAuthMaterial(cluster=self.cluster)
+        material.set_secret('token', TEST_TOKEN)
+        material.save()
 
     def test_live_openapi_document_is_bounded_and_non_executable(self):
         document = DirectAdministrationBackend(self.cluster).discover_capabilities()

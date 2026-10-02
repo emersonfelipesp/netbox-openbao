@@ -9,8 +9,8 @@ curl -X PATCH https://netbox.example.net/api/plugins/openbao/engines/1/ \
   -d '{"backend": "vault"}'
 ```
 
-Same KV v2 mount, same AppRole setup, same environment variables, same policy
-shape. OpenBao is a fork of Vault and their KV v2 and AppRole surfaces remain
+Same KV v2 mount, same AppRole setup, same encrypted auth rows, and the same
+policy shape. OpenBao is a fork of Vault and their KV v2 and AppRole surfaces remain
 compatible, so `hvac` drives both unmodified.
 
 ## Why you can believe that

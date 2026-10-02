@@ -16,6 +16,7 @@ router.register('access-logs', views.CredentialAccessLogViewSet)
 router.register('administration-logs', views.OpenBaoAdministrationLogViewSet)
 router.register('procedure-runs', views.OpenBaoProcedureRunViewSet)
 router.register('settings', views.OpenBaoSettingsViewSet)
+router.register('auth-material', views.EngineAuthMaterialViewSet)
 router.register('service-endpoints', views.ServiceEndpointViewSet)
 router.register('ssh-public-keys', views.SSHPublicKeyViewSet)
 

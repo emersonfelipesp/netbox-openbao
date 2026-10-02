@@ -32,7 +32,7 @@ from netbox_openbao.backends.exceptions import (
 )
 from netbox_openbao.backends.openbao import OpenBaoBackend
 from netbox_openbao.choices import AuthMethodChoices, EngineStatusChoices
-from netbox_openbao.models import SecretEngine
+from netbox_openbao.models import EngineAuthMaterial, SecretEngine
 
 TEST_ADDR = os.environ.get('NETBOX_OPENBAO_TEST_ADDR')
 TEST_TOKEN = os.environ.get('NETBOX_OPENBAO_TEST_TOKEN')
@@ -335,7 +335,7 @@ class ConfigurationTest(TestCase):
 
     def test_missing_approle_material_is_a_configuration_error(self):
         """
-        Absent environment material is an operator error, reported distinctly
+        Absent database material is an operator error, reported distinctly
         from OpenBao rejecting material that looked valid.
         """
         from netbox_openbao.backends.exceptions import BackendConfigurationError
@@ -348,7 +348,7 @@ class ConfigurationTest(TestCase):
 
         with self.assertRaises(BackendConfigurationError) as ctx:
             backend._login(backend._build_client())
-        self.assertIn('NETBOX_BAO_NO_ENV_HERE_ROLE_ID', str(ctx.exception))
+        self.assertIn('OpenBao > Configuration > Settings', str(ctx.exception))
 
 
 class _KVIntegrationTests:
@@ -366,12 +366,6 @@ class _KVIntegrationTests:
     backend_value = None
     engine_slug = None
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        prefix = f"NETBOX_BAO_{cls.engine_slug.upper().replace('-', '_')}"
-        os.environ[f'{prefix}_TOKEN'] = cls.server_token or 'devroot'
-
     def setUp(self):
         super().setUp()
         self.engine = SecretEngine.objects.create(
@@ -384,6 +378,9 @@ class _KVIntegrationTests:
             auth_method=AuthMethodChoices.METHOD_TOKEN,
             tls_verify=False,
         )
+        material = EngineAuthMaterial(engine=self.engine)
+        material.set_secret('token', self.server_token or 'devroot')
+        material.save()
         # Resolved through the registry, so the engine's `backend` value is
         # part of what is under test rather than bypassed.
         self.backend = get_backend(self.engine)
@@ -524,7 +521,9 @@ class _KVIntegrationTests:
             backend=self.backend_value, api_url=self.server_addr,
             auth_method=AuthMethodChoices.METHOD_TOKEN, tls_verify=False,
         )
-        os.environ[f"NETBOX_BAO_{slug.upper().replace('-', '_')}_TOKEN"] = 'not-a-real-token'
+        material = EngineAuthMaterial(engine=engine)
+        material.set_secret('token', 'not-a-real-token')
+        material.save()
         backend = get_backend(engine)
 
         with self.assertRaises(OpenBaoError) as ctx:

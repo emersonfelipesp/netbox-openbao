@@ -10,6 +10,7 @@ from netbox_openbao.administration.backends import DirectAdministrationBackend
 from netbox_openbao.administration.finalization import FINAL_RESOURCES, conformance_report
 from netbox_openbao.api.finalization_views import FinalizationAdministrationMixin, _digest
 from netbox_openbao.backends.exceptions import OpenBaoConflict
+from netbox_openbao.tests.fakes import AuthMaterialStub
 
 TEST_ADDR = os.getenv("NETBOX_OPENBAO_TEST_ADDR")
 TEST_TOKEN = os.getenv("NETBOX_OPENBAO_TEST_TOKEN")
@@ -23,27 +24,16 @@ class FinalizationAdministrationIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.token_variable = "NETBOX_BAO_FINAL_ADMIN_LIVE_TOKEN"
-        cls.previous_token = os.environ.get(cls.token_variable)
-        os.environ[cls.token_variable] = TEST_TOKEN
         cluster = SimpleNamespace(
             api_url=TEST_ADDR,
             ca_cert_path="",
             tls_verify=False,
             namespace="",
-            env_prefix="NETBOX_BAO_FINAL_ADMIN_LIVE",
             slug="final-admin-live",
             auth_method="token",
+            auth_material=AuthMaterialStub(token=TEST_TOKEN),
         )
         cls.backend = DirectAdministrationBackend(cluster)
-
-    @classmethod
-    def tearDownClass(cls):
-        if cls.previous_token is None:
-            os.environ.pop(cls.token_variable, None)
-        else:
-            os.environ[cls.token_variable] = cls.previous_token
-        super().tearDownClass()
 
     def execute(self, resource, operation, *, identifier="", payload=None, material=False):
         specification = FINAL_RESOURCES[resource]

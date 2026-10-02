@@ -1,9 +1,9 @@
 """
-Settings-row access, memoised per request, with a `PLUGINS_CONFIG` fallback.
+Settings-row access, memoised per request, with model defaults.
 
 Resolution order:
 
-    per-request memo  →  settings row  →  PLUGINS_CONFIG  →  caller default
+    per-request memo  →  settings row  →  model default
 
 **There is deliberately no shared cache layer.** An earlier revision mirrored
 NetBox's own two-layer configuration cache — a thread-local in front of the
@@ -39,12 +39,9 @@ Without one of those a long-lived process would hold its first snapshot forever.
 import logging
 import threading
 
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import FieldDoesNotExist
 from django.db import connections
 from django.db.utils import DatabaseError
-from netbox.plugins import get_plugin_config
-
-PLUGIN_NAME = 'netbox_openbao'
 
 # Fetched in one query and memoised as one object. This read path sits on every
 # object detail render through the globally registered credential panel, as well
@@ -93,11 +90,8 @@ class Config:
         from netbox_openbao.models.settings import OpenBaoSettings
 
         try:
-            # Never `get_or_create` here. A read must leave a missing row
-            # missing, or the database becomes authoritative the first time
-            # anything asks for a setting and `PLUGINS_CONFIG` stops being
-            # reachable — which would also make every `override_settings` test
-            # in this suite pass while asserting against defaults.
+            # Never `get_or_create` here. Reading defaults must not mutate the
+            # database on a fresh installation.
             values = OpenBaoSettings.objects.values(*MODEL_BACKED_SETTINGS).first()
             return _MISSING if values is None else values
         except DatabaseError:
@@ -174,22 +168,18 @@ def get_config(key, default=None):
     """
     Return one configuration value, without changing the caller-facing API.
 
-    Keeping this signature and its fallback semantics identical is what makes
-    the move to database-backed settings a substitution at every call site
-    rather than a rewrite of their logic.
-
-    A null resolves to `default`, which is load-bearing rather than incidental:
-    `get_plugin_config()` returns `None` for a key absent from the merged
-    result, and treating that as a real value once turned `store_public_material`
-    off silently and looked exactly like the extractors failing.
+    Known settings resolve to their model field default when no singleton row
+    exists. ``PLUGINS_CONFIG`` is never consulted.
     """
     values = _current_config().values
     value = _MISSING if values is _MISSING else values.get(key, _MISSING)
     if value is _MISSING:
         try:
-            value = get_plugin_config(PLUGIN_NAME, key)
-        except (ImproperlyConfigured, KeyError):
-            value = None
+            from netbox_openbao.models.settings import OpenBaoSettings
+
+            value = OpenBaoSettings._meta.get_field(key).get_default()
+        except FieldDoesNotExist:
+            value = default
     return default if value is None else value
 
 
@@ -211,10 +201,7 @@ def assignable_model_labels():
     integration's choice without patching a plugin they did not write. With it,
     the allowlist is still theirs.
 
-    Tolerates every key being absent or null. NetBox merges `default_settings`
-    into `PLUGINS_CONFIG` at startup, so a deployment that replaces the dict
-    afterwards — or a test using `override_settings` — can leave keys missing,
-    and an allowlist that raises is worse than one that is empty.
+    Tolerates null and malformed list entries without widening the allowlist.
 
     Sorted, because the returned list is rendered into
     `CredentialAssignment.clean()`'s error message; an operator comparing two

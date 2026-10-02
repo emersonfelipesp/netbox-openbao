@@ -27,31 +27,29 @@ curl -X PATCH https://netbox.example.net/api/plugins/openbao/settings/1/ \
 ```
 
 The model has a fixed, unique `singleton_key`, so the database enforces at
-most one settings row. It contains configuration only: OpenBao RoleIDs,
-SecretIDs, and tokens remain outside the database.
+most one settings row. Authentication material is stored separately in
+`EngineAuthMaterial`, encrypted at rest and scoped to an engine, policy tier,
+or administrative cluster.
 
 The settings row can be deleted only while no credentials exist. Once a
-credential exists, deleting the row could restore a different fallback
+credential exists, deleting the row could restore different model defaults
 `path_prefix`, producing the same partial outage as changing the prefix: the
 AppRole policy still covers the old path while new writes target another one.
 Credential creation and settings writes select the singleton for update before
 re-checking the committed credential state. A transaction-level advisory lock
 covers the fresh-installation case where no settings row exists to lock yet.
-If credentials were already created from a `PLUGINS_CONFIG` fallback, the first
-settings row must use the prefix stamped into those credential paths. Changing
-the fallback first does not make the stored paths move with it.
+The first settings row must use the prefix stamped into any existing
+credential paths. Saving a row never moves stored paths.
 
 The read order is:
 
 ```
-per-request memo → settings row → PLUGINS_CONFIG → caller default
+per-request memo → settings row → model field default
 ```
 
-The missing-row result is memoised, but a read never creates a row. This keeps
-`PLUGINS_CONFIG` usable as the fallback for a fresh installation and for
-deployment-specific overrides. The whole row, including the no-row sentinel,
-is held only for the current request or job run. Five `get_config()` calls cost
-one indexed single-row query, not five.
+The missing-row result is memoised, but a read never creates a row. The whole
+row, including the no-row sentinel, is held only for the current request or job
+run. Five `get_config()` calls cost one indexed single-row query, not five.
 
 There is deliberately no shared Django cache layer. A shared fill could race a
 committed invalidation and restore stale security controls indefinitely, and a
@@ -67,12 +65,14 @@ rollback therefore cannot leave its discarded value authoritative for the rest
 of the request or job.
 
 Use API or form saves for automatic settings validation. As with every Django
-model, a direct instance `save()` does not call `full_clean()`; an ORM caller
-must call it explicitly, although the instance save still clears the current
-thread's memo. `QuerySet.update()`, `bulk_update()`, and raw SQL bypass both
-`full_clean()` and save signals. An in-flight request may therefore keep its
-earlier snapshot, but every later request performs its own database lookup.
-Nothing can repair an invalid value that bypassed validation.
+model, a direct instance `save()` does not call all of `full_clean()`; an ORM
+caller must call it explicitly. The path-prefix shape and locked path-safety
+checks are repeated by `save()` because a malformed or moved prefix can make
+new writes fail. The instance save also clears the current thread's memo.
+`QuerySet.update()`, `bulk_update()`, and raw SQL bypass both `full_clean()` and
+save signals. An in-flight request may therefore keep its earlier snapshot,
+but every later request performs its own database lookup. Nothing can repair
+an invalid value that bypassed validation.
 
 The per-request memo is load-bearing rather than an optimisation. The
 credentials panel is registered globally, so this read path runs on **every
@@ -88,150 +88,121 @@ boundaries, a worker thread would retain the first settings snapshot it read.
 
 ### From the CLI
 
-The settings are an ordinary plugin API endpoint, so `nbx` reaches them with no
-support of its own:
+The singleton action avoids discovering a database ID first:
 
 ```bash
-nbx call GET /api/plugins/openbao/settings/ --json
-nbx call PATCH /api/plugins/openbao/settings/1/ \
+nbx call GET /api/plugins/openbao/settings/singleton/ --json
+nbx call PATCH /api/plugins/openbao/settings/singleton/ \
   --body-json '{"reveal_ttl": 600}' --confirm --json
 ```
 
-## `PLUGINS_CONFIG` seed and fallback
+## Database-only runtime configuration
 
-`PLUGINS_CONFIG` remains supported. During upgrade, the data migration copies
-effective non-default values into the settings row. If no row exists, reads
-continue to resolve from `PLUGINS_CONFIG` and then their hard defaults.
-Set-like model labels are stripped, lowercased, deduplicated, and sorted during
-the migration, matching runtime semantics. An unsafe legacy `path_prefix` is
-not copied into a row the runtime model rejects, and credential path derivation
-fails closed until that fallback is corrected.
+`PLUGINS_CONFIG['netbox_openbao']` is ignored. A system check names every
+legacy key still present so it can be removed. Configure the singleton through
+the Settings page, its REST singleton action, or:
 
-The five job intervals are transitional exceptions. Their fields exist on the
-settings model, but the `@system_job` decorators still read `PLUGINS_CONFIG` at
-module import. Editing the row's interval fields does not reschedule jobs yet;
-keep configuring those five keys below until interval reconciliation lands.
-
-```python
-PLUGINS_CONFIG = {
-    'netbox_openbao': {
-        # Path prefix beneath the KV mount. The full logical path for a
-        # credential is "<path_prefix>/credentials/<uuid>".
-        #
-        # This must be a non-empty relative path without leading or trailing
-        # slashes, empty or traversal segments, or whitespace. It can be
-        # changed, or the settings row deleted, only while no credentials
-        # exist. The AppRole's OpenBao policy is scoped to
-        # secret/data/<path_prefix>/credentials/*; changing the prefix later
-        # would make new writes fail with a permission error while every
-        # existing credential continued to work at its stamped path.
-        'path_prefix': 'netbox',
-
-        # Object types a credential may be assigned to. Enforced on the model,
-        # so the REST API and direct ORM callers are held to the same list.
-        #
-        # An installed plugin can add its own models to this without you
-        # editing anything — see "Assignable object types" below. The resolved
-        # allowlist is this list plus whatever plugins registered, minus
-        # `assignable_models_deny`.
-        'assignable_models': [
-            'dcim.device',
-            'virtualization.virtualmachine',
-            'ipam.service',
-        ],
-
-        # Object types to refuse even when an installed plugin registered them.
-        # Registration comes from code rather than from you, so this is what
-        # keeps the allowlist yours: deny wins over both the list above and the
-        # registry.
-        'assignable_models_deny': [],
-
-        # Persist non-secret public material (public keys, certificates).
-        # Disabling this gives up the zero-read expiry dashboard, which is the
-        # main reason to run this plugin rather than another one.
-        'store_public_material': True,
-        # Verified live/staged SSH public fingerprints and KV version bindings
-        # remain mandatory for automation identity, even when this is False.
-        # Full public keys and optional certificate display metadata remain opt-in.
-
-        # DRF throttle rate for the reveal endpoint, per user. Bounds the blast
-        # radius of a leaked API token.
-        'reveal_rate_limit': '30/hour',
-
-        # Seconds a revealed secret should be considered valid by a consumer.
-        # A policy tier's max_reveal_ttl lowers this further; it never raises it.
-        'reveal_ttl': 300,
-
-        # Fallback TTL for a cached OpenBao token when the login response
-        # carries no lease duration. A real lease always wins, and the cache
-        # expires at 80% of it.
-        'token_cache_ttl': 3600,
-
-        # Retention for CredentialAccessLog, enforced by AccessLogPruneJob.
-        'audit_retention_days': 365,
-
-        # Allow the plugin to generate key material server-side.
-        'allow_generation': True,
-        'default_ssh_key_type': 'ed25519',
-
-        # Optional second, human-readable path written alongside the canonical
-        # UUID path. Off by default: it is a consistency liability, because the
-        # alias encodes facts that change.
-        #
-        # This setting is not model-backed. It is currently unused by the
-        # package and remains here pending a separate removal-or-implementation
-        # decision.
-        'path_alias_template': None,
-
-        # Days before expiry at which ExpiryScanJob warns.
-        'expiry_warning_days': [30, 14, 7, 1],
-
-        # Background job intervals, in minutes. Read at import time by the
-        # @system_job decorators, so a change needs a NetBox restart.
-        'engine_health_interval': 5,
-        'expiry_scan_interval': 1440,
-        'credential_verify_interval': 1440,
-        'rotation_due_interval': 1440,
-        'access_log_prune_interval': 10080,
-    },
-}
+```bash
+python manage.py openbao_configure show
+python manage.py openbao_configure settings \
+  --set reveal_ttl=600 \
+  --set 'expiry_warning_days=[60,30,14,7,1]'
 ```
+
+During an upgrade, the explicit one-time importer is the sole exception to the
+runtime rule:
+
+```bash
+python manage.py openbao_configure import-legacy-settings --dry-run
+python manage.py openbao_configure import-legacy-settings
+```
+
+It validates and displays the complete proposed row before saving, then prints
+the effective stored values. It enforces the same immutable `path_prefix`
+guard as the UI and API. Follow the ordered [upgrade guide](upgrading.md) before
+removing legacy configuration.
+
+Background-job intervals are read from the settings row when each worker
+imports the job declarations. Restart NetBox workers after changing an
+interval. Before migrations exist or while PostgreSQL is unavailable, imports
+use the corresponding model default.
 
 ## The default engine
 
 There is no `default_engine` setting. The default is the `SecretEngine` whose
 `is_default` flag is set, which is enforced by a database constraint (at most
 one), visible and changeable in the UI, and does not need a restart. A
-duplicate setting in `PLUGINS_CONFIG` would have been a second place for the
-same decision to live, and therefore a place for the two to disagree.
+duplicate setting elsewhere would be a second source of truth.
 
 The default engine pre-selects itself when you create a new `CredentialPolicy`.
 
-## Environment
+## Encrypted authentication material
 
-Auth material is **never** read from `configuration.py` or the database. Each
-engine and administrative cluster derives a prefix from its slug
-(`prod-core` → `NETBOX_BAO_PROD_CORE`),
-and a `CredentialPolicy` may override it with `approle_env_prefix` so a tier
-authenticates with its own AppRole.
+`EngineAuthMaterial` stores versioned ciphertext for `role_id`, `secret_id`,
+`token`, `k8s_role`, `k8s_jwt_path`, `client_cert`, and `client_key`. A row has
+exactly one owner: a `SecretEngine`, an `OpenBaoCluster`, or a
+`CredentialPolicy`. A policy row is an optional tier-specific override; without
+one, the policy uses its engine's row.
 
-| Auth method | Variables |
-|---|---|
-| `approle` | `<PREFIX>_ROLE_ID`, `<PREFIX>_SECRET_ID` |
-| `token` | `<PREFIX>_TOKEN` (development only) |
-| `kubernetes` | `<PREFIX>_K8S_ROLE`, optionally `<PREFIX>_K8S_JWT_PATH` |
-| `cert` | none — the client certificate is presented by the TLS session |
+Secret inputs are write-only in the UI and REST API. Blank form inputs retain
+the existing value, and each value has an explicit clear control. API responses,
+tables, filters, exports, event snapshots, search, GraphQL, and audit targets
+show only configured/missing status. Broker PEM values are decrypted into
+mode-0600 temporary files because `requests` requires paths; the files are
+removed when the pooled session closes and at process exit.
 
-Every variable also accepts a `_FILE` suffix naming a file to read instead,
-which is how you mount a Docker or Kubernetes secret without exposing the value
-in `/proc/<pid>/environ`.
+Configure an identity interactively or from a protected file:
+
+```bash
+python manage.py openbao_configure auth --engine primary --set role_id
+python manage.py openbao_configure auth --engine primary --set secret_id \
+  --file /run/secrets/openbao-secret-id
+python manage.py openbao_configure test --engine primary
+```
+
+The only environment reader is the explicit, one-time legacy importer:
+
+```bash
+python manage.py openbao_configure import-env --engine primary
+```
+
+Remove the imported variables before restarting NetBox. Runtime authentication
+never reads them. For a policy tier, `import-env` first uses the retained,
+non-editable `legacy_approle_env_prefix` migration field; when that field is
+blank, it derives the engine prefix. The field is excluded from every normal
+operator surface and must remain until imports are verified. Then clear the
+metadata explicitly with `openbao_configure cleanup-legacy-prefixes
+--confirm-imports-verified`; the command refuses policies without an imported
+authentication row.
+
+### `SECRET_KEY` root of trust
+
+Django's `SECRET_KEY` is the single wrapping root for authentication rows. It
+cannot be stored in the database, because that would place the decryption key
+beside its ciphertext. Back it up and restrict it as you would the OpenBao
+service identity itself.
+
+To rotate it safely, keep the old key available in a root-readable file, set
+the new `SECRET_KEY`, run the re-encryption command before serving requests,
+then restart every web and worker process:
+
+```bash
+python manage.py openbao_configure reencrypt \
+  --old-secret-key-file /run/secrets/previous-netbox-secret-key
+systemctl restart netbox netbox-rq
+```
+
+The command locks all authentication rows and updates them atomically. A wrong
+old key rolls back the entire operation. Delete the old-key file after a
+successful connection test.
 
 ## Administrative clusters
 
 Create a cluster under **Plugins → OpenBao → Administration → Clusters** or at
 `POST /api/plugins/openbao/clusters/`. The record contains the API URL,
 namespace, backend, authentication method, TLS policy, and optional NetBox
-device hosting OpenBao. It never contains credentials.
+device hosting OpenBao. Its encrypted service identity is a separate
+`EngineAuthMaterial` row.
 
 Existing installations receive one cluster per `SecretEngine` during migration
 `0011`. The engine's connection fields remain authoritative for credential

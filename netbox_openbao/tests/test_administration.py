@@ -87,9 +87,6 @@ class OpenBaoClusterModelTest(OpenBaoAdministrationTestCase):
         for forbidden in ('role_id', 'secret_id', 'token', 'password', 'private_key'):
             self.assertNotIn(forbidden, names)
 
-    def test_cluster_env_prefix_is_derived_from_slug(self):
-        self.assertEqual(self.cluster.env_prefix, 'NETBOX_BAO_PRIMARY_CLUSTER')
-
     def test_engine_can_reference_a_cluster(self):
         engine = SecretEngine.objects.create(
             name='KV',

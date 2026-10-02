@@ -1,7 +1,7 @@
 """Database-backed settings for netbox-openbao.
 
-This row contains configuration only. OpenBao authentication material remains
-in the process environment or referenced files and must never be added here.
+This singleton contains non-secret plugin behavior. Encrypted service identities
+live in ``EngineAuthMaterial`` under a separate permission boundary.
 """
 
 from django.contrib.postgres.fields import ArrayField
@@ -22,9 +22,8 @@ __all__ = (
     'validate_reveal_rate',
 )
 
-#: Stored on the model, still read from PLUGINS_CONFIG at import by the
-#: @system_job decorators. Declared once so the form, the panel, and the startup
-#: warning cannot disagree about which settings are not yet live.
+#: Read from the singleton at job registration time. Changes take effect after
+#: the worker restarts and imports the job classes again.
 STATIC_INTERVAL_SETTINGS = (
     'engine_health_interval',
     'expiry_scan_interval',
@@ -198,11 +197,8 @@ class OpenBaoSettings(NetBoxModel):
         help_text=_('Days before expiry at which the expiry scan reports a credential.'),
     )
 
-    # These fields are stored now so the interval reconciliation work can use
-    # them without another schema change. jobs.py deliberately continues to
-    # read the five decorator arguments from PLUGINS_CONFIG until that work is
-    # complete; presenting a value as live when it reverts on worker restart
-    # would be worse than leaving its current restart-required semantics.
+    # NetBox's system-job decorator fixes intervals when the worker imports the
+    # class. Database edits therefore require a worker restart.
     engine_health_interval = models.PositiveIntegerField(
         verbose_name=_('engine health interval'),
         default=5,
@@ -237,6 +233,13 @@ class OpenBaoSettings(NetBoxModel):
 
     def __str__(self):
         return 'OpenBao settings'
+
+    def full_clean(self, *args, **kwargs):
+        # CharField.clean() coerces integers to text before Model.clean().
+        # Validate the caller's actual value first so direct ORM callers cannot
+        # turn an invalid non-string path into an apparently valid string.
+        validate_path_prefix(self.path_prefix)
+        return super().full_clean(*args, **kwargs)
 
     def clean(self):
         super().clean()
@@ -401,6 +404,7 @@ class OpenBaoSettings(NetBoxModel):
         transaction the refusal discards.
         """
         self.singleton_key = 'default'
+        validate_path_prefix(self.path_prefix)
         using = kwargs.get('using') or router.db_for_write(type(self), instance=self)
         kwargs['using'] = using
         try:
@@ -543,32 +547,9 @@ class OpenBaoSettings(NetBoxModel):
         )
 
     @property
-    def superseded_plugins_config_keys(self):
-        """
-        Keys still set in `PLUGINS_CONFIG` that this row now overrides.
-
-        Once a row exists it is authoritative, so a key left in the settings
-        file is silently ignored. That is the single most likely support
-        question this change creates — an operator edits a value they can see
-        and nothing happens — so it is surfaced on the object page and warned
-        about at startup rather than left to be discovered.
-
-        Interval keys are excluded: they are genuinely still read from the file,
-        so listing them here would be wrong.
-        """
-        from django.conf import settings as django_settings
-
-        from netbox_openbao.config import MODEL_BACKED_SETTINGS
-
-        configured = (django_settings.PLUGINS_CONFIG or {}).get('netbox_openbao') or {}
-        live = set(MODEL_BACKED_SETTINGS) - set(STATIC_INTERVAL_SETTINGS)
-        superseded = sorted(key for key in live if key in configured)
-        return ', '.join(superseded) or _('None')
-
-    @property
     def static_interval_summary(self):
-        """Name the settings this row stores but does not yet govern."""
-        return _('%(keys)s (read from PLUGINS_CONFIG at worker start)') % {
+        """Name the settings applied when a worker imports the job classes."""
+        return _('%(keys)s (database values applied at worker start)') % {
             'keys': ', '.join(STATIC_INTERVAL_SETTINGS),
         }
 

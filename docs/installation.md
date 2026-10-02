@@ -26,12 +26,6 @@ Add to `configuration.py`:
 
 ```python
 PLUGINS = ['netbox_openbao']
-
-PLUGINS_CONFIG = {
-    'netbox_openbao': {
-        # All settings have defaults; override only what you need.
-    },
-}
 ```
 
 Apply migrations and restart. NetBox must restart **both** the web service and
@@ -42,6 +36,50 @@ not pick them up:
 python manage.py migrate
 systemctl restart netbox netbox-rq
 ```
+
+## Upgrade from environment-based authentication
+
+Upgrade in a maintenance window because the new runtime never reads legacy
+variables automatically:
+
+1. Back up the database and Django's `SECRET_KEY`. The key is the root of trust
+   for encrypted service identities; a database backup without it cannot
+   decrypt them.
+2. Install the new package and run `python manage.py migrate`. Do not remove
+   legacy configuration yet.
+3. Preview and import every legacy runtime setting:
+
+   ```bash
+   python manage.py openbao_configure import-legacy-settings --dry-run
+   python manage.py openbao_configure import-legacy-settings
+   ```
+
+   The command is the only explicit reader of
+   `PLUGINS_CONFIG['netbox_openbao']`. It validates the complete proposed
+   settings row, prints a field-by-field diff, and prints the effective saved
+   values after import. A `path_prefix` change is refused after credentials
+   exist, because their stored paths must continue to resolve under the prefix
+   that created them.
+4. Import each old engine, policy, and cluster identity once with
+   `python manage.py openbao_configure import-env --engine <slug>` (or
+   `--policy` / `--cluster`). A policy's custom legacy environment prefix is
+   retained as non-editable migration metadata and used automatically by this
+   command. Keep that field until every identity import has been verified;
+   afterward, `openbao_configure cleanup-legacy-prefixes
+   --confirm-imports-verified` clears it explicitly. No migration drops it
+   automatically.
+5. Run `python manage.py openbao_configure show` and
+   `python manage.py openbao_configure test --engine <slug>` for every
+   credential engine, plus the equivalent cluster tests. Complete one real
+   permission-scoped credential reveal through the UI or REST API.
+6. Only after those checks succeed, remove `NETBOX_BAO_*` variables and all
+   `PLUGINS_CONFIG['netbox_openbao']` keys. Runtime ignores them, and the Django
+   system check reports any legacy plugin keys still present.
+7. Restart the NetBox web and RQ services.
+
+See the complete [upgrade guide](upgrading.md) for rollback and verification
+details. Follow [the rotation runbook](configuration.md#secret_key-root-of-trust)
+whenever `SECRET_KEY` changes.
 
 ## OpenBao side
 
@@ -77,36 +115,28 @@ bao write -f -field=secret_id auth/approle/role/netbox-prod/secret-id
 
 ## Delivering the AppRole to NetBox
 
-**Never put this in `configuration.py`, a model field, or a tracked file.** The
-plugin reads it from the environment at login time, keyed by a prefix derived
-from the engine's slug: slug `prod-core` becomes `NETBOX_BAO_PROD_CORE`.
-
-With systemd, use an `EnvironmentFile` that is `0600` and owned by the NetBox
-user:
-
-```ini
-# /etc/systemd/system/netbox.service.d/openbao.conf
-[Service]
-EnvironmentFile=/etc/netbox/openbao.env
-```
+Create the engine and store its service identity through the Settings page,
+REST API, or management command. The values are encrypted before they enter
+the database and are write-only on every operator surface.
 
 ```bash
-# /etc/netbox/openbao.env  (chmod 600)
-NETBOX_BAO_PRIMARY_ROLE_ID=...
-NETBOX_BAO_PRIMARY_SECRET_ID=...
+python manage.py openbao_configure engine \
+  --slug primary --name Primary --api-url https://bao.example.net:8200 \
+  --auth-method approle --kv-mount secret --kv-version 2 --default
+python manage.py openbao_configure auth --engine primary --set role_id
+python manage.py openbao_configure auth --engine primary --set secret_id \
+  --file /run/secrets/bao-secret-id
+python manage.py openbao_configure test --engine primary
 ```
 
-Apply the same drop-in to `netbox-rq.service` — background jobs authenticate
-too, and a worker without the material will report every engine as
-misconfigured.
+Interactive prompts do not echo values. Prefer `--file` or `--stdin` in
+automation; neither puts material in shell history. The web service and RQ
+workers read the same database rows, so there is no per-process credential
+configuration to synchronize.
 
-For Docker or Kubernetes, prefer the `_FILE` indirection so the value never
-appears in the process environment (where it is readable via
-`/proc/<pid>/environ`):
-
-```bash
-NETBOX_BAO_PRIMARY_SECRET_ID_FILE=/run/secrets/bao-secret-id
-```
+Django's `SECRET_KEY` derives the encryption key and is the one root of trust
+that cannot live in the database. Back it up and follow the rotation runbook in
+[Configuration](configuration.md#secret_key-root-of-trust).
 
 ## Broker mode
 
@@ -122,17 +152,18 @@ still *ask* the broker for material and be answered. What changes is that
 stealing the database or the configuration no longer yields vault credentials,
 and that the audit record is outside NetBox's reach.
 
-The client certificate is named by **paths on the NetBox host**, keyed on the
-engine's environment prefix — the same prefix the AppRole would use:
+Store the client certificate and key as encrypted authentication material:
 
 ```bash
-NETBOX_BAO_PRIMARY_CLIENT_CERT=/etc/netbox/openbao/netbox-prod.pem
-NETBOX_BAO_PRIMARY_CLIENT_KEY=/etc/netbox/openbao/netbox-prod.key
+python manage.py openbao_configure auth --engine primary \
+  --set client_cert --file /etc/netbox/openbao/netbox-prod.pem
+python manage.py openbao_configure auth --engine primary \
+  --set client_key --file /etc/netbox/openbao/netbox-prod.key
 ```
 
-These are paths, not material, so there is no `_FILE` form — there is no value
-here to keep out of `/proc/<pid>/environ`. The key file must be readable by the
-NetBox user and by the RQ worker, and by nobody else.
+The command reads the PEM once. At runtime the plugin creates mode-0600
+temporary files for `requests`, deletes them when the pooled session closes,
+and registers process-exit cleanup.
 
 The engine's **CA certificate path** and **TLS verify** fields verify the
 *broker's* server certificate. Set the CA path if the broker's certificate is
@@ -145,8 +176,8 @@ an unverified peer is a credential handed to a man in the middle. A self-signed
 broker certificate is served by pointing the CA certificate path at it, so this
 refuses nothing legitimate.
 
-A `CredentialPolicy` tier can present its **own** certificate by setting
-`<TIER_PREFIX>_CLIENT_CERT` / `_CLIENT_KEY`. The broker identifies callers by
+A `CredentialPolicy` tier can present its **own** certificate by creating an
+auth-material row owned by that policy. The broker identifies callers by
 the certificate's subject common name, so a different certificate is a
 different broker instance with a different set of permitted path prefixes —
 the tiering that AppRoles give you in direct mode is preserved, not flattened.
@@ -186,7 +217,8 @@ line rather than expecting a job to reconcile it.
 ## Using HashiCorp Vault instead
 
 Set a `SecretEngine`'s **backend** to `HashiCorp Vault`. Everything else is
-identical — same KV v2 mount, same AppRole setup, same environment variables.
+identical — same KV v2 mount, same AppRole setup, and the same encrypted
+authentication model.
 
 That is not an aspiration: the plugin's entire wire-protocol contract runs as a
 single shared test suite against both servers, and every case passes on both —
@@ -231,8 +263,8 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 A `healthy` status means the URL, TLS, and authentication all work. `unauthorized`
-almost always means the environment variables are missing from the unit that is
-actually running — check the RQ worker as well as the web service.
+means the stored identity is missing or OpenBao rejected it. Check the Settings
+page's configured/missing status, then run `openbao_configure test`.
 
 ## NetBox 4.6 and 4.7
 

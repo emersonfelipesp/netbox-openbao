@@ -1,5 +1,7 @@
 """Secret backend registry and factory."""
 
+from django.core.exceptions import ObjectDoesNotExist
+
 from .base import SecretBackend
 from .broker import BrokerBackend
 from .exceptions import (
@@ -56,5 +58,15 @@ def get_backend(engine, policy=None):
     # a newer version of the plugin should degrade to the compatible default,
     # not take every credential on it offline.
     backend_class = BACKENDS.get(getattr(engine, 'backend', None) or DEFAULT_BACKEND, OpenBaoBackend)
-    env_prefix = policy.env_prefix if policy is not None else None
-    return backend_class(engine, env_prefix=env_prefix)
+    auth_material = None
+    owner = policy if policy is not None else engine
+    if getattr(owner, 'pk', None):
+        try:
+            auth_material = owner.auth_material
+        except ObjectDoesNotExist:
+            if policy is not None:
+                try:
+                    auth_material = engine.auth_material
+                except ObjectDoesNotExist:
+                    pass
+    return backend_class(engine, auth_material=auth_material)

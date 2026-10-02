@@ -42,10 +42,10 @@ to use those fields until the later engine-lifecycle work migrates all callers.
 Rolling the migration back first clears the compatibility relation, then drops
 the new cluster and administration-log tables. It does not delete an engine.
 
-Authentication material is absent from both models. The cluster slug derives
-the same environment contract as an engine: `prod-core` becomes
-`NETBOX_BAO_PROD_CORE`. Role IDs, secret IDs, tokens, JWTs, and private keys
-remain in environment variables or referenced files.
+Authentication material is absent from both connection models. A separate
+`EngineAuthMaterial` row owned by the cluster holds versioned ciphertext for
+Role IDs, secret IDs, tokens, Kubernetes settings, and client PEM values. The
+UI and REST API expose only configured/missing status.
 
 ## Runtime capability discovery
 

@@ -5,33 +5,17 @@ failures whose symptom does not resemble their cause.
 
 ## The engine says `unauthorized`
 
-Almost always the environment variables are missing from the unit that is
-actually running — and almost always that unit is the **RQ worker**, not the
-web service.
-
-Both authenticate. The drop-in has to be applied to both:
-
-```ini
-# /etc/systemd/system/netbox.service.d/openbao.conf
-# /etc/systemd/system/netbox-rq.service.d/openbao.conf
-[Service]
-EnvironmentFile=/etc/netbox/openbao.env
-```
+Open **OpenBao → Configuration → Settings** and inspect the engine's auth
+status. The required field is either missing, cannot be decrypted with the
+current `SECRET_KEY`, or OpenBao rejected it.
 
 ```bash
-systemctl daemon-reload
-systemctl restart netbox netbox-rq
-systemctl show netbox-rq -p EnvironmentFiles
+python manage.py openbao_configure show
+python manage.py openbao_configure test --engine prod-core
 ```
 
-Check the prefix matches the engine's slug: `prod-core` →
-`NETBOX_BAO_PROD_CORE_ROLE_ID`. Hyphens become underscores, and the whole thing
-is upper-cased. The engine's detail page shows the resolved prefix with a copy
-button, precisely because this is the most common failed deployment.
-
-If a `CredentialPolicy` sets `approle_env_prefix`, **that** prefix must be
-present too. A tier whose AppRole was never delivered fails at reveal time,
-not at engine health — health uses the engine-wide credentials.
+For a policy-specific failure, test `--policy <slug>`. A tier without its own
+auth row intentionally falls back to the engine identity.
 
 ## Creating a credential fails, and the message says nothing useful
 
@@ -137,9 +121,8 @@ dependencies with it.
 They are NetBox **system jobs**, scheduled by NetBox's RQ worker. Check
 `netbox-rq.service` is running, then look under **Operations → Jobs**.
 
-Intervals are read at **import time** by the `@system_job` decorators, so
-changing one in `PLUGINS_CONFIG` needs a NetBox restart, not just a worker
-restart.
+Intervals are read from the database at **import time** by the `@system_job`
+decorators, so restart NetBox workers after changing one.
 
 ## `CredentialVerifyJob` reports `missing`
 

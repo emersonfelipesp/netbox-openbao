@@ -2,14 +2,13 @@
 The integration point for plugins that want their own objects to hold credentials.
 
 `CredentialAssignment` accepts only the object types a deployment has opted
-into, and until now the only way to opt one in was to hand-edit
-`PLUGINS_CONFIG['netbox_openbao']['assignable_models']`. That is the right
-control for an *operator* and the wrong mechanism for an *integrating plugin*:
+into. `OpenBaoSettings.assignable_models` is the right control for an
+*operator* and the wrong mechanism for an *integrating plugin*:
 a plugin that stores its secrets here already knows which of its models are
 credential holders, and making the operator restate that in a settings file
 means the integration is silently inert until someone reads the right paragraph
 of the right README. The failure it produces — a validation error on a form
-about a configuration file the operator was never pointed at — is a poor way to
+about a setting the operator was never pointed at — is a poor way to
 learn that.
 
 So a plugin registers its own models from `AppConfig.ready()`::

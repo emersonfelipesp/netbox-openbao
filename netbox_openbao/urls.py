@@ -19,6 +19,8 @@ urlpatterns = (
 
     path('engines/', include(get_model_urls('netbox_openbao', 'secretengine', detail=False))),
     path('engines/<int:pk>/', include(get_model_urls('netbox_openbao', 'secretengine'))),
+    path('auth-material/', include(get_model_urls('netbox_openbao', 'engineauthmaterial', detail=False))),
+    path('auth-material/<int:pk>/', include(get_model_urls('netbox_openbao', 'engineauthmaterial'))),
 
     path('policies/', include(get_model_urls('netbox_openbao', 'credentialpolicy', detail=False))),
     path('policies/<int:pk>/', include(get_model_urls('netbox_openbao', 'credentialpolicy'))),

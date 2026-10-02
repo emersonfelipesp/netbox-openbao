@@ -12,10 +12,8 @@ class SecretEngine(PrimaryModel):
     """
     One OpenBao instance plus a single KV mount on it.
 
-    Deliberately holds **no authentication material**. RoleIDs, SecretIDs, and
-    tokens are resolved at runtime from the process environment, keyed by
-    `env_prefix`. Storing the vault's own credentials in the database this
-    plugin exists to keep secrets out of would defeat the entire design.
+    Authentication material lives in the separately permissioned and encrypted
+    ``EngineAuthMaterial`` row. This inventory model never exposes plaintext.
     """
 
     name = models.CharField(
@@ -39,7 +37,7 @@ class SecretEngine(PrimaryModel):
         verbose_name=_('slug'),
         max_length=100,
         unique=True,
-        help_text=_("Also derives the environment variable prefix for this engine's credentials"),
+        help_text=_('Stable identifier used by the UI, API, and management commands.'),
     )
     backend = models.CharField(
         verbose_name=_('backend'),
@@ -145,15 +143,6 @@ class SecretEngine(PrimaryModel):
 
     def __str__(self):
         return self.name
-
-    @property
-    def env_prefix(self):
-        """
-        Environment variable prefix for this engine's auth material, e.g. slug
-        `prod-core` yields `NETBOX_BAO_PROD_CORE`, so the AppRole is read from
-        `NETBOX_BAO_PROD_CORE_ROLE_ID` / `..._SECRET_ID`.
-        """
-        return f"NETBOX_BAO_{self.slug.upper().replace('-', '_')}"
 
     def get_status_color(self):
         return EngineStatusChoices.colors.get(self.status)

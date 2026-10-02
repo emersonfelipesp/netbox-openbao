@@ -1,0 +1,99 @@
+{% extends 'base/layout.html' %}
+
+{% block title %}OpenBao Settings{% endblock %}
+
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 class="h2">Settings</h1>
+      <p class="text-secondary mb-0">All runtime configuration comes from database models. Secret values are never displayed.</p>
+    </div>
+    <div class="btn-list">
+      {% if can_edit_settings %}
+        {% if settings %}
+          <a class="btn btn-primary" href="{% url 'plugins:netbox_openbao:openbaosettings_edit' pk=settings.pk %}">Edit settings</a>
+        {% else %}
+          <a class="btn btn-primary" href="{% url 'plugins:netbox_openbao:openbaosettings_add' %}">Save defaults</a>
+        {% endif %}
+      {% endif %}
+      {% if can_add_engine %}
+        <a class="btn btn-outline-primary" href="{% url 'plugins:netbox_openbao:secretengine_add' %}">Add engine</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header"><h2 class="card-title">Plugin parameters</h2></div>
+    <div class="table-responsive">
+      <table class="table table-hover card-table">
+        <thead><tr><th>Parameter</th><th>Requirement</th><th>Effective value</th><th>Source</th><th>Description</th></tr></thead>
+        <tbody>
+          {% for row in setting_rows %}
+            <tr>
+              <td><code>{{ row.name }}</code></td>
+              <td><span class="badge {% if row.required %}bg-red-lt{% else %}bg-blue-lt{% endif %}">{% if row.required %}Required{% else %}Optional{% endif %}</span></td>
+              <td><code>{{ row.value }}</code></td>
+              <td><span class="badge bg-secondary-lt">{{ row.source }}</span></td>
+              <td>{{ row.description }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header"><h2 class="card-title">Secret-engine parameters</h2></div>
+    <div class="table-responsive">
+      <table class="table table-hover card-table">
+        <thead><tr><th>Engine</th><th>Parameter</th><th>Requirement</th><th>Effective value</th><th>Source</th><th>Description</th></tr></thead>
+        <tbody>
+          {% for row in engine_parameter_rows %}
+            <tr>
+              <td><a href="{{ row.engine.get_absolute_url }}">{{ row.engine }}</a></td>
+              <td><code>{{ row.name }}</code></td>
+              <td><span class="badge {% if row.required %}bg-red-lt{% else %}bg-blue-lt{% endif %}">{% if row.required %}Required{% else %}Optional{% endif %}</span></td>
+              <td><code>{{ row.value }}</code></td>
+              <td><span class="badge bg-secondary-lt">{{ row.source }}</span></td>
+              <td>{{ row.description }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="text-secondary">No secret engines have been configured.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2 class="card-title">Authentication status</h2></div>
+    <div class="table-responsive">
+      <table class="table table-hover card-table">
+        <thead><tr><th>Scope</th><th>Type</th><th>Effective status</th><th>Stored fields</th><th></th></tr></thead>
+        <tbody>
+          {% for row in scoped_auth_rows %}
+            <tr>
+              <td><a href="{{ row.owner.get_absolute_url }}">{{ row.owner }}</a></td>
+              <td>{{ row.owner_type }}</td>
+              <td><span class="badge {% if row.auth.complete %}bg-green-lt{% else %}bg-red-lt{% endif %}">{{ row.auth.message }}</span></td>
+              <td>
+                {% for field in row.auth.fields %}
+                  <span class="badge {% if field.configured %}bg-green-lt{% elif field.required %}bg-red-lt{% else %}bg-secondary-lt{% endif %}">{{ field.name }}: {% if field.configured %}configured{% else %}missing{% endif %} · {% if field.required %}Required{% else %}Optional{% endif %}</span>
+                {% endfor %}
+              </td>
+              <td>
+                {% if row.auth.record and row.auth.can_change %}
+                    <a class="btn btn-sm btn-outline-primary" href="{% url 'plugins:netbox_openbao:engineauthmaterial_edit' pk=row.auth.record.pk %}">Edit auth</a>
+                {% elif not row.auth.record and can_add_auth %}
+                    <a class="btn btn-sm btn-outline-primary" href="{% url 'plugins:netbox_openbao:engineauthmaterial_add' %}?{{ row.owner_parameter }}={{ row.owner.pk }}">Add auth</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5" class="text-secondary">No authentication scopes have been configured.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock content %}

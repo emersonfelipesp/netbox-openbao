@@ -32,31 +32,15 @@ metadata step and is then rolled back — which reads as "writes don't work"
 rather than "the policy is half right". See [Scope an OpenBao
 policy](../how-to/scope-openbao-policies.md).
 
-## 2. Deliver the AppRole to NetBox
-
-The engine's slug derives the environment prefix: `primary` →
-`NETBOX_BAO_PRIMARY`. Nothing about this goes in `configuration.py` or the
-database.
+## 2. Collect the AppRole values
 
 ```bash
 ROLE_ID=$(bao read -field=role_id auth/approle/role/netbox-lab/role-id)
 SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/netbox-lab/secret-id)
 ```
 
-```ini
-# /etc/netbox/openbao.env   (chmod 600, owned by the NetBox user)
-NETBOX_BAO_PRIMARY_ROLE_ID=...
-NETBOX_BAO_PRIMARY_SECRET_ID=...
-```
-
-!!! warning "Apply it to the RQ worker too"
-
-    `netbox.service` **and** `netbox-rq.service` both need the drop-in. The
-    background jobs authenticate as well, and a worker without the material
-    reports every engine as `unauthorized` — which looks like an OpenBao
-    problem and is not.
-
-Restart both after adding it.
+Keep the values in a protected terminal or file until the engine exists. Do not
+put them on a command line.
 
 ## 3. Create the engine
 
@@ -76,6 +60,17 @@ curl -X POST https://netbox.example.net/api/plugins/openbao/engines/ \
         "is_default": true
       }'
 ```
+
+Check it resolved before going further:
+
+```bash
+python manage.py openbao_configure auth --engine primary --set role_id
+python manage.py openbao_configure auth --engine primary --set secret_id
+python manage.py openbao_configure test --engine primary
+```
+
+The values are encrypted in `EngineAuthMaterial`; the UI and API will show only
+configured/missing status. The web and RQ processes read the same rows.
 
 Check it resolved before going further:
 
@@ -104,8 +99,8 @@ curl -X POST https://netbox.example.net/api/plugins/openbao/policies/ \
       }'
 ```
 
-For anything production, give the tier its **own** AppRole via
-`approle_env_prefix`. That bounds what a leaked SecretID reaches and what this
+For anything production, give the tier its **own** `EngineAuthMaterial` row.
+That bounds what a leaked SecretID reaches and what this
 NetBox can read at all — though not what a NetBox permission bug can do with a
 tier whose AppRole it already holds. See [Set up a policy
 tier](../how-to/policy-tiers.md).

@@ -8,6 +8,7 @@ Requiring a POST means a reveal is always a deliberate act, and it keeps the
 credential out of the URL bar and the referrer header.
 """
 
+from dcim.models import Device
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
@@ -24,12 +25,13 @@ from netbox.object_actions import AddObject
 from netbox.ui import layout
 from netbox.ui.panels import CommentsPanel
 from netbox.views import generic
-from utilities.views import ObjectPermissionRequiredMixin, register_model_view
+from utilities.views import ContentTypePermissionRequiredMixin, ObjectPermissionRequiredMixin, register_model_view
 
 from . import filtersets, forms, tables
 from .administration import get_administration_backend, record_capability_observation
 from .administration.audit import AdministrationAuditError, log_administration
 from .backends.exceptions import OpenBaoError
+from .choices import AuthMethodChoices, BackendChoices
 from .config import assignable_model_labels
 from .material_transactions import material_transaction
 from .models import (
@@ -38,6 +40,7 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    EngineAuthMaterial,
     OpenBaoAdministrationLog,
     OpenBaoCluster,
     OpenBaoProcedureRun,
@@ -46,6 +49,8 @@ from .models import (
     ServiceEndpoint,
     SSHPublicKey,
 )
+from .models.auth import AUTH_MATERIAL_FIELDS
+from .models.settings import STATIC_INTERVAL_SETTINGS
 from .quickadd import quick_add_ssh
 from .rpc import dispatch_openbao_procedure
 from .services import discard_staged, promote_staged, reveal_material
@@ -74,6 +79,8 @@ __all__ = (
     'CredentialTypeSchemaEditView',
     'CredentialTypeSchemaListView',
     'CredentialTypeSchemaView',
+    'EngineAuthMaterialEditView',
+    'EngineAuthMaterialListView',
     'CredentialRevealView',
     'CredentialView',
     'OpenBaoProcedureRunListView',
@@ -98,6 +105,38 @@ __all__ = (
     'SecretEngineRunProcedureView',
     'SecretEngineView',
 )
+
+
+class _SafeAuthMaterialExportRows(list):
+    """List-like export context retaining only the model name for filenames."""
+
+    model = EngineAuthMaterial
+
+
+@register_model_view(EngineAuthMaterial, 'list', path='', detail=False)
+class EngineAuthMaterialListView(generic.ObjectListView):
+    queryset = EngineAuthMaterial.objects.select_related('engine', 'policy', 'cluster')
+    table = tables.EngineAuthMaterialTable
+    actions = (AddObject,)
+
+    def export_template(self, template, request):
+        """Render custom exports from status dictionaries, never raw ciphertext rows."""
+        safe_rows = _SafeAuthMaterialExportRows(
+            instance.serialize_object() for instance in self.queryset
+        )
+        return template.render_to_response(queryset=safe_rows)
+
+
+@register_model_view(EngineAuthMaterial, 'add', detail=False)
+@register_model_view(EngineAuthMaterial, 'edit')
+class EngineAuthMaterialEditView(generic.ObjectEditView):
+    queryset = EngineAuthMaterial.objects.select_related('engine', 'policy', 'cluster')
+    form = forms.EngineAuthMaterialForm
+
+
+@register_model_view(EngineAuthMaterial, 'delete')
+class EngineAuthMaterialDeleteView(generic.ObjectDeleteView):
+    queryset = EngineAuthMaterial.objects.select_related('engine', 'policy', 'cluster')
 
 
 def _never_store(response):
@@ -1082,25 +1121,183 @@ class OpenBaoProcedureRunView(generic.ObjectView):
 
 
 @register_model_view(OpenBaoSettings, 'list', path='', detail=False)
-class OpenBaoSettingsListView(generic.ObjectListView):
-    """
-    A one-row list, because NetBox routes every model through a list view.
+class OpenBaoSettingsListView(ContentTypePermissionRequiredMixin, View):
+    """Singleton dashboard showing effective defaults and every engine."""
 
-    The row links to the detail page; `get_solo()` is not called here. A read
-    must never create the settings row — that is what keeps `PLUGINS_CONFIG`
-    reachable as the fallback, and what keeps the plugin's own test suite able
-    to configure itself with `override_settings`.
-    """
+    actions = ()
 
-    queryset = OpenBaoSettings.objects.all()
-    table = tables.OpenBaoSettingsTable
-    # `ObjectListView` offers bulk import, export, edit, rename, and delete by
-    # default, and every one of them resolves to nothing here: only list, add,
-    # edit, detail, and delete routes are registered, and bulk operations on a
-    # singleton are meaningless anyway. Left at the default they render as
-    # controls that fail rather than as controls that are absent — the same
-    # failure as the missing list route, in the other direction.
-    actions = (AddObject,)
+    ENGINE_FIELDS = (
+        'backend', 'api_url', 'namespace', 'kv_mount', 'kv_version',
+        'auth_method', 'tls_verify', 'ca_cert_path', 'host_device',
+    )
+    REQUIRED_ENGINE_FIELDS = frozenset({
+        'backend', 'api_url', 'kv_mount', 'kv_version', 'auth_method', 'tls_verify',
+    })
+
+    def get_required_permission(self):
+        return 'netbox_openbao.view_openbaosettings'
+
+    @staticmethod
+    def _setting_rows(saved):
+        effective = saved or OpenBaoSettings()
+        rows = []
+        for name in (
+            'path_prefix', 'assignable_models', 'assignable_models_deny',
+            'store_public_material', 'reveal_rate_limit', 'reveal_ttl',
+            'token_cache_ttl', 'audit_retention_days', 'allow_generation',
+            'default_ssh_key_type', 'expiry_warning_days',
+            *STATIC_INTERVAL_SETTINGS,
+        ):
+            field = OpenBaoSettings._meta.get_field(name)
+            rows.append({
+                'name': name,
+                'label': field.verbose_name,
+                'value': getattr(effective, name),
+                'source': 'saved' if saved else 'default',
+                'required': not field.blank,
+                'description': field.help_text or field.verbose_name,
+            })
+        return rows
+
+    @staticmethod
+    def _auth_status(connection, material):
+        def configured(name):
+            return bool(material and material.is_configured(name))
+
+        if connection.backend == BackendChoices.BACKEND_BROKER:
+            required = ('client_cert', 'client_key')
+            label = 'Broker mTLS'
+        elif connection.auth_method == AuthMethodChoices.METHOD_APPROLE:
+            required = ('role_id', 'secret_id')
+            label = 'AppRole'
+        elif connection.auth_method == AuthMethodChoices.METHOD_TOKEN:
+            required = ('token',)
+            label = 'Token'
+        elif connection.auth_method == AuthMethodChoices.METHOD_KUBERNETES:
+            required = ('k8s_role',)
+            label = 'Kubernetes'
+        else:
+            required = ('client_cert', 'client_key')
+            label = 'Certificate'
+        missing = [name for name in required if not configured(name)]
+        return {
+            'record': material,
+            'label': label,
+            'message': (
+                f'{label}: configured'
+                if not missing
+                else f'{label}: {", ".join(missing)} missing - required'
+            ),
+            'complete': not missing,
+            'fields': [
+                {
+                    'name': name,
+                    'configured': configured(name),
+                    'required': name in required,
+                }
+                for name in AUTH_MATERIAL_FIELDS
+            ],
+        }
+
+    @classmethod
+    def _engine_parameter_rows(cls, engines, visible_devices):
+        rows = []
+        for engine in engines:
+            for name in cls.ENGINE_FIELDS:
+                field = SecretEngine._meta.get_field(name)
+                if name == 'host_device':
+                    device = visible_devices.get(engine.host_device_id)
+                    value = str(device) if device else '—'
+                else:
+                    value = getattr(engine, name)
+                if value in ('', None):
+                    value = '—'
+                rows.append({
+                    'engine': engine,
+                    'name': name,
+                    'value': value,
+                    'source': 'saved',
+                    'required': name in cls.REQUIRED_ENGINE_FIELDS,
+                    'description': field.help_text or field.verbose_name,
+                })
+        return rows
+
+    def get(self, request):
+        saved = OpenBaoSettings.objects.restrict(request.user, 'view').first()
+        if saved is None and OpenBaoSettings.objects.exists():
+            raise Http404
+        engines = list(SecretEngine.objects.restrict(request.user, 'view'))
+        engine_ids = {engine.pk for engine in engines}
+        visible_devices = {
+            device.pk: device
+            for device in Device.objects.restrict(request.user, 'view').filter(
+                pk__in={engine.host_device_id for engine in engines if engine.host_device_id}
+            )
+        }
+        materials = list(EngineAuthMaterial.objects.restrict(request.user, 'view'))
+        changeable_material_ids = set(
+            EngineAuthMaterial.objects.restrict(request.user, 'change').values_list('pk', flat=True)
+        )
+        engine_material = {material.engine_id: material for material in materials if material.engine_id}
+        policy_material = {material.policy_id: material for material in materials if material.policy_id}
+        cluster_material = {material.cluster_id: material for material in materials if material.cluster_id}
+
+        scoped_auth_rows = []
+        for engine in engines:
+            if material := engine_material.get(engine.pk):
+                auth = self._auth_status(engine, material)
+                auth['can_change'] = material.pk in changeable_material_ids
+                scoped_auth_rows.append({
+                    'owner': engine,
+                    'owner_type': 'Engine',
+                    'owner_parameter': 'engine',
+                    'auth': auth,
+                })
+        policies = CredentialPolicy.objects.restrict(request.user, 'view').select_related('engine').filter(
+            engine_id__in=engine_ids,
+        )
+        for policy in policies:
+            own_material = policy_material.get(policy.pk)
+            inherited_material = engine_material.get(policy.engine_id)
+            if own_material is None and inherited_material is None:
+                continue
+            auth = self._auth_status(policy.engine, own_material or inherited_material)
+            auth['can_change'] = bool(
+                own_material and own_material.pk in changeable_material_ids
+            )
+            if own_material is None:
+                auth['message'] = f'Uses engine identity; {auth["message"]}'
+                auth['record'] = None
+            scoped_auth_rows.append({
+                'owner': policy,
+                'owner_type': 'Policy override',
+                'owner_parameter': 'policy',
+                'auth': auth,
+            })
+        for cluster in OpenBaoCluster.objects.restrict(request.user, 'view'):
+            material = cluster_material.get(cluster.pk)
+            if material is None:
+                continue
+            auth = self._auth_status(cluster, material)
+            auth['can_change'] = material.pk in changeable_material_ids
+            scoped_auth_rows.append({
+                'owner': cluster,
+                'owner_type': 'Cluster',
+                'owner_parameter': 'cluster',
+                'auth': auth,
+            })
+        return render(request, 'netbox_openbao/settings_dashboard.html', {
+            'settings': saved,
+            'setting_rows': self._setting_rows(saved),
+            'scoped_auth_rows': scoped_auth_rows,
+            'engine_parameter_rows': self._engine_parameter_rows(engines, visible_devices),
+            'can_edit_settings': (
+                OpenBaoSettings.objects.restrict(request.user, 'change').filter(pk=saved.pk).exists()
+                if saved else request.user.has_perm('netbox_openbao.add_openbaosettings')
+            ),
+            'can_add_engine': request.user.has_perm('netbox_openbao.add_secretengine'),
+            'can_add_auth': request.user.has_perm('netbox_openbao.add_engineauthmaterial'),
+        })
 
 
 @register_model_view(OpenBaoSettings)
@@ -1116,6 +1313,9 @@ class OpenBaoSettingsView(generic.ObjectView):
             openbao_panels.OpenBaoSettingsSourcePanel(),
         ],
     )
+
+    def get(self, request, *args, **kwargs):
+        return redirect('plugins:netbox_openbao:openbaosettings_list')
 
 
 @register_model_view(OpenBaoSettings, 'add', detail=False)
@@ -1148,9 +1348,7 @@ class OpenBaoSettingsDeleteView(generic.ObjectDeleteView):
     Deletion is refused by the model while credentials exist.
 
     That refusal lives on the model rather than here, so the API and a direct
-    ORM delete are held to it too — deleting the row makes configuration fall
-    back to `PLUGINS_CONFIG`, and a different prefix there reproduces exactly
-    the outage the change guard exists to prevent.
+    ORM delete are held to it too — deleting the row restores model defaults.
     """
 
     queryset = OpenBaoSettings.objects.all()

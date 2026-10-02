@@ -9,6 +9,7 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    EngineAuthMaterial,
     OpenBaoAdministrationLog,
     OpenBaoCluster,
     OpenBaoProcedureRun,
@@ -25,6 +26,7 @@ __all__ = (
     'CredentialPolicyTable',
     'CredentialTable',
     'CredentialTypeSchemaTable',
+    'EngineAuthMaterialTable',
     'OpenBaoProcedureRunTable',
     'OpenBaoAdministrationLogTable',
     'OpenBaoClusterTable',
@@ -32,6 +34,48 @@ __all__ = (
     'ServiceEndpointTable',
     'SSHPublicKeyTable',
 )
+
+
+class EngineAuthMaterialTable(NetBoxTable):
+    actions = columns.ActionsColumn(actions=('edit', 'delete'))
+    role_id_configured = columns.BooleanColumn(verbose_name=_('Role ID'))
+    secret_id_configured = columns.BooleanColumn(verbose_name=_('Secret ID'))
+    token_configured = columns.BooleanColumn(verbose_name=_('Token'))
+    k8s_role_configured = columns.BooleanColumn(verbose_name=_('Kubernetes role'))
+    k8s_jwt_path_configured = columns.BooleanColumn(verbose_name=_('JWT path'))
+    client_cert_configured = columns.BooleanColumn(verbose_name=_('Client certificate'))
+    client_key_configured = columns.BooleanColumn(verbose_name=_('Client key'))
+
+    class Meta(NetBoxTable.Meta):
+        model = EngineAuthMaterial
+        fields = (
+            'id', 'engine', 'policy', 'cluster', 'role_id_configured',
+            'secret_id_configured', 'token_configured', 'k8s_role_configured',
+            'k8s_jwt_path_configured', 'client_cert_configured',
+            'client_key_configured', 'last_updated',
+        )
+        default_columns = fields
+
+    def render_role_id_configured(self, record):
+        return record.is_configured('role_id')
+
+    def render_secret_id_configured(self, record):
+        return record.is_configured('secret_id')
+
+    def render_token_configured(self, record):
+        return record.is_configured('token')
+
+    def render_k8s_role_configured(self, record):
+        return record.is_configured('k8s_role')
+
+    def render_k8s_jwt_path_configured(self, record):
+        return record.is_configured('k8s_jwt_path')
+
+    def render_client_cert_configured(self, record):
+        return record.is_configured('client_cert')
+
+    def render_client_key_configured(self, record):
+        return record.is_configured('client_key')
 
 
 class OpenBaoClusterTable(NetBoxTable):
@@ -114,7 +158,7 @@ class CredentialPolicyTable(NetBoxTable):
     class Meta(NetBoxTable.Meta):
         model = CredentialPolicy
         fields = (
-            'pk', 'id', 'name', 'slug', 'engine', 'openbao_policy', 'approle_env_prefix', 'max_reveal_ttl',
+            'pk', 'id', 'name', 'slug', 'engine', 'openbao_policy', 'max_reveal_ttl',
             'require_reason', 'credential_count', 'description', 'tags', 'created', 'last_updated',
         )
         default_columns = ('name', 'engine', 'openbao_policy', 'require_reason', 'credential_count')

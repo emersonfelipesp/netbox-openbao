@@ -3,6 +3,7 @@
 import json
 from abc import ABC, abstractmethod
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.views.decorators.debug import sensitive_variables
 
 from netbox_openbao.backends.broker import BrokerBackend
@@ -335,7 +336,11 @@ class DirectAdministrationBackend(AdministrationBackend):
 
     def __init__(self, cluster):
         super().__init__(cluster)
-        self.backend = OpenBaoBackend(cluster)
+        try:
+            auth_material = cluster.auth_material
+        except (AttributeError, ObjectDoesNotExist):
+            auth_material = None
+        self.backend = OpenBaoBackend(cluster, auth_material=auth_material)
 
     def health(self) -> dict:
         return self.backend.health()
@@ -1111,7 +1116,11 @@ class BrokerAdministrationBackend(DirectAdministrationBackend):
 
     def __init__(self, cluster):
         AdministrationBackend.__init__(self, cluster)
-        self.backend = BrokerBackend(cluster)
+        try:
+            auth_material = cluster.auth_material
+        except (AttributeError, ObjectDoesNotExist):
+            auth_material = None
+        self.backend = BrokerBackend(cluster, auth_material=auth_material)
         self.client = BrokerAdministrationClient(self.backend)
 
     def health(self) -> dict:

@@ -18,6 +18,7 @@ from netbox_openbao.administration.engine_journeys import (
 )
 from netbox_openbao.administration.engines import classify_explorer_operations
 from netbox_openbao.administration.schema import CapabilitySchemaError
+from netbox_openbao.tests.fakes import AuthMaterialStub
 
 TEST_ADDR = os.getenv("NETBOX_OPENBAO_TEST_ADDR")
 TEST_TOKEN = os.getenv("NETBOX_OPENBAO_TEST_TOKEN")
@@ -113,27 +114,16 @@ class SecretEngineAdministrationIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.token_variable = "NETBOX_BAO_ENGINE_ADMIN_LIVE_TOKEN"
-        cls.previous_token = os.environ.get(cls.token_variable)
-        os.environ[cls.token_variable] = TEST_TOKEN
         cluster = SimpleNamespace(
             api_url=TEST_ADDR,
             ca_cert_path="",
             tls_verify=False,
             namespace="",
-            env_prefix="NETBOX_BAO_ENGINE_ADMIN_LIVE",
             slug="engine-admin-live",
             auth_method="token",
+            auth_material=AuthMaterialStub(token=TEST_TOKEN),
         )
         cls.backend = DirectAdministrationBackend(cluster)
-
-    @classmethod
-    def tearDownClass(cls):
-        if cls.previous_token is None:
-            os.environ.pop(cls.token_variable, None)
-        else:
-            os.environ[cls.token_variable] = cls.previous_token
-        super().tearDownClass()
 
     def test_kv_mount_lifecycle_and_mounted_operations(self):
         mount = f"live-{uuid4().hex[:12]}"

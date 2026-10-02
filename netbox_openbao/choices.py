@@ -29,10 +29,10 @@ class AuthMethodChoices(ChoiceSet):
     METHOD_TOKEN = 'token'
 
     CHOICES = [
-        Choice(METHOD_APPROLE, _('AppRole'), description=_('RoleID/SecretID delivered via environment')),
+        Choice(METHOD_APPROLE, _('AppRole'), description=_('Encrypted RoleID and SecretID stored in NetBox')),
         Choice(METHOD_KUBERNETES, _('Kubernetes'), description=_('Service account token from the pod filesystem')),
         Choice(METHOD_CERT, _('TLS certificate'), description=_('Mutual TLS client certificate')),
-        Choice(METHOD_TOKEN, _('Token'), description=_('Static token from the environment; development only')),
+        Choice(METHOD_TOKEN, _('Token'), description=_('Encrypted static token; development only')),
     ]
 
 

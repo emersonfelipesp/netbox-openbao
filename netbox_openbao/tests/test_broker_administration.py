@@ -5,6 +5,7 @@ import json
 import os
 import unittest
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -17,6 +18,7 @@ from netbox_openbao.backends.exceptions import (
     OpenBaoMutationUnknown,
     OpenBaoUnavailable,
 )
+from netbox_openbao.tests.fakes import AuthMaterialStub
 
 
 class _Raw:
@@ -70,7 +72,6 @@ def _cluster():
         tls_verify=True,
         namespace="",
         slug="test",
-        env_prefix="TEST_BROKER",
     )
 
 
@@ -412,25 +413,22 @@ class BrokerAdministrationIntegrationTest(SimpleTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.cert_name = "NETBOX_BAO_BROKER_ADMIN_LIVE_CLIENT_CERT"
-        cls.key_name = "NETBOX_BAO_BROKER_ADMIN_LIVE_CLIENT_KEY"
-        os.environ[cls.cert_name] = BROKER_CERT
-        os.environ[cls.key_name] = BROKER_KEY
         cluster = SimpleNamespace(
             api_url=BROKER_ADDR,
             ca_cert_path=BROKER_CA or "",
             tls_verify=True,
             namespace="",
             slug="broker-admin-live",
-            env_prefix="NETBOX_BAO_BROKER_ADMIN_LIVE",
+            auth_material=AuthMaterialStub(
+                client_cert=Path(BROKER_CERT).read_text(),
+                client_key=Path(BROKER_KEY).read_text(),
+            ),
         )
         cls.backend = BrokerAdministrationBackend(cluster)
 
     @classmethod
     def tearDownClass(cls):
         cls.backend.backend.invalidate_token()
-        os.environ.pop(cls.cert_name, None)
-        os.environ.pop(cls.key_name, None)
         super().tearDownClass()
 
     @staticmethod

@@ -36,7 +36,6 @@ verify the **broker's** server certificate.
 """
 
 import logging
-import os
 import threading
 
 from netbox_openbao.choices import EngineStatusChoices
@@ -50,17 +49,18 @@ from .exceptions import (
     OpenBaoNotFound,
     OpenBaoUnavailable,
 )
+from .tls import materialize_private_pem, remove_private_files
 
 __all__ = ('BrokerBackend',)
 
 logger = logging.getLogger('netbox.plugins.netbox_openbao.backends')
 
-# One pooled session per (url, client certificate, verification) triple.
+# One pooled session per (url, encrypted identity revision, verification) triple.
 #
 # The client certificate is part of the key on purpose. Two policy tiers can
 # present *different* certificates to the same broker and therefore resolve to
 # different broker instances with different path prefixes — which is the whole
-# reason the certificate is keyed on `env_prefix` below. Sharing a session
+# reason the certificate is keyed on auth material below. Sharing a session
 # across tiers would silently collapse that distinction into whichever
 # certificate happened to connect first.
 _sessions = {}
@@ -69,11 +69,26 @@ _sessions_lock = threading.Lock()
 REQUEST_TIMEOUT = 30
 
 
+def close_auth_material_sessions(material_id, revision):
+    """Close pooled mTLS sessions tied to a rotated or deleted auth row."""
+    identity = f'{material_id}:{revision}'
+    with _sessions_lock:
+        matches = [
+            (key, session)
+            for key, session in _sessions.items()
+            if key[1] == identity
+        ]
+        for key, _session in matches:
+            del _sessions[key]
+    for _key, session in matches:
+        session.close()
+        remove_private_files(getattr(session, '_openbao_temp_paths', ()))
+
 class BrokerBackend(SecretBackend):
     """Read/write access to one KV mount, mediated by the broker service."""
 
-    def __init__(self, engine, env_prefix=None):
-        super().__init__(engine, env_prefix=env_prefix)
+    def __init__(self, engine, auth_material=None):
+        super().__init__(engine, auth_material=auth_material)
         self._session = None
 
     # ------------------------------------------------------------------
@@ -82,40 +97,35 @@ class BrokerBackend(SecretBackend):
 
     def _client_certificate(self):
         """
-        Return `(cert_path, key_path)` for this engine's broker identity.
+        Return private temporary `(cert_path, key_path)` files for this identity.
 
-        These are **paths on the NetBox host, not material**, which is why they
-        are read straight from the environment rather than through the `_FILE`
-        indirection the AppRole uses — there is no value here to keep out of
-        `/proc/<pid>/environ`.
-
-        Keying them on `env_prefix` is what lets a `CredentialPolicy` tier
-        present its own certificate: the broker identifies callers by the
-        subject CN, so a different certificate is a different instance with a
-        different set of permitted path prefixes. The tiering that AppRoles
-        give you in direct mode is preserved rather than flattened.
+        ``requests`` requires paths. The PEM values are decrypted only here,
+        written with mode 0600, and removed when the pooled session is closed
+        or the process exits.
         """
-        prefix = self.env_prefix
-        cert = os.environ.get(f'{prefix}_CLIENT_CERT')
-        key = os.environ.get(f'{prefix}_CLIENT_KEY')
-
-        if not cert or not key:
+        if (
+            self.auth_material is None
+            or not self.auth_material.is_configured('client_cert')
+            or not self.auth_material.is_configured('client_key')
+        ):
             raise BackendConfigurationError(
-                f'Broker mode requires {prefix}_CLIENT_CERT and {prefix}_CLIENT_KEY in the '
-                f'environment, each naming a file on the NetBox host.'
+                f'Broker authentication is not configured for engine {self.engine.slug}. '
+                'Configure the client certificate and client key on OpenBao > Configuration > Settings '
+                'or with `manage.py openbao_configure auth`.'
             )
-
-        for label, path in (('certificate', cert), ('private key', key)):
-            if not os.path.isfile(path):
-                # The path is operator configuration, not a secret, so naming
-                # it is safe and makes the misconfiguration diagnosable.
-                raise BackendConfigurationError(
-                    f'The broker client {label} at {path} does not exist or is not a file.'
-                )
-
-        return cert, key
+        cert = self.auth_material.get_secret('client_cert')
+        key = self.auth_material.get_secret('client_key')
+        cert_path = materialize_private_pem(cert, '.crt')
+        try:
+            key_path = materialize_private_pem(key, '.key')
+        except Exception:
+            remove_private_files((cert_path,))
+            raise
+        return cert_path, key_path
 
     def _get_session(self):
+        if self.refresh_auth_material():
+            self._session = None
         if self._session is not None:
             return self._session
 
@@ -126,7 +136,6 @@ class BrokerBackend(SecretBackend):
                 'The requests package is required but is not installed.'
             ) from None
 
-        cert = self._client_certificate()
         verify = self.engine.ca_cert_path or self.engine.tls_verify
 
         if not verify:
@@ -142,13 +151,16 @@ class BrokerBackend(SecretBackend):
                 f'on engine {self.engine.slug}, or re-enable TLS verification.'
             )
 
-        key = (self.engine.api_url, cert, verify)
+        identity = self.auth_material.cache_identity if self.auth_material is not None else 'missing'
+        key = (self.engine.api_url, identity, verify)
 
         with _sessions_lock:
             if key not in _sessions:
+                cert = self._client_certificate()
                 session = requests.Session()
                 session.cert = cert
                 session.verify = verify
+                session._openbao_temp_paths = cert
                 _sessions[key] = session
             self._session = _sessions[key]
 
@@ -172,6 +184,16 @@ class BrokerBackend(SecretBackend):
                 if pooled is session:
                     del _sessions[key]
         session.close()
+        remove_private_files(getattr(session, '_openbao_temp_paths', ()))
+
+    def authenticate(self):
+        """Verify the mTLS identity through the broker health endpoint."""
+        result = self.health()
+        if result['status'] in {
+            EngineStatusChoices.STATUS_UNREACHABLE,
+            EngineStatusChoices.STATUS_UNAUTHORIZED,
+        }:
+            raise OpenBaoAuthError('The broker did not accept this NetBox instance.')
 
     # ------------------------------------------------------------------
     # Requests and error translation

@@ -54,16 +54,9 @@ curl -X PATCH https://netbox.example.net/api/plugins/openbao/settings/1/ \
   -d '{"expiry_warning_days": [60, 30, 14, 7, 1]}'
 ```
 
-`expiry_warning_days` takes effect without a restart. The job interval remains
-an import-time `PLUGINS_CONFIG` setting for now:
-
-```python
-PLUGINS_CONFIG = {
-    'netbox_openbao': {
-        'expiry_scan_interval': 1440,   # minutes
-    },
-}
-```
+`expiry_warning_days` takes effect without a restart. `expiry_scan_interval`
+is read from the same settings row when the worker imports its job declarations,
+so restart workers after changing the interval.
 
 The job's output appears in **Operations → Jobs**, and the warnings go to
 NetBox's logging — route `netbox.plugins.netbox_openbao` wherever your alerting

@@ -253,9 +253,9 @@ def _identity(assignment: CredentialAssignment, credential: Credential, authorit
     selectors = {
         name: getattr(engine, name)
         for name in ('backend', 'api_url', 'namespace', 'kv_mount', 'kv_version',
-                     'auth_method', 'tls_verify', 'ca_cert_path', 'env_prefix')
+                     'auth_method', 'tls_verify', 'ca_cert_path')
     }
-    selectors.update(policy_prefix=policy.approle_env_prefix, credential_path=credential.path)
+    selectors['credential_path'] = credential.path
     schema = get_schema(credential.credential_type)
     return {
         'credential_uuid': str(credential.uuid), 'assignment_id': assignment.pk,

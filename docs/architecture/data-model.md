@@ -1,6 +1,6 @@
 # Data model
 
-Thirteen models: configuration and inventory plus three operational evidence
+Fourteen models: configuration and inventory plus three operational evidence
 records, including the internal automation receipt.
 
 ```mermaid
@@ -8,6 +8,9 @@ erDiagram
     OpenBaoCluster ||--o{ SecretEngine : "administers mounts on"
     OpenBaoCluster ||--o{ OpenBaoAdministrationLog : "is accessed through"
     SecretEngine ||--o{ CredentialPolicy : "backs"
+    SecretEngine ||--o| EngineAuthMaterial : "encrypts service identity in"
+    CredentialPolicy ||--o| EngineAuthMaterial : "optionally overrides identity in"
+    OpenBaoCluster ||--o| EngineAuthMaterial : "encrypts admin identity in"
     SecretEngine ||--o{ Credential : "stores material for"
     CredentialPolicy ||--o{ Credential : "governs"
     Credential ||--o{ CredentialAssignment : "is bound by"
@@ -27,7 +30,7 @@ erDiagram
     }
 
     OpenBaoCluster {
-        string slug UK "derives the env prefix"
+        string slug UK
         string api_url
         string backend "openbao | vault | broker"
         string namespace
@@ -35,7 +38,7 @@ erDiagram
     }
 
     SecretEngine {
-        string slug PK "derives the env prefix"
+        string slug PK
         string api_url
         string backend "openbao | vault | broker"
         string kv_mount
@@ -44,9 +47,14 @@ erDiagram
     CredentialPolicy {
         string slug PK
         string openbao_policy "a real policy name"
-        string approle_env_prefix "this tier's own AppRole"
         int max_reveal_ttl
         bool require_reason
+    }
+    EngineAuthMaterial {
+        int revision "cache and session identity"
+        string role_id_ciphertext "versioned ciphertext"
+        string secret_id_ciphertext "versioned ciphertext"
+        string client_key_ciphertext "versioned ciphertext"
     }
     Credential {
         uuid uuid UK "immutable; the path derives from it"
@@ -64,7 +72,7 @@ erDiagram
 
 The fixed `singleton_key` is unique, making "at most one" a database fact. The
 runtime reads the complete row once into a per-request memo, then falls back to
-`PLUGINS_CONFIG` and the caller's hard default if no row exists. Reads use
+the model field default if no row exists. Reads use
 `.first()` and never create the row; only the data migration and explicit API
 saves do that. There is no shared Django cache, so stale fills cannot resurrect
 old security controls and cache availability cannot break settings reads. The
@@ -82,23 +90,18 @@ Existing credential paths are stamped once, while the AppRole policy is scoped
 to `secret/data/<path_prefix>/credentials/*`; allowing a later change would make
 new writes fail as permission errors while existing credentials kept working.
 If credentials predate the first settings row, its prefix must match their
-stamped paths. Credential path derivation applies the same prefix validator to
-the legacy `PLUGINS_CONFIG` fallback and fails closed when it is unsafe.
+stamped paths. Credential path derivation validates every effective value and
+fails closed if an unsupported ORM write bypassed normal validation.
 
-The row holds no OpenBao authentication material. `RoleID`, `SecretID`, and
-tokens stay in the environment or referenced files under the same invariant as
-`SecretEngine`.
+The row holds no OpenBao authentication material. Authentication has its own
+encrypted, owner-scoped model.
 
 ## `SecretEngine` — one instance, one KV mount
 
-Holds **no authentication material**. There is no `role_id`, `secret_id`, or
-`token` column. Storing the vault's own credentials in the database this plugin
-exists to keep secrets out of would defeat the whole design.
-
-Instead the slug derives an environment prefix — `prod-core` →
-`NETBOX_BAO_PROD_CORE` — and the RoleID and SecretID are read from the process
-environment (or a file it points at) at the moment of login. See
-[Configuration](../configuration.md#environment).
+Holds **no plaintext authentication material**. The one-to-one
+`EngineAuthMaterial` row contains only versioned ciphertext, decrypted at login
+with a key derived from Django's `SECRET_KEY`. A policy-owned auth row overrides
+the engine identity for that tier.
 
 `status`, `last_checked`, and `status_message` are observed state, written by
 [`EngineHealthJob`](background-jobs.md#enginehealthjob) and not user-editable.
@@ -215,8 +218,8 @@ Two constraints do real work:
 
 The permitted target types are enforced in the model's `clean()`, so the REST
 API and any direct ORM caller are held to the same list as the form. They
-resolve to `assignable_models` in `OpenBaoSettings` (or its `PLUGINS_CONFIG`
-fallback), unioned with whatever
+resolve to `assignable_models` in `OpenBaoSettings` or its model default,
+unioned with whatever
 installed plugins registered through `netbox_openbao.registry`, minus
 `assignable_models_deny` — see
 [Assignable object types](../configuration.md#assignable-object-types).

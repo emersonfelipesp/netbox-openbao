@@ -133,14 +133,23 @@ compiled path, and cluster slug. Material responses remain request-scoped and
 
 ## The rule that matters most
 
-> **Secret material must never become a model field, a form field bound to an
-> instance, a log line, an exception message, or a changelog entry.**
+> **Credential payload material must never become a model field, a form field
+> bound to an instance, a log line, an exception message, or a changelog
+> entry. Authentication service identities may exist only as versioned
+> ciphertext in `EngineAuthMaterial`; their plaintext and ciphertext must not
+> enter any serializer, snapshot, export, search, event, GraphQL, or audit
+> surface.**
 
 `Credential` has no column capable of holding material, and that absence is the
 foundation of every other guarantee. `netbox_openbao/tests/test_security.py`
 enforces it by walking the model's fields and failing on any secret-shaped
 name. **If you are about to add a field named `password`, `private_key`,
 `token`, or similar to a model, stop — you are undoing the design.**
+
+`EngineAuthMaterial` is the narrow exception to the field-name rule. Its
+explicit `*_ciphertext` columns contain only encrypted service identities,
+derive their wrapping key from Django's `SECRET_KEY`, and expose only
+configured/missing status outside the backend login boundary.
 
 Every credential create, reveal, rotation, and deletion that touches stored
 credential material goes through `services.py`; its views, serializers, forms,
@@ -284,12 +293,15 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   source/destination graph before its first metadata save.
 - **`super().clean()` can return `None`** in NetBox's form chain; fall back to
   `self.cleaned_data`.
-- **`get_plugin_config()` returns `None`, not the default**, for a key absent
-  from the merged config — which happens whenever `PLUGINS_CONFIG` is replaced
-  after startup, including every `override_settings` in a test. `config.get_config`
-  therefore treats `None` as "use the default". Before it did,
-  `store_public_material` silently resolved to None and turned metadata
-  extraction off, which looks exactly like the extractors failing.
+- **Runtime configuration is database-only.** `config.get_config()` reads an
+  `OpenBaoSettings` row and then the model field default. Never restore a
+  `PLUGINS_CONFIG` fallback or an automatic environment credential reader.
+  `checks.py` names every ignored legacy plugin key. The explicit
+  `import-legacy-settings` command is the only reader of old plugin settings,
+  and `import-env` is the only reader of old `NETBOX_BAO_*` values. A policy's
+  `legacy_approle_env_prefix` is non-editable migration metadata used only by
+  `import-env`; retain it until every tier-specific import is verified and
+  clear it only with `cleanup-legacy-prefixes --confirm-imports-verified`.
 - **An explicit `None` argument overrides a function default.** `generate_ssh_keypair(None)`
   raises rather than generating an Ed25519 key; callers must resolve the
   fallback themselves.
@@ -639,11 +651,10 @@ NetBox 4.6.5 as the backward-regression target.
   not see it; do not, or extend `_BackendCallScanner` in the same change.
 - **Configuration is database-backed, and the read path has five properties
   that are load-bearing.** `config.get_config()` resolves per-request memo →
-  `OpenBaoSettings` row → `PLUGINS_CONFIG` → default.
+  `OpenBaoSettings` row → model field default.
   1. **A read must never create the row** — `.first()`, never `get_or_create()`.
-     A read that creates it makes `PLUGINS_CONFIG` permanently unreachable, and
-     the 19 `override_settings` tests across six files would then pass while
-     asserting against defaults rather than against what they set.
+     The Settings page renders an unsaved defaults instance on a fresh install;
+     only an explicit UI, API, or command write creates the singleton.
   2. **The complete row is memoised once per request or job, not once per key.**
      This path runs on *every object detail page in NetBox*, because the
      credentials panel is globally registered and scoped per render. Five
@@ -679,13 +690,10 @@ NetBox 4.6.5 as the backward-regression target.
   through HTTP middleware, and a worker process is long-lived. The shared job
   decorator clears at the start and in a `finally` block so one job never
   inherits another's snapshot and a failure cannot leave stale state behind.
-- **The five job intervals still come from `PLUGINS_CONFIG` and still need a
-  restart.** `@system_job` evaluates its interval at *import*, requires a plain
-  `int`, and `rqworker` reads the resulting registry at *worker startup*. Fields
-  for them exist on the settings model so the rescheduling work needs no second
-  migration — do not wire the decorators to them until that work lands, because
-  a value that appears live and reverts at the next worker restart is worse than
-  one that is honestly restart-required.
+- **The five job intervals come from the settings row and need a worker
+  restart.** `@system_job` evaluates its interval at *import* and requires a
+  plain `int`. The guarded bootstrap read uses the model default before migrate
+  or during a database outage; it never consults `PLUGINS_CONFIG`.
 - **The settings audit lives on a signal, not in the edit view.**
   `ObjectEditView` builds its form directly and calls `form.save()` inside its
   own transaction — it never routes through `get_form()` or `form_valid()`, so
@@ -710,9 +718,26 @@ NetBox 4.6.5 as the backward-regression target.
   SecretID, no token — the same rule as `Credential`, and an easier place to
   talk yourself into breaking it. `scripts/check_no_secret_fields.py` guards
   both models.
+- **`EngineAuthMaterial` is the only database authentication boundary.** It
+  stores versioned Fernet ciphertext derived with HKDF from Django's
+  `SECRET_KEY`; the root key cannot live beside it in the database. Secret
+  inputs stay write-only, every read surface exposes only configured/missing
+  status, and broker PEM files stay mode 0600 and process-temporary. Cache and
+  pooled-session keys include the auth row ID and revision. Updates lock the
+  row, merge only submitted fields, allocate one unique increasing revision,
+  and invalidate the exact old identity with `transaction.on_commit()`; never
+  invalidate before commit or overwrite unrelated ciphertext from a stale
+  instance. Rotate `SECRET_KEY` with
+  `openbao_configure reencrypt` before serving requests under the new key.
+- **Settings inventory and singleton shortcuts are not authorization
+  shortcuts.** The dashboard restricts settings, engines, policies, clusters,
+  authentication rows, and related devices independently. The REST singleton
+  action resolves through its restricted queryset, requires add permission to
+  create a missing row, and routes changes through `perform_create()` or
+  `perform_update()` so object conformance and `If-Match` checks still run.
 - **`path_prefix` becomes immutable when the first credential exists.** The
-  settings row cannot be deleted then either, because restoring a different
-  fallback prefix has the same effect as changing it. The AppRole's OpenBao
+  settings row cannot be deleted then either, because restoring the model
+  default prefix has the same effect as changing it. The AppRole's OpenBao
   policy is scoped to `secret/data/<path_prefix>/credentials/*`, while existing
   credential paths are stamped once. Prefix updates and credential creation
   use `select_for_update()` on the settings row and then re-check committed
@@ -723,15 +748,15 @@ NetBox 4.6.5 as the backward-regression target.
   trailing slashes, empty or traversal segments, and whitespace. A stale model
   instance cannot recreate a deleted row. When credentials predate the first
   row, its prefix must match their stamped paths. Credential path derivation
-  applies the same validator to a legacy `PLUGINS_CONFIG` fallback and fails
-  closed when that configuration is unsafe.
+  validates the effective value and fails closed if an unsupported ORM write
+  bypassed normal validation.
 - **`path_alias_template` is deliberately absent from `OpenBaoSettings`.** It
   is declared and documented but unused by the package. Do not turn a dead
   setting into an operator-facing database field before it is either
   implemented or removed.
 - **A plugin integrating with this one registers its assignable models in
   `ready()`** — `netbox_openbao.registry.register_assignable_models(...)` — it
-  does not ask the operator to edit `PLUGINS_CONFIG`. The resolved allowlist is
+  does not ask the operator to duplicate the registration. The resolved allowlist is
   `assignable_models` ∪ registry − `assignable_models_deny`, computed in
   `config.assignable_model_labels()`. Three properties are load-bearing:
   **deny wins**, so an operator can refuse an integration's choice without
@@ -772,19 +797,21 @@ NetBox 4.6.5 as the backward-regression target.
   - **Never send `kv_mount` or `namespace`.** They are the broker's own
     configuration. Sending them would let a compromised NetBox address mounts
     the operator never granted, which inverts the point of the mode.
-  - **The client certificate is keyed on `env_prefix`**, exactly as the AppRole
-    is. The broker identifies callers by certificate CN, so flattening this to
-    one certificate would silently give every `CredentialPolicy` tier the same
-    access.
+  - **The client certificate is keyed on the auth-record ID and revision.** The
+    broker identifies callers by certificate CN, so flattening this to one
+    certificate would silently give every `CredentialPolicy` tier the same
+    access. Saving or deleting the row closes the old session and removes its
+    private temporary files.
   - **Never relay the broker's error text.** It is written not to leak policy,
     but this side cannot verify that, and forwarding a remote string gives up
     the guarantee `backends/exceptions.py` exists to provide.
 - **Do not write that broker mode makes "a NetBox compromise not a secret
   compromise".** It does not, the README said so once, and it was wrong: an
   attacker with code execution in NetBox can still ask the broker and be
-  answered. What it buys is that the database and configuration no longer carry
-  vault credentials and that the audit log is out of reach. Claim that, not
-  more.
+  answered. What it buys is that neither a database backup without
+  `SECRET_KEY` nor configuration without the encrypted rows yields the broker
+  client identity, that the AppRole stays off the NetBox host, and that the
+  audit log is out of reach. Claim that, not more.
 - **Anything touching the reveal path** → re-read
   [`docs/security.md`](docs/security.md) first and make sure
   `tests/test_security.py` still fails when you break the invariant.

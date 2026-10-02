@@ -1,7 +1,8 @@
 from django.core.exceptions import ValidationError
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
 from netbox_openbao.choices import CredentialTypeChoices
+from netbox_openbao.models import OpenBaoSettings
 from netbox_openbao.secrets.generators import generate_ssh_keypair
 from netbox_openbao.secrets.registry import extract_metadata, validate_payload
 
@@ -64,7 +65,7 @@ class ExtractionTest(TestCase):
     def test_password_type_extracts_nothing(self):
         self.assertEqual(extract_metadata(CredentialTypeChoices.TYPE_PASSWORD, {'password': 'x'}), {})
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'store_public_material': False}})
     def test_opting_out_disables_extraction(self):
+        OpenBaoSettings.objects.create(store_public_material=False)
         pair = generate_ssh_keypair('ed25519')
         self.assertEqual(extract_metadata(CredentialTypeChoices.TYPE_SSH_KEYPAIR, pair), {})

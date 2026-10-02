@@ -1,6 +1,7 @@
 from .administration import OpenBaoAdministrationLog, OpenBaoCluster
 from .assignments import CredentialAssignment
 from .audit import CredentialAccessLog
+from .auth import EngineAuthMaterial
 from .automation import AutomationResolutionReceipt
 from .credentials import Credential
 from .engines import SecretEngine
@@ -17,6 +18,7 @@ __all__ = (
     'CredentialAssignment',
     'CredentialPolicy',
     'CredentialTypeSchema',
+    'EngineAuthMaterial',
     'OpenBaoProcedureRun',
     'OpenBaoSettings',
     'OpenBaoAdministrationLog',

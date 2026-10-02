@@ -57,9 +57,11 @@ background job.
 These are enforced structurally, not by convention, and each is covered by a
 test in `netbox_openbao/tests/test_security.py`:
 
-- **No model field can hold secret material.** There is no column to leak, so
-  the changelog, export templates, and the REST representation are safe by
-  construction rather than by careful configuration.
+- **No `Credential` model field can hold credential material.** There is no
+  column to leak, so the changelog, export templates, and the REST
+  representation are safe by construction rather than by careful
+  configuration. OpenBao service identities live separately as versioned
+  ciphertext in `EngineAuthMaterial` and are excluded from those surfaces.
 - **`secret_data` is `write_only`.** DRF itself refuses to serialize it — into a
   `GET`, a `brief=true` response, the browsable API, or an OpenAPI example.
 - **`reveal` is a permission of its own**, separate from `view` and
@@ -69,8 +71,10 @@ test in `netbox_openbao/tests/test_security.py`:
   would template the secret into cacheable HTML; it is explicitly removed.
 - **The UI reveal is POST-only**, so a secret is never fetched by a bookmark, a
   prefetch, a link scanner, or a history replay.
-- **No auth material in the database.** RoleIDs and SecretIDs come from the
-  process environment, or a file it points at.
+- **Authentication material is encrypted at rest.** RoleIDs, SecretIDs,
+  tokens, Kubernetes login settings, and broker client keys are stored only as
+  versioned ciphertext derived from Django's `SECRET_KEY`. REST and UI surfaces
+  expose configured/missing status, never values or ciphertext.
 - **Per-tier AppRoles**, so a leaked SecretID reads only its own tier and a tier
   whose SecretID was never delivered to an instance is unreadable from it. This
   bounds blast radius; it does not re-authorize the NetBox user, and the
@@ -113,17 +117,6 @@ pip install netbox-openbao
 # configuration.py
 PLUGINS = ['netbox_openbao']
 
-PLUGINS_CONFIG = {
-    'netbox_openbao': {
-        # Optional seed/fallback. Runtime settings are managed through the
-        # plugin API once its singleton settings row exists.
-        'assignable_models': [
-            'dcim.device',
-            'virtualization.virtualmachine',
-            'ipam.service',
-        ],
-    },
-}
 ```
 
 ```bash
@@ -131,20 +124,21 @@ python manage.py migrate
 systemctl restart netbox netbox-rq
 ```
 
-Then export the AppRole material for each engine. The prefix is derived from
-the engine's slug — slug `prod-core` becomes `NETBOX_BAO_PROD_CORE`:
+Configure all runtime settings and service identities in **OpenBao →
+Configuration → Settings**, through `/api/plugins/openbao/`, or with the
+management command:
 
 ```bash
-NETBOX_BAO_PRIMARY_ROLE_ID=...
-NETBOX_BAO_PRIMARY_SECRET_ID=...
+python manage.py openbao_configure engine \
+  --slug primary --name Primary --api-url https://bao.example.net:8200
+python manage.py openbao_configure auth --engine primary --set role_id
+python manage.py openbao_configure auth --engine primary --set secret_id
 ```
 
-Either variable also accepts a `_FILE` form pointing at a mounted secret, which
-keeps the value out of `/proc/<pid>/environ`:
-
-```bash
-NETBOX_BAO_PRIMARY_SECRET_ID_FILE=/run/secrets/bao-secret-id
-```
+The prompts do not echo material or place it in shell history. `SECRET_KEY` is
+the single root of trust and cannot live in the database beside the ciphertext
+it protects. See the rotation procedure in
+[`docs/configuration.md`](docs/configuration.md#secret_key-root-of-trust).
 
 `assignable_models` is the allowlist of object types a credential may be
 assigned to. An installed plugin can add its own models to it from

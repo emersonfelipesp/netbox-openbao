@@ -95,20 +95,20 @@ object permissions.
 
 ### 3. Deliver the client certificate
 
-These are **paths on the NetBox host, not material**, which is why there is no
-`_FILE` form — there is no value here to keep out of `/proc/<pid>/environ`.
+Store the PEM values as encrypted engine authentication material:
 
-```ini
-# /etc/netbox/openbao.env
-NETBOX_BAO_PRIMARY_CLIENT_CERT=/etc/netbox/openbao/netbox-prod.pem
-NETBOX_BAO_PRIMARY_CLIENT_KEY=/etc/netbox/openbao/netbox-prod.key
+```bash
+python manage.py openbao_configure auth --engine primary \
+  --set client_cert --file /etc/netbox/openbao/netbox-prod.pem
+python manage.py openbao_configure auth --engine primary \
+  --set client_key --file /etc/netbox/openbao/netbox-prod.key
 ```
 
-The key file must be readable by the NetBox user and the RQ worker, and by
-nobody else.
+The command reads each file once. Runtime TLS sessions use mode-0600 temporary
+copies that are removed with the session and at process exit.
 
-A `CredentialPolicy` tier can present its **own** certificate under its own
-prefix — `NETBOX_BAO_PROD_CORE_CLIENT_CERT`, and so on. The broker identifies
+A `CredentialPolicy` tier can present its **own** certificate through a
+policy-owned auth-material row. The broker identifies
 callers by the certificate's subject CN, so a different certificate is a
 different instance with a different set of permitted prefixes. The tiering that
 AppRoles give you in direct mode is preserved rather than flattened.

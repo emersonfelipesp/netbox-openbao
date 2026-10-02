@@ -47,7 +47,7 @@ the original is never chained with `from`, for the same reason.
 
 | Exception | Raised when |
 |---|---|
-| `BackendConfigurationError` | The engine or its environment is wrong; the request never ran |
+| `BackendConfigurationError` | The engine or stored service identity is wrong; the request never ran |
 | `OpenBaoAuthError` | Authentication or authorization rejected |
 | `OpenBaoNotFound` | No secret at that path or version |
 | `OpenBaoConflict` | A check-and-set write lost a race |
@@ -60,11 +60,10 @@ conflict is distinguished from any other `400` — and then discarded.
 
 Built on `hvac`. Three behaviours are load-bearing:
 
-**No auth material touches the database or disk.** RoleIDs and SecretIDs are
-read from the process environment, or from a file the environment points at,
-at the moment of login. The `_FILE` indirection is what lets a deployment mount
-a Docker or Kubernetes secret rather than exporting the value into
-`/proc/<pid>/environ`.
+**Authentication material is encrypted in the database.** The backend decrypts
+only the fields required for the current login. Ciphertext has a version prefix,
+and the key is derived from Django's `SECRET_KEY` with HKDF. Plaintext never
+enters a model field, exception, or log.
 
 **Tokens are cached in Django's cache only**, and expire at 80% of the lease so
 a token is never presented at the moment it expires. Never in a model field.
@@ -139,9 +138,10 @@ exception types for the same conditions — and three constraints keep it honest
 - **Never send `kv_mount` or `namespace`.** They are the broker's own
   configuration. Sending them would let a compromised NetBox address mounts the
   operator never granted, which inverts the point of the mode.
-- **The client certificate is keyed on `env_prefix`**, exactly as the AppRole
-  is. The broker identifies callers by certificate CN, so flattening this to one
-  certificate would silently give every policy tier the same access.
+- **The client certificate is keyed on the auth-record ID and revision.** The
+  broker identifies callers by certificate CN, so flattening this to one
+  certificate would silently give every policy tier the same access. Saving or
+  deleting the record closes the old pooled session and removes its PEM files.
 - **Never relay the broker's error text.** It is written not to leak policy, but
   this side cannot verify that, and forwarding a remote string gives up the
   guarantee `exceptions.py` exists to provide.

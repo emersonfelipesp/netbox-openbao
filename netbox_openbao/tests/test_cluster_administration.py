@@ -254,14 +254,9 @@ class DirectClusterAdministrationBackendTest(OpenBaoAdministrationTestCase):
     def test_broker_transport_requires_its_mtls_identity_before_cluster_operations(self):
         self.cluster.backend = BackendChoices.BACKEND_BROKER
         backend = BrokerAdministrationBackend(self.cluster)
-        prefix = self.cluster.env_prefix
 
-        with patch.dict(
-            "os.environ",
-            {f"{prefix}_CLIENT_CERT": "", f"{prefix}_CLIENT_KEY": ""},
-        ):
-            with self.assertRaisesRegex(BackendConfigurationError, 'CLIENT_CERT and .*CLIENT_KEY'):
-                backend.seal_status()
+        with self.assertRaisesRegex(BackendConfigurationError, 'client certificate and client key'):
+            backend.seal_status()
 
     def test_snapshot_download_is_bounded_and_streamed(self):
         response = self.response()

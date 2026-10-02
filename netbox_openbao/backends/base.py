@@ -23,16 +23,33 @@ __all__ = ('SecretBackend',)
 class SecretBackend(ABC):
     """Read/write access to one KV mount on one secret store."""
 
-    def __init__(self, engine, env_prefix=None):
+    def __init__(self, engine, auth_material=None):
         """
         Args:
             engine (SecretEngine): Describes the instance and the KV mount.
-            env_prefix (str | None): Overrides the engine's environment prefix, so a
-                `CredentialPolicy` tier can authenticate with its own AppRole
-                rather than the engine-wide one.
+            auth_material (EngineAuthMaterial | None): Encrypted database row
+                resolved for the engine or policy tier.
         """
         self.engine = engine
-        self.env_prefix = env_prefix or engine.env_prefix
+        self.auth_material = auth_material
+
+    def refresh_auth_material(self):
+        """Refresh a rotated database identity before reusing local auth state."""
+        material = self.auth_material
+        if material is None or not getattr(material, '_state', None) or not material.pk:
+            return False
+        revision = (
+            type(material).objects.filter(pk=material.pk)
+            .values_list('revision', flat=True)
+            .first()
+        )
+        if revision == material.revision:
+            return False
+        if revision is None:
+            self.auth_material = None
+        else:
+            material.refresh_from_db()
+        return True
 
     @abstractmethod
     def read(self, path, version=None):
@@ -94,3 +111,7 @@ class SecretBackend(ABC):
         the return value instead, so the health job can distinguish "sealed"
         from "unreachable".
         """
+
+    @abstractmethod
+    def authenticate(self):
+        """Authenticate without reading or writing secret material."""

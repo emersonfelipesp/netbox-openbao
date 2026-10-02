@@ -4,12 +4,9 @@ Five jobs, registered with NetBox's `@system_job` decorator so they are
 scheduled by NetBox's own RQ worker and appear in the core **Jobs** UI. The
 plugin runs no scheduler of its own.
 
-Intervals still come from `PLUGINS_CONFIG` and are read **at import time** by
-the decorators. The fields also exist on `OpenBaoSettings` as schema
-foundation, but are not consumed or rescheduled yet; editing those row fields
-does not affect a running or restarted worker. Keep the five interval keys in
-`PLUGINS_CONFIG` until reconciliation support lands. See
-[Configuration](../configuration.md#plugins_config-seed-and-fallback).
+Intervals come from `OpenBaoSettings` and are read **at import time** by the
+decorators. Restart workers after changing one. Before migrations exist or
+while the database is unavailable, the decorator uses the model default.
 
 Every run clears the thread-local settings memo before it starts and again in a
 `finally` block. RQ workers are long-lived and do not pass through the HTTP
@@ -25,9 +22,8 @@ after a job raises.
 | [`RotationDueJob`](#rotationduejob) | 24 h | no |
 | [`AccessLogPruneJob`](#accesslogprunejob) | 7 days | no |
 
-The worker needs the same AppRole environment as the web service. A worker
-without it reports every engine as `unauthorized`, which looks like an OpenBao
-problem and is not — see [Troubleshoot](../how-to/troubleshooting.md).
+The worker and web service read the same encrypted database rows. No
+per-process authentication configuration is required.
 
 ## `EngineHealthJob`
 
@@ -42,7 +38,7 @@ The statuses are distinguished because they demand different responses:
 | `standby` | Unsealed standby node | nothing; on Vault a performance standby serves reads |
 | `sealed` | Reachable but sealed | unseal it |
 | `unreachable` | Network or TLS failure | check the URL, the CA path, and firewalls |
-| `unauthorized` | Authentication rejected | check the environment on **both** units |
+| `unauthorized` | Authentication rejected | check the stored auth status and run `openbao_configure test` |
 
 `health()` is required not to raise for a reachable-but-unhealthy instance,
 which is what makes `sealed` and `unreachable` distinguishable at all.

@@ -65,7 +65,6 @@ class OpenBaoClusterStatusPanel(panels.ObjectAttributesPanel):
     openbao_version = attrs.TextAttr('openbao_version', label=_('OpenBao version'))
     tls_verify = attrs.BooleanAttr('tls_verify', label=_('Verify TLS'))
     ca_cert_path = attrs.TextAttr('ca_cert_path', label=_('CA bundle'), style='font-monospace')
-    env_prefix = attrs.TextAttr('env_prefix', label=_('Environment prefix'), style='font-monospace', copy_button=True)
     capability_digest = attrs.TextAttr('capability_digest', label=_('Capability digest'), style='font-monospace')
     capabilities_checked = attrs.DateTimeAttr('capabilities_checked', label=_('Capabilities checked'))
 
@@ -106,13 +105,7 @@ class SecretEnginePanel(panels.ObjectAttributesPanel):
 
 
 class SecretEngineStatusPanel(panels.ObjectAttributesPanel):
-    """
-    Observed state plus the environment contract.
-
-    `env_prefix` is shown because it is the single most common source of a
-    failed deployment: the operator must export `<prefix>_ROLE_ID` and
-    `<prefix>_SECRET_ID`, and nothing in the database records whether they did.
-    """
+    """Observed state. Authentication status is shown on the Settings page."""
 
     title = _('Status')
 
@@ -121,12 +114,6 @@ class SecretEngineStatusPanel(panels.ObjectAttributesPanel):
     last_checked = attrs.DateTimeAttr('last_checked', label=_('Last checked'))
     tls_verify = attrs.BooleanAttr('tls_verify', label=_('Verify TLS'))
     ca_cert_path = attrs.TextAttr('ca_cert_path', label=_('CA bundle'), style='font-monospace')
-    env_prefix = attrs.TextAttr(
-        'env_prefix',
-        label=_('Environment prefix'),
-        style='font-monospace',
-        copy_button=True,
-    )
 
 
 class CredentialPolicyPanel(panels.ObjectAttributesPanel):
@@ -134,7 +121,6 @@ class CredentialPolicyPanel(panels.ObjectAttributesPanel):
     slug = attrs.TextAttr('slug', style='font-monospace')
     engine = attrs.RelatedObjectAttr('engine', linkify=True, label=_('Secret engine'))
     openbao_policy = attrs.TextAttr('openbao_policy', label=_('OpenBao policy'), style='font-monospace')
-    env_prefix = attrs.TextAttr('env_prefix', label=_('AppRole prefix'), style='font-monospace')
     max_reveal_ttl = attrs.NumericAttr('max_reveal_ttl', label=_('Max reveal TTL (s)'))
     require_reason = attrs.BooleanAttr('require_reason', label=_('Requires reason'))
     description = attrs.TextAttr('description')
@@ -419,16 +405,6 @@ class OpenBaoSettingsPanel(panels.ObjectAttributesPanel):
 
 
 class OpenBaoSettingsSourcePanel(panels.ObjectAttributesPanel):
-    """
-    Where configuration is actually coming from, and what is being ignored.
+    """Settings whose database values apply when workers restart."""
 
-    The second part is the reason this panel exists. Once a settings row is
-    saved it becomes authoritative, and a key still present in `PLUGINS_CONFIG`
-    is silently ignored — which is how an operator spends an afternoon on a
-    value they can see in a file, have edited, and that does nothing. The same
-    information is logged at startup; this puts it where they are already
-    looking.
-    """
-
-    superseded_keys = attrs.TextAttr('superseded_plugins_config_keys', label=_('Ignored PLUGINS_CONFIG keys'))
     static_intervals = attrs.TextAttr('static_interval_summary', label=_('Restart-required settings'))

@@ -14,7 +14,6 @@ Set `NETBOX_OPENBAO_BROKER_ADDR` plus `NETBOX_OPENBAO_BROKER_CERT`,
 """
 
 import os
-import tempfile
 import unittest
 import uuid
 
@@ -31,7 +30,7 @@ from netbox_openbao.backends.exceptions import (
     OpenBaoUnavailable,
 )
 from netbox_openbao.choices import BackendChoices, EngineStatusChoices
-from netbox_openbao.models import SecretEngine
+from netbox_openbao.models import EngineAuthMaterial, SecretEngine
 
 BROKER_ADDR = os.environ.get('NETBOX_OPENBAO_BROKER_ADDR')
 BROKER_CERT = os.environ.get('NETBOX_OPENBAO_BROKER_CERT')
@@ -86,6 +85,13 @@ def engine(**overrides):
     return SecretEngine(**values)
 
 
+def auth_material(cert='certificate-pem', key='private-key-pem'):
+    material = EngineAuthMaterial()
+    material.set_secret('client_cert', cert)
+    material.set_secret('client_key', key)
+    return material
+
+
 def backend(session=None, **overrides):
     instance = BrokerBackend(engine(**overrides))
     if session is not None:
@@ -116,47 +122,37 @@ class ClientCertificateTest(TestCase):
     """
 
     def setUp(self):
-        for suffix in ('CLIENT_CERT', 'CLIENT_KEY'):
-            os.environ.pop(f'NETBOX_BAO_BROKER_{suffix}', None)
+        super().setUp()
 
     def test_a_missing_certificate_is_a_configuration_error(self):
         with self.assertRaises(BackendConfigurationError) as caught:
             backend()._client_certificate()
 
-        self.assertIn('CLIENT_CERT', str(caught.exception))
+        self.assertIn('Settings', str(caught.exception))
 
-    def test_a_certificate_path_that_does_not_exist_is_refused(self):
-        """
-        `requests` reports a missing client certificate as an opaque SSLError
-        at connection time. Checking first turns that into a sentence naming
-        the file — and the path is operator configuration, not material, so
-        naming it is safe.
-        """
-        os.environ['NETBOX_BAO_BROKER_CLIENT_CERT'] = '/nonexistent/broker.pem'
-        os.environ['NETBOX_BAO_BROKER_CLIENT_KEY'] = '/nonexistent/broker.key'
-        try:
-            with self.assertRaises(BackendConfigurationError) as caught:
-                backend()._client_certificate()
-        finally:
-            del os.environ['NETBOX_BAO_BROKER_CLIENT_CERT']
-            del os.environ['NETBOX_BAO_BROKER_CLIENT_KEY']
-
-        self.assertIn('/nonexistent/broker.pem', str(caught.exception))
+    def test_stored_pem_is_materialized_without_exposing_its_value(self):
+        instance = BrokerBackend(engine(), auth_material=auth_material())
+        paths = instance._client_certificate()
+        self.addCleanup(lambda: instance.invalidate_token())
+        with open(paths[0]) as handle:
+            self.assertEqual(handle.read(), 'certificate-pem')
+        self.assertNotIn('certificate-pem', repr(paths))
 
     def test_a_policy_tier_uses_its_own_certificate(self):
         """
         The broker identifies callers by certificate CN, so keying the
-        certificate on `env_prefix` is what preserves per-tier separation: a
+        certificate on the policy auth row preserves per-tier separation: a
         tier presents a different certificate and therefore resolves to a
         different broker instance with different path prefixes. Flattening this
         to one certificate would silently give every tier the same access.
         """
-        tiered = BrokerBackend(engine(), env_prefix='TIER_PROD')
-
-        with self.assertRaises(BackendConfigurationError) as caught:
-            tiered._client_certificate()
-
-        self.assertIn('TIER_PROD_CLIENT_CERT', str(caught.exception))
+        tiered = BrokerBackend(
+            engine(),
+            auth_material=auth_material(cert='tier-certificate', key='tier-key'),
+        )
+        paths = tiered._client_certificate()
+        with open(paths[0]) as handle:
+            self.assertEqual(handle.read(), 'tier-certificate')
 
 
 class TlsVerificationTest(TestCase):
@@ -166,20 +162,6 @@ class TlsVerificationTest(TestCase):
     credential and it is long-lived, so an unverified peer is a credential
     handed to a man in the middle.
     """
-
-    def setUp(self):
-        self.cert = tempfile.NamedTemporaryFile(suffix='.pem', delete=False)
-        self.key = tempfile.NamedTemporaryFile(suffix='.key', delete=False)
-        self.cert.close()
-        self.key.close()
-        os.environ['NETBOX_BAO_BROKER_CLIENT_CERT'] = self.cert.name
-        os.environ['NETBOX_BAO_BROKER_CLIENT_KEY'] = self.key.name
-
-    def tearDown(self):
-        for handle in (self.cert, self.key):
-            os.unlink(handle.name)
-        for name in ('NETBOX_BAO_BROKER_CLIENT_CERT', 'NETBOX_BAO_BROKER_CLIENT_KEY'):
-            os.environ.pop(name, None)
 
     def test_verification_cannot_be_turned_off(self):
         with self.assertRaises(BackendConfigurationError) as caught:
@@ -192,11 +174,16 @@ class TlsVerificationTest(TestCase):
         Which is how a self-signed broker certificate is served — so the rule
         above refuses nothing legitimate.
         """
-        instance = BrokerBackend(engine(tls_verify=False, ca_cert_path='/etc/ssl/broker-ca.pem'))
+        instance = BrokerBackend(
+            engine(tls_verify=False, ca_cert_path='/etc/ssl/broker-ca.pem'),
+            auth_material=auth_material(),
+        )
         session = instance._get_session()
 
         self.assertEqual(session.verify, '/etc/ssl/broker-ca.pem')
-        self.assertEqual(session.cert, (self.cert.name, self.key.name))
+        self.assertEqual(len(session.cert), 2)
+        self.assertTrue(all(os.path.isfile(path) for path in session.cert))
+        instance.invalidate_token()
 
 
 class MalformedResponseTest(TestCase):
@@ -377,13 +364,10 @@ class HealthTest(TestCase):
         verification disabled — must come back as a status with a message
         naming the fix, not as an exception the job has to catch.
         """
-        for suffix in ('CLIENT_CERT', 'CLIENT_KEY'):
-            os.environ.pop(f'NETBOX_BAO_BROKER_{suffix}', None)
-
         result = BrokerBackend(engine()).health()
 
         self.assertEqual(result['status'], EngineStatusChoices.STATUS_UNREACHABLE)
-        self.assertIn('CLIENT_CERT', result['message'])
+        self.assertIn('Settings', result['message'])
 
     def test_an_unreachable_broker_does_not_raise(self):
         """
@@ -410,10 +394,10 @@ class BrokerIntegrationTest(TestCase):
     """
 
     def setUp(self):
-        os.environ['NETBOX_BAO_BROKER_CLIENT_CERT'] = BROKER_CERT
-        os.environ['NETBOX_BAO_BROKER_CLIENT_KEY'] = BROKER_KEY
         self.engine = engine(api_url=BROKER_ADDR, ca_cert_path=BROKER_CA or '')
-        self.backend = BrokerBackend(self.engine)
+        with open(BROKER_CERT) as cert_handle, open(BROKER_KEY) as key_handle:
+            material = auth_material(cert_handle.read(), key_handle.read())
+        self.backend = BrokerBackend(self.engine, auth_material=material)
         # A fresh path per test, because `cas=0` means "must not already
         # exist". A shared path only works if cleanup does, and a broker
         # instance configured `may_delete = false` is a perfectly reasonable
@@ -427,8 +411,6 @@ class BrokerIntegrationTest(TestCase):
         except OpenBaoError:
             # Best effort. The instance may not be permitted to delete.
             pass
-        for name in ('NETBOX_BAO_BROKER_CLIENT_CERT', 'NETBOX_BAO_BROKER_CLIENT_KEY'):
-            os.environ.pop(name, None)
 
     def test_the_full_round_trip(self):
         version = self.backend.write(self.path, {'username': 'admin', 'password': 'hunter2'}, cas=0)

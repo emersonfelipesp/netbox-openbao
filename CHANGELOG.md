@@ -65,6 +65,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added `openbao_configure import-legacy-settings` with validated dry-run diff
+  and effective-value verification. The upgrade sequence now preserves all
+  non-default legacy security settings before legacy configuration is removed,
+  and policy-specific environment prefixes remain as reversible, non-editable
+  migration metadata until identity imports are verified. The explicit
+  `cleanup-legacy-prefixes --confirm-imports-verified` command then clears the
+  retained values without an automatic schema drop.
+
+- Replaced runtime environment and `PLUGINS_CONFIG` authentication with
+  database-only configuration. The new owner-scoped `EngineAuthMaterial` model
+  encrypts AppRole, token, Kubernetes, and broker mTLS values with a versioned
+  key derived from Django's `SECRET_KEY`; UI and REST surfaces expose only
+  configured/missing status. The singleton Settings dashboard now shows every
+  effective plugin and engine parameter, and `openbao_configure` supports
+  headless settings, engine, authentication, connection-test, one-time legacy
+  environment import, and `SECRET_KEY` re-encryption workflows. Token and TLS
+  session caches are revision-bound and invalidated on authentication rotation.
+  Standard `EngineAuthMaterial` add/change permissions gate the write-only UI
+  and REST editors, while changelog, webhook, GraphQL, search, filter, table,
+  CSV, clone, and administration-audit surfaces expose no plaintext or
+  ciphertext.
+
+### Fixed
+
+- Enforced object restrictions, add permission, post-save conformance, and
+  `If-Match` validation on the settings singleton API. The Settings dashboard
+  now restricts engines, policies, clusters, authentication status, and related
+  host devices independently.
+- Serialized authentication-material rotations under a row lock, merged only
+  submitted fields, allocated unique revisions, and deferred exact token and
+  TLS-session invalidation until commit so concurrent rotations cannot retain
+  a superseded identity.
+
 - Added authoritative service endpoint and SSH public-key inventory, a
   permission-constrained metadata-only credential resolver, and an idempotent
   copy-only importer for legacy NMS/network device, VM, service, and
@@ -158,15 +191,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   controls that are absent, which is the same defect as the missing list route
   in the other direction.
 
-- **A system check reporting `PLUGINS_CONFIG` keys the settings row supersedes.**
-  Once a row exists it is authoritative and a key left in `configuration.py` is
-  silently ignored — an operator edits a value they can see and observes nothing.
-  The check names them, and the settings page shows the same list. Interval keys
-  are excluded because they genuinely are still read from the file.
-
-  Run as a Django system check rather than from `AppConfig.ready()`: querying the
-  database during app initialisation earns Django's own warning about it, and on
-  a fresh install the table does not exist yet.
+- **A system check reports every ignored legacy plugin key.** Runtime settings
+  are database-only. The check names obsolete values left in
+  `configuration.py` so operators can remove the dead configuration.
 
 - **Settings changes are audited.** `change_openbaosettings` can widen the reveal
   rate limit, which bounds how fast a leaked token drains the store, so the
@@ -178,29 +205,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Configuration is now stored in the database and editable through the REST
-  API and the CLI.** A singleton `OpenBaoSettings` row holds every runtime
-  setting, exposed at `/api/plugins/openbao/settings/` — which is all `nbx`
-  needs, so the CLI works without anything further.
-
-  `PLUGINS_CONFIG` is **not** removed. It becomes three things: a **seed**, so a
-  data migration copies whatever a deployment currently configures and upgrading
-  changes nobody's behaviour; a **fallback**, so an installation with no row
-  behaves exactly as before; and later a deprecation surface. Removing support
-  for it outright would break every existing deployment and needs its own
-  release cycle.
-
-  Resolution is per-request memo, then the settings row, then `PLUGINS_CONFIG`,
-  then the hard default. A sentinel preserves the no-row result within the
-  request. The credentials panel is registered globally, so this read path runs
-  on every object detail page in NetBox; memoising the complete row keeps five
-  setting reads to one query rather than one query per key.
-
-  A read never creates the row. It is created by the migration when effective
-  non-default values need seeding, or by an explicit save, so a deployment with
-  no row keeps `PLUGINS_CONFIG` reachable —
-  which is also what lets the existing test suite go on configuring the plugin
-  with `override_settings`.
+- **Configuration is stored in the database and editable through the REST API,
+  UI, and CLI.** A singleton `OpenBaoSettings` row holds every runtime setting.
+  Resolution is per-request memo, then the settings row, then the model field
+  default. A sentinel preserves the no-row result within the request. A read
+  never creates the row; only an explicit operator write does.
 
   `reveal_rate_limit` is validated on save, so an unparseable rate is refused
   there rather than surfacing later as a failed credential reveal, where the
@@ -251,14 +260,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   original prefix while new writes would otherwise target the replacement. A
   stale instance cannot recreate a deleted settings row, the first row must
   match prefixes stamped into existing credential paths, and the same prefix
-  validator now rejects unsafe legacy fallbacks during every credential path
+  validator now rejects invalid effective values during every credential path
   derivation.
-
-- **The settings migration compares set-like configuration canonically.** A
-  reordered list, tuple representation, or case-and-whitespace-only model label
-  difference no longer creates an authoritative database row and accidentally
-  disables later `PLUGINS_CONFIG` edits. Unsafe legacy path prefixes are not
-  copied into a row that runtime validation would reject.
 
 - **`rpc.py` called `get_config()` with no arguments**, against a signature
   requiring a key — a `TypeError` on the `provision_netbox_approle` dispatch
@@ -267,13 +270,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Unchanged, deliberately
 
-- **The five background-job intervals still come from `PLUGINS_CONFIG` and
-  still require a restart.** `@system_job` reads its interval at import time and
-  `rqworker` reads the resulting registry at worker startup, so switching only
-  the model read would make a value revert at the next worker restart.
-  The fields exist on the model so that work needs no second schema change, but
-  presenting them as live before the rescheduling exists would be worse than
-  leaving the current restart-required semantics visible.
+- **The five background-job intervals come from `OpenBaoSettings` and still
+  require a worker restart.** `@system_job` reads its interval at import time
+  and `rqworker` reads the resulting registry at worker startup. Bootstrap and
+  database-outage imports use the model defaults.
 
 ### Changed — action required for third-party backends
 
@@ -308,8 +308,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Plugins can register their own assignable object types.**
   `netbox_openbao.registry.register_assignable_models(...)`, called from an
   integrating plugin's `AppConfig.ready()`, adds that plugin's models to the
-  allowlist `CredentialAssignment` enforces. Until now the only way to widen
-  that list was to hand-edit `PLUGINS_CONFIG`, so every integration was
+  allowlist `CredentialAssignment` enforces. Without registration every integration was
   silently inert until an operator read the right paragraph — and the failure
   it produced was a validation error about a settings file they had never been
   pointed at.

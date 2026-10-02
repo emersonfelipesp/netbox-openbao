@@ -12,21 +12,20 @@ Three behaviours here are load-bearing for security and are covered by
   into a `netbox_openbao.backends.exceptions` type built from a fixed string.
   A Forbidden response body from OpenBao can enumerate policy rules; that must
   not reach a log, a traceback, or an API error payload.
-* **No auth material touches the database or disk.** RoleIDs and SecretIDs are
-  read from the process environment (or a file the environment points at, for
-  Docker/Kubernetes secret mounts) at the moment of login.
+* **Authentication material is decrypted only at login.** The database holds
+  versioned ciphertext. Plaintext is never logged or attached to exceptions.
 * **Tokens are cached only in Django's cache.** They expire ahead of their
   lease and are never written to a model field.
 """
 
 import logging
-import os
 import threading
 
 from django.core.cache import cache
 
 from netbox_openbao.choices import AuthMethodChoices, EngineStatusChoices
 from netbox_openbao.config import get_config
+from netbox_openbao.models.auth import AuthMaterialDecryptionError
 
 from .base import SecretBackend
 from .exceptions import (
@@ -37,6 +36,7 @@ from .exceptions import (
     OpenBaoNotFound,
     OpenBaoUnavailable,
 )
+from .tls import materialize_private_pem, remove_private_files
 
 __all__ = ('OpenBaoBackend',)
 
@@ -60,35 +60,27 @@ _sessions_lock = threading.Lock()
 TOKEN_CACHE_LEASE_FRACTION = 0.8
 
 
-def _read_env(name):
-    """
-    Return the value of `name`, or of the file `name`_FILE points at.
-
-    The `_FILE` indirection is what lets a deployment mount a Docker or
-    Kubernetes secret instead of exporting the value into the process
-    environment, where it would be visible in `/proc/<pid>/environ`.
-    """
-    if (value := os.environ.get(name)):
-        return value.strip()
-    if (path := os.environ.get(f'{name}_FILE')):
-        try:
-            with open(path) as f:
-                return f.read().strip()
-        except OSError:
-            # The path itself is operator-supplied configuration, not a
-            # secret, so naming it is safe and makes the misconfiguration
-            # diagnosable.
-            raise BackendConfigurationError(
-                f'Unable to read secret material from {name}_FILE ({path}).'
-            ) from None
-    return None
+def close_auth_material_sessions(material_id, revision):
+    """Close certificate sessions tied to a rotated or deleted auth row."""
+    identity = f'{material_id}:{revision}'
+    with _sessions_lock:
+        matches = [
+            (key, session)
+            for key, session in _sessions.items()
+            if key[3] == identity
+        ]
+        for key, _session in matches:
+            del _sessions[key]
+    for _key, session in matches:
+        session.close()
+        remove_private_files(getattr(session, '_openbao_temp_paths', ()))
 
 
 class OpenBaoBackend(SecretBackend):
     """Read/write access to one KV mount on one OpenBao instance."""
 
-    def __init__(self, engine, env_prefix=None):
-        super().__init__(engine, env_prefix=env_prefix)
+    def __init__(self, engine, auth_material=None):
+        super().__init__(engine, auth_material=auth_material)
         self._client = None
 
     # ------------------------------------------------------------------
@@ -97,15 +89,53 @@ class OpenBaoBackend(SecretBackend):
 
     @property
     def _cache_key(self):
-        return f'netbox_openbao:token:{self.engine.slug}:{self.env_prefix}'
+        if self.auth_material is None:
+            return f'netbox_openbao:token:{self.engine.slug}:missing'
+        return self.auth_material.token_cache_key(self.engine.slug)
+
+    def _required_material(self, name, method):
+        if self.auth_material is None or not self.auth_material.is_configured(name):
+            raise BackendConfigurationError(
+                f'{method} authentication is not configured for engine {self.engine.slug}. '
+                'Configure it on OpenBao > Configuration > Settings or with '
+                '`manage.py openbao_configure auth`.'
+            )
+        try:
+            return self.auth_material.get_secret(name)
+        except AuthMaterialDecryptionError:
+            raise BackendConfigurationError(
+                'Stored OpenBao authentication material cannot be decrypted.'
+            ) from None
 
     def _get_session(self):
-        key = (self.engine.api_url, self.engine.tls_verify, self.engine.ca_cert_path)
+        certificate_identity = None
+        if self.engine.auth_method == AuthMethodChoices.METHOD_CERT:
+            certificate_identity = (
+                self.auth_material.cache_identity if self.auth_material is not None else 'missing'
+            )
+        key = (
+            self.engine.api_url,
+            self.engine.tls_verify,
+            self.engine.ca_cert_path,
+            certificate_identity,
+        )
         with _sessions_lock:
             if key not in _sessions:
                 import requests
 
                 session = requests.Session()
+                if certificate_identity is not None:
+                    cert = self._required_material('client_cert', 'Certificate')
+                    private_key = self._required_material('client_key', 'Certificate')
+                    cert_path = materialize_private_pem(cert, '.crt')
+                    try:
+                        key_path = materialize_private_pem(private_key, '.key')
+                    except Exception:
+                        remove_private_files((cert_path,))
+                        raise
+                    paths = (cert_path, key_path)
+                    session.cert = paths
+                    session._openbao_temp_paths = paths
                 _sessions[key] = session
             return _sessions[key]
 
@@ -136,52 +166,36 @@ class OpenBaoBackend(SecretBackend):
         material, which is `OpenBaoAuthError`.
         """
         method = self.engine.auth_method
-        prefix = self.env_prefix
-
         try:
             if method == AuthMethodChoices.METHOD_APPROLE:
-                role_id = _read_env(f'{prefix}_ROLE_ID')
-                secret_id = _read_env(f'{prefix}_SECRET_ID')
-                if not role_id or not secret_id:
-                    raise BackendConfigurationError(
-                        f'AppRole authentication requires {prefix}_ROLE_ID and {prefix}_SECRET_ID '
-                        f'in the environment.'
-                    )
+                role_id = self._required_material('role_id', 'AppRole')
+                secret_id = self._required_material('secret_id', 'AppRole')
                 response = client.auth.approle.login(role_id=role_id, secret_id=secret_id)
 
             elif method == AuthMethodChoices.METHOD_TOKEN:
-                token = _read_env(f'{prefix}_TOKEN')
-                if not token:
-                    raise BackendConfigurationError(
-                        f'Token authentication requires {prefix}_TOKEN in the environment.'
-                    )
+                token = self._required_material('token', 'Token')
                 # A static token has no login response to read a lease from;
                 # fall back to the configured cache TTL.
                 return token, int(get_config('token_cache_ttl') or 3600)
 
             elif method == AuthMethodChoices.METHOD_KUBERNETES:
-                role = _read_env(f'{prefix}_K8S_ROLE')
-                jwt_path = os.environ.get(
-                    f'{prefix}_K8S_JWT_PATH',
-                    '/var/run/secrets/kubernetes.io/serviceaccount/token',
+                role = self._required_material('k8s_role', 'Kubernetes')
+                jwt_path = (
+                    self.auth_material.get_secret('k8s_jwt_path')
+                    or '/var/run/secrets/kubernetes.io/serviceaccount/token'
                 )
-                if not role:
-                    raise BackendConfigurationError(
-                        f'Kubernetes authentication requires {prefix}_K8S_ROLE in the environment.'
-                    )
                 try:
                     with open(jwt_path) as f:
                         jwt = f.read().strip()
                 except OSError:
                     raise BackendConfigurationError(
-                        f'Unable to read the service account token at {jwt_path}.'
+                        'Unable to read the configured Kubernetes service account token.'
                     ) from None
                 response = client.auth.kubernetes.login(role=role, jwt=jwt)
 
             elif method == AuthMethodChoices.METHOD_CERT:
-                # Client certificate material is presented by the session's TLS
-                # configuration, so there is nothing to read from the
-                # environment here.
+                # Client certificate material is presented by the private
+                # session created in `_get_session()`.
                 response = client.auth.cert.login()
 
             else:
@@ -201,6 +215,8 @@ class OpenBaoBackend(SecretBackend):
 
     def _get_client(self):
         """Return an authenticated client, reusing a cached token when valid."""
+        if self.refresh_auth_material():
+            self._client = None
         if self._client is not None:
             return self._client
 
@@ -223,6 +239,24 @@ class OpenBaoBackend(SecretBackend):
         """Drop the cached token so the next call re-authenticates."""
         cache.delete(self._cache_key)
         self._client = None
+        if self.engine.auth_method != AuthMethodChoices.METHOD_CERT:
+            return
+        identity = self.auth_material.cache_identity if self.auth_material is not None else 'missing'
+        session_key = (
+            self.engine.api_url,
+            self.engine.tls_verify,
+            self.engine.ca_cert_path,
+            identity,
+        )
+        with _sessions_lock:
+            session = _sessions.pop(session_key, None)
+        if session is not None:
+            session.close()
+            remove_private_files(getattr(session, '_openbao_temp_paths', ()))
+
+    def authenticate(self):
+        """Perform login without reading or writing a secret path."""
+        self._get_client()
 
     # ------------------------------------------------------------------
     # Error translation

@@ -1,11 +1,12 @@
 """
 netbox-openbao — OpenBao-backed credential storage for NetBox.
 
-OpenBao is the system of record for secret *material*. NetBox is the system of
-record for credential *inventory and relationships*. Nothing secret is ever
-stored in a NetBox model field, which is what makes the changelog, export
-templates, and the browsable API structurally safe rather than safe by
-convention.
+OpenBao is the system of record for credential *material*. NetBox is the system
+of record for credential *inventory and relationships*. Credential payloads
+never enter a NetBox model field. OpenBao service identities are the narrow
+exception: ``EngineAuthMaterial`` stores only versioned ciphertext, and every
+serializer, changelog, export, search, and event surface exposes status rather
+than that ciphertext.
 """
 
 from netbox.plugins import PluginConfig
@@ -49,63 +50,7 @@ class NetBoxOpenBaoConfig(PluginConfig):
     middleware = ['netbox_openbao.middleware.SettingsCacheMiddleware']
 
     required_settings = []
-    default_settings = {
-        # Path prefix beneath the KV mount. Full logical path for a credential
-        # is "<path_prefix>/credentials/<uuid>".
-        'path_prefix': 'netbox',
-
-        # Object types a Credential may be assigned to. Anything not listed
-        # here — and not registered by an installed plugin, see below — is
-        # rejected at both form and API level.
-        'assignable_models': [
-            'dcim.device',
-            'virtualization.virtualmachine',
-            'ipam.service',
-        ],
-
-        # Object types to refuse even when an installed plugin registered them
-        # through `registry.register_assignable_models()`. Registration comes
-        # from code rather than from the operator, so this is what keeps the
-        # allowlist theirs: deny wins over both the list above and the registry.
-        'assignable_models_deny': [],
-
-        # Persist non-secret public material (public keys, certificates) in
-        # NetBox. Disabling this gives up the zero-read expiry dashboard.
-        'store_public_material': True,
-
-        # DRF throttle rate for the reveal endpoint, per user.
-        'reveal_rate_limit': '30/hour',
-
-        # Seconds a revealed secret is considered valid by consumers. Also the
-        # ceiling applied to CredentialPolicy.max_reveal_ttl.
-        'reveal_ttl': 300,
-
-        # Fallback TTL (seconds) for a cached OpenBao token when the login
-        # response carries no lease duration.
-        'token_cache_ttl': 3600,
-
-        # Days of CredentialAccessLog history retained by AccessLogPruneJob.
-        'audit_retention_days': 365,
-
-        # Allow the plugin to generate key material server-side.
-        'allow_generation': True,
-        'default_ssh_key_type': 'ed25519',
-
-        # Optional second, human-readable path written alongside the canonical
-        # UUID path. Off by default: it is a consistency liability.
-        'path_alias_template': None,
-
-        # Days before expiry at which ExpiryScanJob raises an event.
-        'expiry_warning_days': [30, 14, 7, 1],
-
-        # Background job intervals, in minutes. Read at import time by the
-        # @system_job decorators in jobs.py.
-        'engine_health_interval': 5,
-        'expiry_scan_interval': 1440,
-        'credential_verify_interval': 1440,
-        'rotation_due_interval': 1440,
-        'access_log_prune_interval': 10080,
-    }
+    default_settings = {}
 
     def ready(self):
         # super().ready() resolves the conventional resource paths for us:

@@ -51,7 +51,7 @@ API_TOKEN_PEPPERS = {
 
 DEVELOPER = True          # required for makemigrations
 PLUGINS = ['netbox_rpc', 'netbox_openbao']
-PLUGINS_CONFIG = {'netbox_rpc': {}, 'netbox_openbao': {}}
+PLUGINS_CONFIG = {'netbox_rpc': {}}
 ```
 
 The checkout above is the exact NetBox 4.7 beta certification target. The
@@ -175,8 +175,8 @@ not listed there is built but unreachable.
 netbox_openbao/
 ├── __init__.py          PluginConfig
 ├── choices.py           ChoiceSets
-├── config.py            cached settings-row and PLUGINS_CONFIG fallback
-├── models/              settings, clusters, engines, policies, credentials, assignments, audit
+├── config.py            cached settings-row and model-default resolution
+├── models/              settings, encrypted auth, clusters, engines, policies, credentials, assignments, audit
 ├── administration/      capability discovery, transport boundary, audit, parity manifest
 ├── backends/            SecretBackend ABC, OpenBao/Vault/broker implementations, exceptions
 ├── secrets/             type registry, cryptography extractors, generators

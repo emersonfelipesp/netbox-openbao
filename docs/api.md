@@ -35,8 +35,10 @@ internal automation resolution receipts have no CRUD endpoint.
 | `GET /clusters/{id}/final-resources/` | Return permission-filtered lease, tool, token, and UI-header operations |
 | `POST /clusters/{id}/final-resources/operate/` | Execute one reviewed final operation with typed fields, digest freshness, audit, and impact confirmation |
 | `GET /clusters/{id}/final-conformance/` | Compare runtime OpenAPI with the pinned OpenBao 2.6.2 final-operation fixture |
-| `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/` | Singleton runtime configuration; deletion is refused while any credential exists and requires the standard `OpenBaoSettings` model permissions |
+| `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/`, `GET/PATCH /settings/singleton/` | Singleton runtime configuration. The singleton action applies object restrictions, requires add permission when PATCH creates the row, honors `If-Match`, and runs the same post-save conformance checks as ordinary writes. Deletion is refused while any credential exists. |
+| `GET/PATCH /settings/singleton/` | Read effective model defaults without creating a row, or create/update the singleton |
 | `GET/POST /engines/` | Secret engines |
+| `GET/POST /auth-material/`, `GET/PATCH/DELETE /auth-material/{id}/` | Owner-scoped encrypted authentication; values are write-only and responses expose only configured/missing booleans |
 | `GET /engines/{id}/health/` | Probe and record engine status |
 | `GET/POST /policies/` | Credential policy tiers |
 | `GET/POST /credentials/` | Credential inventory; supports exact `import_source` provenance filtering |
@@ -55,7 +57,8 @@ internal automation resolution receipts have no CRUD endpoint.
 Cluster inventory separates an OpenBao API endpoint and namespace from an
 individual `SecretEngine` mount. The list and detail representations include
 only connection configuration and observed metadata. Authentication material
-comes from the cluster-derived environment prefix and is never serialized.
+is managed through `/auth-material/`; secret inputs are write-only and output
+contains only `<field>_configured` booleans.
 
 `GET /clusters/{id}/capabilities/` requires both normal API authentication and
 the object-constrainable `netbox_openbao.discover_openbaocluster` action. Its

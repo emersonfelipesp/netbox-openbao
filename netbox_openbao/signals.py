@@ -9,9 +9,33 @@ from django.db.models.signals import post_delete, post_save, pre_delete, pre_sav
 from django.dispatch import receiver
 
 from .backends.exceptions import OpenBaoError
-from .models import Credential, CredentialAssignment, OpenBaoSettings
+from .models import Credential, CredentialAssignment, EngineAuthMaterial, OpenBaoSettings
 
 logger = logging.getLogger('netbox.plugins.netbox_openbao')
+
+
+@receiver([post_save, post_delete], sender=EngineAuthMaterial)
+def invalidate_auth_material_sessions(instance, **kwargs):
+    """Discard tokens and private TLS sessions only after the database commits."""
+    material_id = instance.pk
+    revision = instance.revision
+    previous_revision = getattr(instance, '_openbao_previous_revision', None)
+    deleted = kwargs.get('signal') is post_delete
+    using = kwargs.get('using')
+
+    def invalidate():
+        from django.core.cache import cache
+
+        from .backends.broker import close_auth_material_sessions as close_broker_sessions
+        from .backends.openbao import close_auth_material_sessions as close_direct_sessions
+
+        invalid_revision = revision if deleted else previous_revision
+        if material_id and invalid_revision is not None:
+            close_direct_sessions(material_id, invalid_revision)
+            close_broker_sessions(material_id, invalid_revision)
+            cache.delete(f'netbox_openbao:token:{material_id}:{invalid_revision}')
+
+    transaction.on_commit(invalidate, using=using)
 
 
 @receiver(pre_delete, sender=Credential)
@@ -74,11 +98,8 @@ def audit_settings_deletion(instance, **kwargs):
     """
     Deleting the row is a configuration change, not an absence of one.
 
-    Configuration falls back to `PLUGINS_CONFIG` and then the built-in defaults,
-    which can mean a different path prefix and weaker values such as generation
-    being permitted again. That is exactly the kind of change the log exists to
-    show, so it is recorded rather than leaving a gap where a settings row used
-    to be.
+    Configuration falls back to model defaults, which can mean a different
+    path prefix and weaker values such as generation being permitted again.
     """
     from netbox.context import current_request
 
@@ -88,7 +109,7 @@ def audit_settings_deletion(instance, **kwargs):
     log_settings_change(
         getattr(request, 'user', None),
         request=request,
-        message='Settings row deleted; configuration falls back to PLUGINS_CONFIG',
+        message='Settings row deleted; configuration falls back to model defaults',
     )
 
 

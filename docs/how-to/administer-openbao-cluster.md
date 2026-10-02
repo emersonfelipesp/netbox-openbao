@@ -21,9 +21,9 @@ infer any additional executable operation from capability discovery alone.
 3. Point the cluster URL at the active node or a trusted, OpenBao-aware load
    balancer. netbox-openbao disables HTTP redirects and never follows a leader
    URL reported by an upstream response.
-4. Configure the cluster-derived service identity outside the database. For a
-   slug of `prod-core`, use the `NETBOX_BAO_PROD_CORE_*` environment or file
-   variables described in [configuration](../configuration.md).
+4. Configure the cluster-owned encrypted service identity through the Settings
+   page, `/api/plugins/openbao/auth-material/`, or `openbao_configure auth
+   --cluster <slug>` as described in [configuration](../configuration.md).
 5. Grant `view_openbaocluster` and `discover_openbaocluster` only for clusters
    within the operator's scope. Grant each lifecycle permission separately.
 6. Confirm that OpenBao's own audit device is healthy. The NetBox audit records

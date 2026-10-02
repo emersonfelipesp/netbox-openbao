@@ -19,6 +19,7 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    EngineAuthMaterial,
     OpenBaoAdministrationLog,
     OpenBaoCluster,
     OpenBaoProcedureRun,
@@ -34,6 +35,7 @@ __all__ = (
     'CredentialFilterSet',
     'CredentialPolicyFilterSet',
     'CredentialTypeSchemaFilterSet',
+    'EngineAuthMaterialFilterSet',
     'OpenBaoProcedureRunFilterSet',
     'OpenBaoAdministrationLogFilterSet',
     'OpenBaoClusterFilterSet',
@@ -42,6 +44,13 @@ __all__ = (
     'ServiceEndpointFilterSet',
     'SSHPublicKeyFilterSet',
 )
+
+
+class EngineAuthMaterialFilterSet(BaseFilterSet):
+
+    class Meta:
+        model = EngineAuthMaterial
+        fields = ('id', 'engine_id', 'policy_id', 'cluster_id')
 
 
 class OpenBaoClusterFilterSet(NetBoxModelFilterSet):

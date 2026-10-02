@@ -10,7 +10,6 @@ material.
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.test import override_settings
 from django.urls import reverse
 from ipam.models import Service, ServiceTemplate
 from utilities.testing.views import ModelViewTestCase
@@ -20,7 +19,13 @@ from netbox_openbao import backends
 from netbox_openbao.backends.exceptions import OpenBaoConflict
 from netbox_openbao.backends.openbao import OpenBaoBackend
 from netbox_openbao.choices import CredentialTypeChoices
-from netbox_openbao.models import Credential, CredentialAssignment, CredentialPolicy, SecretEngine
+from netbox_openbao.models import (
+    Credential,
+    CredentialAssignment,
+    CredentialPolicy,
+    OpenBaoSettings,
+    SecretEngine,
+)
 from netbox_openbao.quickadd import quick_add_ssh
 from netbox_openbao.secrets.generators import generate_ssh_keypair
 
@@ -306,8 +311,8 @@ class QuickAddServiceTest(_QuickAddBase):
         )
         self.assertEqual(credential.key_type, 'ed25519')
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'default_ssh_key_type': 'ecdsa-p256'}})
     def test_configured_default_key_type_is_used(self):
+        OpenBaoSettings.objects.create(default_ssh_key_type='ecdsa-p256')
         credential, _s, _p = quick_add_ssh(
             self.device, self.policy, username='admin', generate=True,
         )

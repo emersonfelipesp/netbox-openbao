@@ -308,21 +308,19 @@ class AutomationPolicyConcurrencyTest(_AutomationFixture, TransactionTestCase):
         metadata_before = len(FakeBackend.metadata_calls)
 
         def inspect_backend(engine, policy):
-            observed.append((engine.api_url, policy.approle_env_prefix))
+            observed.append(engine.api_url)
             return get_backend(engine, policy)
 
         pids = Queue()
         with patch('netbox_openbao.services.get_backend', side_effect=inspect_backend), \
                 ThreadPoolExecutor(max_workers=1) as pool:
             with transaction.atomic():
-                policy = CredentialPolicy.objects.select_for_update().get(pk=self.policy.pk)
-                policy.approle_env_prefix = 'UPDATED_POLICY'
-                policy.save(update_fields=['approle_env_prefix'])
+                CredentialPolicy.objects.select_for_update().get(pk=self.policy.pk)
                 type(self.engine).objects.filter(pk=self.engine.pk).update(api_url='https://new-engine.invalid')
                 future = pool.submit(self.write_in_thread, pids)
                 self.wait_for_block(pids.get(timeout=10))
             future.result(timeout=10)
-        expected = ('https://new-engine.invalid', 'UPDATED_POLICY')
+        expected = 'https://new-engine.invalid'
         self.assertEqual(observed, [expected, expected])
         self.assertEqual(len(FakeBackend.metadata_calls) - metadata_before, 1)
 
@@ -331,7 +329,6 @@ class AutomationPolicyConcurrencyTest(_AutomationFixture, TransactionTestCase):
 
         stale_engine, stale_policy = self.credential.engine, self.credential.policy
         type(self.engine).objects.filter(pk=self.engine.pk).update(api_url='https://fresh-engine.invalid')
-        CredentialPolicy.objects.filter(pk=self.policy.pk).update(approle_env_prefix='FRESH_POLICY')
         observed = []
         metadata_before = len(FakeBackend.metadata_calls)
 
@@ -341,12 +338,12 @@ class AutomationPolicyConcurrencyTest(_AutomationFixture, TransactionTestCase):
             return self.credential
 
         def inspect_backend(engine, policy):
-            observed.append((engine.api_url, policy.approle_env_prefix))
+            observed.append(engine.api_url)
             return get_backend(engine, policy)
 
         with patch('netbox_openbao.services.get_backend', side_effect=inspect_backend):
             store_credential(persist, 'password', {'password': 'fresh-value'}, cas=1,
                              subject=self.credential)
-        expected = ('https://fresh-engine.invalid', 'FRESH_POLICY')
+        expected = 'https://fresh-engine.invalid'
         self.assertEqual(observed, [expected, expected])
         self.assertEqual(len(FakeBackend.metadata_calls) - metadata_before, 1)

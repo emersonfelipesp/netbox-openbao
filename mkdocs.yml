@@ -131,6 +131,7 @@ nav:
   - Home: index.md
   - Getting started:
       - Installation: installation.md
+      - Upgrading: upgrading.md
       - Configuration: configuration.md
       - Your first credential: getting-started/first-credential.md
   - Architecture:

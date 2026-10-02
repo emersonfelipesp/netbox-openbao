@@ -46,6 +46,7 @@ from netbox_openbao.models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    EngineAuthMaterial,
     OpenBaoAdministrationLog,
     OpenBaoCluster,
     OpenBaoProcedureRun,
@@ -54,6 +55,7 @@ from netbox_openbao.models import (
     ServiceEndpoint,
     SSHPublicKey,
 )
+from netbox_openbao.models.auth import AUTH_MATERIAL_FIELDS
 from netbox_openbao.rpc import ENGINE_BOUND_PARAM_KEYS, OPENBAO_READ_PROCEDURES, OPENBAO_WRITE_PROCEDURES
 from netbox_openbao.secrets.registry import validate_payload
 from netbox_openbao.utils import assignable_content_types
@@ -67,6 +69,7 @@ __all__ = (
     'QuickAddSSHRequestSerializer',
     'QuickAddSSHResponseSerializer',
     'CredentialTypeSchemaSerializer',
+    'EngineAuthMaterialSerializer',
     'RevealResponseSerializer',
     'RevealRequestSerializer',
     'RunProcedureSerializer',
@@ -85,6 +88,109 @@ __all__ = (
     'SSHPublicKeySerializer',
 )
 
+
+class EngineAuthMaterialSerializer(BaseModelSerializer):
+    """Write-only auth material with boolean configuration status."""
+
+    engine = serializers.PrimaryKeyRelatedField(
+        queryset=SecretEngine.objects.all(), required=False, allow_null=True,
+    )
+    policy = serializers.PrimaryKeyRelatedField(
+        queryset=CredentialPolicy.objects.all(), required=False, allow_null=True,
+    )
+    cluster = serializers.PrimaryKeyRelatedField(
+        queryset=OpenBaoCluster.objects.all(), required=False, allow_null=True,
+    )
+    clear_fields = serializers.ListField(
+        child=serializers.ChoiceField(choices=AUTH_MATERIAL_FIELDS),
+        required=False,
+        write_only=True,
+    )
+    role_id = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, write_only=True)
+    secret_id = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, write_only=True)
+    token = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, write_only=True)
+    k8s_role = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, write_only=True)
+    k8s_jwt_path = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, write_only=True)
+    client_cert = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, write_only=True)
+    client_key = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, write_only=True)
+    role_id_configured = serializers.SerializerMethodField()
+    secret_id_configured = serializers.SerializerMethodField()
+    token_configured = serializers.SerializerMethodField()
+    k8s_role_configured = serializers.SerializerMethodField()
+    k8s_jwt_path_configured = serializers.SerializerMethodField()
+    client_cert_configured = serializers.SerializerMethodField()
+    client_key_configured = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EngineAuthMaterial
+        fields = (
+            'id', 'engine', 'policy', 'cluster', 'revision', 'ciphertext_version',
+            *(f'{name}_configured' for name in AUTH_MATERIAL_FIELDS),
+            *AUTH_MATERIAL_FIELDS,
+            'clear_fields', 'created', 'last_updated',
+        )
+        read_only_fields = (
+            'revision', 'ciphertext_version',
+            *(f'{name}_configured' for name in AUTH_MATERIAL_FIELDS),
+            'created', 'last_updated',
+        )
+
+    def get_role_id_configured(self, obj):
+        return obj.is_configured('role_id')
+
+    def get_secret_id_configured(self, obj):
+        return obj.is_configured('secret_id')
+
+    def get_token_configured(self, obj):
+        return obj.is_configured('token')
+
+    def get_k8s_role_configured(self, obj):
+        return obj.is_configured('k8s_role')
+
+    def get_k8s_jwt_path_configured(self, obj):
+        return obj.is_configured('k8s_jwt_path')
+
+    def get_client_cert_configured(self, obj):
+        return obj.is_configured('client_cert')
+
+    def get_client_key_configured(self, obj):
+        return obj.is_configured('client_key')
+
+    def validate(self, attrs):
+        clear_fields = set(attrs.get('clear_fields', ()))
+        overlap = clear_fields.intersection(
+            name for name in AUTH_MATERIAL_FIELDS if attrs.get(name)
+        )
+        if overlap:
+            raise serializers.ValidationError({
+                'clear_fields': f'Cannot set and clear: {", ".join(sorted(overlap))}.'
+            })
+        return attrs
+
+    def create(self, validated_data):
+        return self._save_material(EngineAuthMaterial(), validated_data)
+
+    def update(self, instance, validated_data):
+        return self._save_material(instance, validated_data)
+
+    @staticmethod
+    def _save_material(instance, validated_data):
+        clear_fields = validated_data.pop('clear_fields', ())
+        values = {
+            name: validated_data.pop(name)
+            for name in AUTH_MATERIAL_FIELDS
+            if name in validated_data
+        }
+        for name, value in validated_data.items():
+            setattr(instance, name, value)
+        for name in clear_fields:
+            instance.clear_secret(name)
+        for name, value in values.items():
+            if value:
+                instance.set_secret(name, value)
+        instance.full_clean()
+        instance.save()
+        return instance
 
 class _ClusterConfirmationSerializer(serializers.Serializer):
     reason = serializers.CharField(min_length=3, max_length=1000, trim_whitespace=True)
@@ -354,7 +460,7 @@ class OpenBaoClusterSerializer(PrimaryModelSerializer):
             'id', 'url', 'display_url', 'display', 'name', 'slug', 'backend', 'api_url',
             'namespace', 'auth_method', 'tls_verify', 'ca_cert_path', 'host_device',
             'status', 'status_message', 'last_checked', 'openbao_version',
-            'capability_digest', 'capabilities_checked', 'env_prefix', 'mount_count',
+            'capability_digest', 'capabilities_checked', 'mount_count',
             'description', 'owner', 'comments', 'tags', 'custom_fields', 'created', 'last_updated',
         )
         brief_fields = ('id', 'url', 'display', 'name', 'slug', 'status', 'description')
@@ -401,7 +507,7 @@ class SecretEngineSerializer(PrimaryModelSerializer):
             'id', 'url', 'display_url', 'display', 'name', 'slug', 'cluster', 'backend',
             'api_url', 'namespace', 'host_device',
             'kv_mount', 'kv_version', 'auth_method', 'tls_verify', 'ca_cert_path', 'is_default', 'status',
-            'status_message', 'last_checked', 'env_prefix', 'credential_count', 'description', 'owner',
+            'status_message', 'last_checked', 'credential_count', 'description', 'owner',
             'comments', 'tags', 'custom_fields', 'created', 'last_updated',
         )
         brief_fields = ('id', 'url', 'display', 'name', 'slug', 'description')
@@ -414,6 +520,10 @@ class OpenBaoSettingsSerializer(NetBoxModelSerializer):
     url = serializers.HyperlinkedIdentityField(
         view_name='plugins-api:netbox_openbao-api:openbaosettings-detail'
     )
+    source = serializers.SerializerMethodField()
+
+    def get_source(self, obj):
+        return 'saved' if obj.pk else 'default'
 
     def validate(self, data):
         data = super().validate(data)
@@ -426,7 +536,7 @@ class OpenBaoSettingsSerializer(NetBoxModelSerializer):
     class Meta:
         model = OpenBaoSettings
         fields = (
-            'id', 'url', 'display', 'singleton_key',
+            'id', 'url', 'display', 'source', 'singleton_key',
             'path_prefix', 'assignable_models', 'assignable_models_deny',
             'store_public_material', 'reveal_rate_limit', 'reveal_ttl',
             'token_cache_ttl', 'audit_retention_days', 'allow_generation',
@@ -437,7 +547,7 @@ class OpenBaoSettingsSerializer(NetBoxModelSerializer):
             'created', 'last_updated',
         )
         brief_fields = ('id', 'url', 'display')
-        read_only_fields = ('singleton_key',)
+        read_only_fields = ('source', 'singleton_key',)
 
 
 class CredentialPolicySerializer(OrganizationalModelSerializer):
@@ -449,7 +559,7 @@ class CredentialPolicySerializer(OrganizationalModelSerializer):
         model = CredentialPolicy
         fields = (
             'id', 'url', 'display_url', 'display', 'name', 'slug', 'engine', 'openbao_policy',
-            'approle_env_prefix', 'groups', 'max_reveal_ttl', 'require_reason', 'credential_count',
+            'groups', 'max_reveal_ttl', 'require_reason', 'credential_count',
             'description', 'owner', 'tags', 'custom_fields', 'created', 'last_updated',
         )
         brief_fields = ('id', 'url', 'display', 'name', 'slug', 'description')

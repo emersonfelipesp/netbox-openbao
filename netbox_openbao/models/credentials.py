@@ -270,9 +270,8 @@ class Credential(PrimaryModel):
         return self._path_for_prefix(get_config('path_prefix', 'netbox'))
 
     def _path_for_prefix(self, prefix):
-        # The fallback can come from legacy PLUGINS_CONFIG rather than the
-        # validated settings row. Validate every derivation so an unsafe legacy
-        # value fails closed instead of reaching a backend path.
+        # Validate every derivation so a value written through an unsupported
+        # ORM path fails closed instead of reaching a backend path.
         from netbox_openbao.models.settings import validate_path_prefix
 
         validate_path_prefix(prefix)

@@ -126,20 +126,6 @@ settings_item = PluginMenuItem(
     link='plugins:netbox_openbao:openbaosettings_list',
     link_text='Settings',
     permissions=['netbox_openbao.view_openbaosettings'],
-    buttons=(
-        # The seeding migration deliberately leaves the row absent on a
-        # deployment running the defaults, so a fresh install lands on an empty
-        # list with no discoverable way in. The permission gate is not enough on
-        # its own — the form also refuses a second row, because reaching this
-        # page on a configured install would otherwise hit the unique
-        # constraint and surface as a server error rather than a message.
-        PluginMenuButton(
-            link='plugins:netbox_openbao:openbaosettings_add',
-            title='Configure',
-            icon_class='mdi mdi-plus-thick',
-            permissions=['netbox_openbao.add_openbaosettings'],
-        ),
-    ),
 )
 
 menu = PluginMenu(

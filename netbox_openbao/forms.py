@@ -56,6 +56,7 @@ from .models import (
     CredentialAssignment,
     CredentialPolicy,
     CredentialTypeSchema,
+    EngineAuthMaterial,
     OpenBaoCluster,
     OpenBaoProcedureRun,
     OpenBaoSettings,
@@ -63,6 +64,7 @@ from .models import (
     ServiceEndpoint,
     SSHPublicKey,
 )
+from .models.auth import AUTH_MATERIAL_FIELDS
 from .models.settings import STATIC_INTERVAL_SETTINGS
 from .rpc import OPENBAO_READ_PROCEDURES, OPENBAO_WRITE_PROCEDURES
 from .secrets.generators import generate_ssh_keypair
@@ -80,6 +82,7 @@ __all__ = (
     'CredentialPolicyForm',
     'QuickAddSSHForm',
     'CredentialTypeSchemaForm',
+    'EngineAuthMaterialForm',
     'SecretEngineFilterForm',
     'SecretEngineForm',
     'ServiceEndpointFilterForm',
@@ -91,6 +94,60 @@ __all__ = (
     'OpenBaoClusterFilterForm',
     'OpenBaoClusterForm',
 )
+
+
+class EngineAuthMaterialForm(forms.ModelForm):
+    """Write-only editor for an engine, policy, or cluster service identity."""
+
+    fieldsets = (
+        FieldSet('engine', 'policy', 'cluster', name=_('Scope')),
+        FieldSet(
+            'role_id', 'clear_role_id', 'secret_id', 'clear_secret_id',
+            'token', 'clear_token', 'k8s_role', 'clear_k8s_role',
+            'k8s_jwt_path', 'clear_k8s_jwt_path',
+            'client_cert', 'clear_client_cert', 'client_key', 'clear_client_key',
+            name=_('Write-only authentication material'),
+        ),
+    )
+
+    class Meta:
+        model = EngineAuthMaterial
+        fields = ('engine', 'policy', 'cluster')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['engine'].required = False
+        self.fields['policy'].required = False
+        self.fields['cluster'].required = False
+        for name in AUTH_MATERIAL_FIELDS:
+            self.fields[name] = forms.CharField(
+                required=False,
+                label=name.replace('_', ' ').title(),
+                widget=forms.PasswordInput(render_value=False, attrs={'autocomplete': 'new-password'}),
+                help_text=_('Leave blank to keep the stored value.'),
+            )
+            self.fields[f'clear_{name}'] = forms.BooleanField(
+                required=False,
+                label=_('Clear %(name)s') % {'name': name.replace('_', ' ')},
+            )
+
+    def clean(self):
+        cleaned = super().clean() or self.cleaned_data
+        for name in AUTH_MATERIAL_FIELDS:
+            if cleaned.get(name) and cleaned.get(f'clear_{name}'):
+                self.add_error(f'clear_{name}', _('Cannot set and clear the same value.'))
+        return cleaned
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        for name in AUTH_MATERIAL_FIELDS:
+            if self.cleaned_data.get(f'clear_{name}'):
+                instance.clear_secret(name)
+            elif value := self.cleaned_data.get(name):
+                instance.set_secret(name, value)
+        if commit:
+            instance.save()
+        return instance
 
 
 class OpenBaoClusterForm(PrimaryModelForm):
@@ -245,7 +302,7 @@ class CredentialPolicyForm(OrganizationalModelForm):
 
     fieldsets = (
         FieldSet('name', 'slug', 'engine', 'openbao_policy', 'description', name=_('Policy')),
-        FieldSet('approle_env_prefix', 'groups', name=_('Authorization')),
+        FieldSet('groups', name=_('Authorization')),
         FieldSet('max_reveal_ttl', 'require_reason', name=_('Reveal controls')),
         FieldSet('tags', name=_('Tags')),
     )
@@ -253,7 +310,7 @@ class CredentialPolicyForm(OrganizationalModelForm):
     class Meta:
         model = CredentialPolicy
         fields = (
-            'name', 'slug', 'engine', 'openbao_policy', 'approle_env_prefix', 'groups', 'max_reveal_ttl',
+            'name', 'slug', 'engine', 'openbao_policy', 'groups', 'max_reveal_ttl',
             'require_reason', 'description', 'tags',
         )
 
@@ -876,11 +933,8 @@ class OpenBaoSettingsForm(NetBoxModelForm):
     that will be rejected on save is a worse experience than saying why up
     front. See `OpenBaoSettings._validate_prefix_change`.
 
-    The five interval fields are shown disabled with an explanatory help text.
-    They are stored on the model so the rescheduling work needs no second
-    migration, but the decorators still read `PLUGINS_CONFIG` at import, so an
-    edit here would appear to apply and then revert at the next worker restart.
-    An honestly disabled field beats a field that lies.
+    Job interval changes are saved immediately and take effect when workers
+    restart and import the system-job declarations again.
     """
 
     fieldsets = (
@@ -932,14 +986,10 @@ class OpenBaoSettingsForm(NetBoxModelForm):
         from netbox_openbao.models.credentials import Credential
 
         for name in STATIC_INTERVAL_SETTINGS:
-            field = self.fields.get(name)
-            if field is None:
-                continue
-            field.disabled = True
-            field.help_text = _(
-                'Read from PLUGINS_CONFIG at startup and applied when the worker starts. '
-                'Editing it here would not take effect, so it is shown for reference only.'
-            )
+            if field := self.fields.get(name):
+                field.help_text = _(
+                    'Saved in the database. Restart NetBox workers to apply this schedule.'
+                )
 
         prefix_field = self.fields.get('path_prefix')
         if prefix_field is not None and Credential.objects.exists():

@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.contrib.contenttypes.models import ContentType
-from django.test import override_settings
 from django.urls import reverse
 from users.models import ObjectPermission
 from utilities.testing import APITestCase
@@ -25,6 +24,7 @@ from netbox_openbao.models import (
     CredentialAccessLog,
     CredentialAssignment,
     CredentialPolicy,
+    OpenBaoSettings,
     SecretEngine,
 )
 from netbox_openbao.services import write_material
@@ -446,8 +446,8 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
         self.assertEqual(CredentialAssignment.objects.count(), assignments_before)
         self.assertEqual(FakeBackend.store, writes_before)
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'assignable_models_deny': ['dcim.device']}})
     def test_live_assignable_model_deny_rejects_target_before_mutation(self):
+        OpenBaoSettings.objects.create(assignable_models_deny=['dcim.device'])
         self.grant()
         clear_config()
         self.addCleanup(clear_config)
@@ -669,8 +669,8 @@ class RevealThrottleTest(OpenBaoAPITestCase):
         cache.clear()
         self.addCleanup(cache.clear)
 
-    @override_settings(PLUGINS_CONFIG={'netbox_openbao': {'reveal_rate_limit': '2/hour'}})
     def test_reveal_is_rate_limited(self):
+        OpenBaoSettings.objects.create(reveal_rate_limit='2/hour')
         self.add_permissions('netbox_openbao.view_credential', 'netbox_openbao.reveal_credential')
         url = self.reveal_url()
 

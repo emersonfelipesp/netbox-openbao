@@ -36,12 +36,13 @@ class CredentialPolicy(OrganizationalModel):
         max_length=200,
         help_text=_('Name of the policy in OpenBao that this tier maps to, e.g. netbox-prod-core'),
     )
-    approle_env_prefix = models.CharField(
-        verbose_name=_('AppRole environment prefix'),
+    legacy_approle_env_prefix = models.CharField(
+        verbose_name=_('legacy AppRole environment prefix'),
         max_length=100,
         blank=True,
+        editable=False,
         help_text=_(
-            "Environment variable prefix for this tier's AppRole. Defaults to the engine's prefix when blank."
+            'Retained only so the explicit one-time environment import can locate legacy tier credentials.'
         ),
     )
     groups = models.ManyToManyField(
@@ -63,7 +64,7 @@ class CredentialPolicy(OrganizationalModel):
         help_text=_('Force callers to supply a justification, recorded in the access log, on every reveal'),
     )
 
-    clone_fields = ('engine', 'openbao_policy', 'approle_env_prefix', 'max_reveal_ttl', 'require_reason')
+    clone_fields = ('engine', 'openbao_policy', 'max_reveal_ttl', 'require_reason')
 
     class Meta:
         ordering = ('name',)
@@ -72,8 +73,3 @@ class CredentialPolicy(OrganizationalModel):
 
     def __str__(self):
         return self.name
-
-    @property
-    def env_prefix(self):
-        """The tier's AppRole prefix, falling back to the engine's."""
-        return self.approle_env_prefix or self.engine.env_prefix

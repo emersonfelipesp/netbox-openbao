@@ -314,7 +314,6 @@ class AuthenticationBackendTest(TestCase):
             ca_cert_path="",
             tls_verify=True,
             namespace="",
-            env_prefix="NETBOX_BAO_TEST",
         )
         self.backend = DirectAdministrationBackend(self.cluster)
         self.client = Mock(token="cluster-service-token")
