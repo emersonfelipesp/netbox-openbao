@@ -206,7 +206,7 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
 
 SSH credential types are assigned only to an `ipam.Service` (enforced in
 `CredentialAssignment.clean()`); quick-add builds that service from a
-`ServiceTemplate` (seeded `SSH`, `tcp/22`, migration `0023`) in the same
+`ServiceTemplate` (seeded `SSH`, `tcp/22`, migration `0024`) in the same
 transaction. `ipam.service` is in the default `assignable_models`; denying it makes SSH assignment fail with a clear error. NetBox 4.7+ only: no
 `protocol`/`ports` path exists.
 

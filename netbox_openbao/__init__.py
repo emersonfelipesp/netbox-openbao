@@ -11,7 +11,7 @@ than that ciphertext.
 
 from netbox.plugins import PluginConfig
 
-__version__ = '0.1.0.post2'
+__version__ = '0.2.0rc1'
 
 
 class NetBoxOpenBaoConfig(PluginConfig):

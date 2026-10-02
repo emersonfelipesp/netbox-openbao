@@ -1,11 +1,32 @@
 # Changelog
 
-## Unreleased
+## 0.2.0rc1 - 2026-10-02
 
+- **Upgrade action required.** OpenBao login material (AppRole role and secret
+  IDs, token, Kubernetes role, broker client certificate) and every plugin
+  setting now live in encrypted NetBox models instead of `PLUGINS_CONFIG` and
+  `NETBOX_BAO_*` environment variables. Runtime code no longer reads those
+  sources; only the one-time `openbao_configure import-legacy-settings` and
+  `import-env` commands do. Follow `docs/upgrading.md` in a maintenance window
+  before relying on the upgraded plugin; until authentication material is
+  stored, OpenBao access fails. Also added: a Settings page and API, and the
+  `openbao_configure` management command for headless setup, connection tests
+  and re-encryption after a `SECRET_KEY` rotation.
+- One consolidated migration, `0024_engine_auth_material`, covers everything
+  added since 0.1.0.post2: the service endpoint and credential schema models
+  with their seed, the unique credential import source constraint, the
+  idempotent `SSH` service template seed, each policy's former environment
+  prefix retained as non-executable metadata, and the encrypted authentication
+  material model. Databases that already recorded that name skip it.
+- Service endpoints and an SSH public-key inventory, a permission-constrained
+  metadata-only credential resolver, an atomic endpoint-with-credential write
+  and a revision-bound endpoint reveal. Provider-specific imports remain the
+  responsibility of consuming plugins.
 - SSH credentials (`ssh-keypair`, `ssh-password`) must now be tied to an SSH
   Application Service: the chain is OpenBao Credential > Application Service
   (`ipam.Service`) > Device or Virtual Machine. Assigning an SSH credential
-  directly to a Device or VM is rejected.
+  directly to a Device or VM is rejected (other targets such as hypervisor
+  endpoints are unaffected).
 - Added a seeded `SSH` service template (`tcp/22`). Quick-add now builds the
   Application Service from a chosen service template and creates the
   credential on the same form; the optional "create service" checkbox is gone
@@ -61,7 +82,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## 0.2.0rc1 - 2026-10-02 (detailed changes)
 
 ### Added
 

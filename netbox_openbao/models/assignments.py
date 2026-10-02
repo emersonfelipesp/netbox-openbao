@@ -14,6 +14,13 @@ SSH_CREDENTIAL_TYPES = (
     CredentialTypeChoices.TYPE_SSH_PASSWORD,
 )
 
+# Objects an SSH credential must never be bound to directly: it reaches them
+# through the Application Service that exposes SSH on them.
+DIRECT_SSH_FORBIDDEN_TARGETS = (
+    ('dcim', 'device'),
+    ('virtualization', 'virtualmachine'),
+)
+
 
 class CredentialAssignment(NetBoxModel):
     """
@@ -110,17 +117,33 @@ class CredentialAssignment(NetBoxModel):
         # An SSH credential authenticates against an SSH endpoint, so it is
         # bound to the Application Service that models that endpoint rather
         # than to the Device or VM directly (Credential > Service > Device/VM).
-        if self.assigned_object_type_id and self.credential_id:
-            is_service = (
-                self.assigned_object_type.app_label == 'ipam'
-                and self.assigned_object_type.model == 'service'
-            )
-            # New assignments only: existing direct rows stay editable so a
-            # production estate is never left unable to save legacy data.
-            if self._state.adding and self.credential.credential_type in SSH_CREDENTIAL_TYPES and not is_service:
-                raise ValidationError({
-                    'assigned_object_type': _(
-                        'SSH credentials must be assigned to an SSH Application Service, '
-                        'not directly to a device or virtual machine.'
-                    ),
-                })
+        if self._is_new_direct_ssh_binding():
+            # A non-field error: the NetBox 4.7 edit form exposes `assigned_object`
+            # rather than `assigned_object_type`, and an error keyed to a field the
+            # form lacks would surface as a server error instead of a message.
+            raise ValidationError(_(
+                'SSH credentials must be assigned to an SSH Application Service, '
+                'not directly to a device or virtual machine.'
+            ))
+
+    def _is_new_direct_ssh_binding(self):
+        """Whether this row binds an SSH credential straight to a device or VM, as a new binding.
+
+        Only a legacy binding that is unchanged (same credential, same target)
+        is exempt, so a production estate can still edit descriptions and other
+        fields of existing rows. Adding a row, retargeting it, or swapping its
+        credential to create a forbidden binding is rejected.
+        """
+        if not (self.assigned_object_type_id and self.credential_id):
+            return False
+        target = (self.assigned_object_type.app_label, self.assigned_object_type.model)
+        if self.credential.credential_type not in SSH_CREDENTIAL_TYPES or target not in DIRECT_SSH_FORBIDDEN_TARGETS:
+            return False
+        if self._state.adding:
+            return True
+        persisted = (
+            type(self).objects.filter(pk=self.pk)
+            .values_list('credential_id', 'assigned_object_type_id', 'assigned_object_id')
+            .first()
+        )
+        return persisted != (self.credential_id, self.assigned_object_type_id, self.assigned_object_id)

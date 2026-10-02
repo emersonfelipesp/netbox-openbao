@@ -27,7 +27,7 @@ The chain is mandatory and always the same:
    credentials are **never** assigned directly to the Device or VM:
    `CredentialAssignment.clean()` rejects it, for the UI, REST and ORM alike.
 
-The `SSH` service template is created by migration `0023` if no template of that
+The `SSH` service template is created by migration `0024` if no template of that
 name exists, and is never overwritten. If an operator deletes it, pick or create
 another template in the form.
 

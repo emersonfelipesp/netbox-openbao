@@ -107,7 +107,7 @@ the credential import has caught up, rather than leaving the endpoint
 permanently uncredentialed.
 
 **`Credential.import_source` is protected by a partial unique constraint**
-(`import_source != ''`; migration `0022`) — every writer stamps a globally
+(`import_source != ''`; migration `0024`) — every writer stamps a globally
 unique provenance string (`<app_label>.<Model>:<pk>` here, or a
 `<SOURCE_SYSTEM>:<id>` prefix for the separate `netbox_secrets` importer), so
 two rows sharing one non-blank value is always a bug. `_create_credential()`

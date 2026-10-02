@@ -89,7 +89,7 @@ class QuickAddServiceTest(_QuickAddBase):
 
         from django.apps import apps as django_apps
 
-        migration = importlib.import_module('netbox_openbao.migrations.0023_seed_ssh_service_template')
+        migration = importlib.import_module('netbox_openbao.migrations.0024_engine_auth_material')
         ServiceTemplate.objects.filter(name='SSH').delete()
         migration.seed_ssh_service_template(django_apps, None)
         self.assertEqual(ServiceTemplate.objects.get(name='SSH').port_mappings, ['tcp/22'])
@@ -212,6 +212,48 @@ class QuickAddServiceTest(_QuickAddBase):
         service = Service.objects.get(name='ssh')
         self.assertEqual(Service.objects.count(), 1)
         self._assert_tcp_ports(service, [22, 2222, 2200])
+
+    def test_existing_assignment_cannot_be_retargeted_to_a_device(self):
+        credential, service, _pub = quick_add_ssh(
+            self.device, self.policy, username='admin', generate=True,
+        )
+        assignment = CredentialAssignment.objects.get(credential=credential)
+        assignment.assigned_object_type = ContentType.objects.get_for_model(Device)
+        assignment.assigned_object_id = self.device.pk
+        with self.assertRaises(ValidationError):
+            assignment.full_clean()
+
+    def test_existing_device_assignment_cannot_switch_to_an_ssh_credential(self):
+        ssh_credential, _service, _pub = quick_add_ssh(
+            self.device, self.policy, username='admin', generate=True,
+        )
+        other = Credential.objects.create(
+            name='token', credential_type=CredentialTypeChoices.TYPE_API_TOKEN,
+            policy=self.policy, engine=self.policy.engine, path='token/1',
+        )
+        assignment = CredentialAssignment.objects.create(
+            credential=other,
+            assigned_object_type=ContentType.objects.get_for_model(Device),
+            assigned_object_id=self.device.pk, purpose='backup',
+        )
+        assignment.credential = ssh_credential
+        with self.assertRaises(ValidationError):
+            assignment.full_clean()
+
+    def test_credential_on_a_device_cannot_become_an_ssh_credential(self):
+        other = Credential.objects.create(
+            name='token', credential_type=CredentialTypeChoices.TYPE_API_TOKEN,
+            policy=self.policy, engine=self.policy.engine, path='token/2',
+        )
+        CredentialAssignment.objects.create(
+            credential=other,
+            assigned_object_type=ContentType.objects.get_for_model(Device),
+            assigned_object_id=self.device.pk, purpose='backup',
+        )
+        other.credential_type = CredentialTypeChoices.TYPE_SSH_PASSWORD
+        with self.assertRaises(ValidationError) as raised:
+            other.full_clean()
+        self.assertIn('credential_type', raised.exception.message_dict)
 
     def test_reuses_an_existing_service(self):
         quick_add_ssh(self.device, self.policy, username='admin', generate=True)
@@ -402,6 +444,26 @@ class QuickAddViewTest(_QuickAddBase):
         self.grant()
         response = self.client.get(self.url(self.device))
         self.assertEqual(response.status_code, 200)
+
+    def test_one_form_offers_the_service_template_port_and_credential(self):
+        """Template selection, port and credential live on the same form."""
+        self.grant()
+        response = self.client.get(self.url(self.device))
+        form = response.context['form']
+
+        # The seeded SSH template is preselected and feeds the port.
+        template = ServiceTemplate.objects.get(name='SSH')
+        self.assertEqual(form.fields['service_template'].initial, template.pk)
+        self.assertEqual(template.port_mappings, ['tcp/22'])
+        for field in ('service_template', 'service_name', 'port', 'username', 'policy', 'auth_method'):
+            self.assertIn(field, form.fields)
+
+        html = response.content.decode()
+        self.assertIn('SSH Application Service', html)
+        self.assertIn('name="service_template"', html)
+        self.assertIn('name="port"', html)
+        self.assertIn('name="username"', html)
+        self.assertEqual(html.count('<form'), html.count('</form>'))
 
     def test_generating_shows_the_public_key_once(self):
         self.grant()

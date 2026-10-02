@@ -208,7 +208,7 @@ class Credential(PrimaryModel):
             ),
             # Every non-blank `import_source` is a provenance marker stamped
             # by exactly one writer for exactly one source row (see
-            # migrations/0022_credential_import_source_unique.py); two rows
+            # migrations/0024_engine_auth_material.py); two rows
             # sharing one is always a duplicate claim, never a legitimate
             # shared value. Partial so credentials nobody imported (a blank
             # column) never collide with each other.
@@ -346,6 +346,37 @@ class Credential(PrimaryModel):
 
         if self.valid_from and self.valid_until and self.valid_from > self.valid_until:
             raise ValidationError({'valid_until': _('Validity window ends before it begins.')})
+
+        self._reject_ssh_type_with_direct_assignments()
+
+    def _reject_ssh_type_with_direct_assignments(self):
+        """Do not turn a credential into an SSH credential while it sits on a device or VM.
+
+        SSH credentials reach a device or VM through its SSH Application
+        Service. Changing a credential into an SSH type would otherwise create
+        a forbidden direct binding that the assignment check then treats as
+        unchanged legacy data. A credential that was already an SSH type keeps
+        its legacy bindings.
+        """
+        from django.db.models import Q
+
+        from netbox_openbao.models.assignments import DIRECT_SSH_FORBIDDEN_TARGETS, SSH_CREDENTIAL_TYPES
+
+        if self._state.adding or self.credential_type not in SSH_CREDENTIAL_TYPES:
+            return
+        persisted = type(self).objects.filter(pk=self.pk).values_list('credential_type', flat=True).first()
+        if persisted in SSH_CREDENTIAL_TYPES:
+            return
+        direct = Q()
+        for app_label, model in DIRECT_SSH_FORBIDDEN_TARGETS:
+            direct |= Q(assigned_object_type__app_label=app_label, assigned_object_type__model=model)
+        if self.assignments.filter(direct).exists():
+            raise ValidationError({
+                'credential_type': _(
+                    'This credential is assigned directly to a device or virtual machine; '
+                    'move it to an SSH Application Service before making it an SSH credential.'
+                ),
+            })
 
     def save(self, *args, **kwargs):
         # Repeated here for callers that bypass full_clean() (direct ORM use,

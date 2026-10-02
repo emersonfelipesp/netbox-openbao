@@ -24,7 +24,7 @@ def seed_nms_credential_schemas():
     """Create the `CredentialTypeSchema` rows the NMS import command's
     non-built-in credential types (`ssh_password`, `ssh_key`, ...) depend on.
 
-    Migration `0021_service_endpoints_and_credential_schemas` seeds these once
+    Migration `0024_engine_auth_material` seeds these once
     when the test database is built, but a `TransactionTestCase` — required
     for anything exercising real commit/rollback semantics, which the import
     command does — flushes all data after every test, seed rows included.
@@ -32,13 +32,13 @@ def seed_nms_credential_schemas():
     one fails with "Unknown credential type" for a slug the migration was
     supposed to guarantee.
 
-    This reuses migration 0021's own `SCHEMAS` and `_seeded_fields` rather
+    This reuses migration 0024's own `SCHEMAS` and `_seeded_fields` rather
     than restating the field lists, so the two cannot drift apart.
     """
     from netbox_openbao.models import CredentialTypeSchema
 
     migration = importlib.import_module(
-        'netbox_openbao.migrations.0021_service_endpoints_and_credential_schemas',
+        'netbox_openbao.migrations.0024_engine_auth_material',
     )
     existing = set(
         CredentialTypeSchema.objects.filter(slug__in=migration.SCHEMAS).values_list('slug', flat=True)

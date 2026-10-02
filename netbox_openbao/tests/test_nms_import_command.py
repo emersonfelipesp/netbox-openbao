@@ -28,7 +28,7 @@ class NMSImportCommandTest(OpenBaoTransactionTestCase):
     def setUp(self):
         super().setUp()
         # A TransactionTestCase flushes data after every test, including the
-        # CredentialTypeSchema rows migration 0021 seeds once when the test
+        # CredentialTypeSchema rows migration 0024 seeds once when the test
         # database is built. The import command's non-built-in credential
         # types ('ssh_password', 'ssh_key') depend on those rows existing.
         seed_nms_credential_schemas()

@@ -1,4 +1,5 @@
-"""Forward and reverse coverage for the service-endpoint/credential-schema seed migration."""
+"""Forward and reverse coverage for the service-endpoint/credential-schema seed and the
+import-source constraint, both folded into the single release migration."""
 
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
@@ -6,12 +7,12 @@ from django.test import TransactionTestCase
 
 
 class CredentialTypeSchemaSeedMigrationTest(TransactionTestCase):
-    """`0021_service_endpoints_and_credential_schemas` must never clobber an
+    """The release migration must never clobber an
     existing `CredentialTypeSchema` row, and its reverse must delete only the
     rows it created itself."""
 
     migrate_from = ('netbox_openbao', '0020_finalization_permissions')
-    migrate_to = ('netbox_openbao', '0021_service_endpoints_and_credential_schemas')
+    migrate_to = ('netbox_openbao', '0024_engine_auth_material')
 
     @staticmethod
     def _migrate(targets):
@@ -75,10 +76,10 @@ class CredentialTypeSchemaSeedMigrationTest(TransactionTestCase):
 
 
 class CredentialImportSourceUniqueMigrationTest(TransactionTestCase):
-    """`0022` must apply on a database that already holds duplicate provenance."""
+    """The release migration must apply on a database that already holds duplicate provenance."""
 
-    migrate_from = ('netbox_openbao', '0021_service_endpoints_and_credential_schemas')
-    migrate_to = ('netbox_openbao', '0022_credential_import_source_unique')
+    migrate_from = ('netbox_openbao', '0020_finalization_permissions')
+    migrate_to = ('netbox_openbao', '0024_engine_auth_material')
 
     def setUp(self):
         super().setUp()
