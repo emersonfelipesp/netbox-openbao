@@ -385,18 +385,6 @@ def defer_custom_metadata(credential_ids, *, using):
         transaction.on_commit(callback, using=using)
 
 
-def create_service_endpoint(**fields):
-    """Create or update endpoint metadata through the validated write boundary."""
-    from netbox_openbao.models import ServiceEndpoint
-
-    endpoint = fields.pop('instance', None) or ServiceEndpoint()
-    for name, value in fields.items():
-        setattr(endpoint, name, value)
-    endpoint.full_clean()
-    endpoint.save()
-    return endpoint
-
-
 def create_ssh_public_key(**fields):
     """Create or update public SSH material through the validated write boundary."""
     from netbox_openbao.models import SSHPublicKey

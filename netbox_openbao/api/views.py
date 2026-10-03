@@ -60,7 +60,7 @@ from netbox_openbao.backends import get_backend
 from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoError, OpenBaoMutationUnknown
 from netbox_openbao.choices import AccessActionChoices, SSHKeyTypeChoices
 from netbox_openbao.config import assignable_model_labels, get_config
-from netbox_openbao.endpoint_credentials import upsert_endpoint_with_credential
+from netbox_openbao.connection import service_connection
 from netbox_openbao.material_transactions import material_operation
 from netbox_openbao.models import (
     Credential,
@@ -74,7 +74,6 @@ from netbox_openbao.models import (
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
-    ServiceEndpoint,
     SSHPublicKey,
 )
 from netbox_openbao.quickadd import quick_add_ssh
@@ -90,7 +89,7 @@ from netbox_openbao.services import (
     stage_material,
     store_credential,
 )
-from netbox_openbao.synchronization import lock_material_subject, lock_material_subjects
+from netbox_openbao.synchronization import lock_credential_graph, lock_material_subject, lock_material_subjects
 
 from .access_views import AccessAdministrationMixin
 from .authentication_views import AuthenticationAdministrationMixin
@@ -99,14 +98,13 @@ from .engine_views import SecretEngineAdministrationMixin
 from .finalization_views import FinalizationAdministrationMixin
 from .permissions import ClusterActionPermissions, ProcedureActionPermissions, SecretActionPermissions
 from .serializers import (
+    AssignmentRevealRequestSerializer,
     ConfirmClusterActionSerializer,
     CredentialAccessLogSerializer,
     CredentialAssignmentSerializer,
     CredentialPolicySerializer,
     CredentialSerializer,
     CredentialTypeSchemaSerializer,
-    EndpointRevealRequestSerializer,
-    EndpointWithCredentialRequestSerializer,
     EngineAuthMaterialSerializer,
     InitializeClusterSerializer,
     JoinRaftSerializer,
@@ -122,7 +120,6 @@ from .serializers import (
     RevealRequestSerializer,
     RunProcedureSerializer,
     SecretEngineSerializer,
-    ServiceEndpointSerializer,
     SSHPublicKeySerializer,
     UnsealClusterSerializer,
 )
@@ -140,7 +137,6 @@ __all__ = (
     'OpenBaoClusterViewSet',
     'OpenBaoSettingsViewSet',
     'SecretEngineViewSet',
-    'ServiceEndpointViewSet',
     'SSHPublicKeyViewSet',
     'ResolveView',
 )
@@ -1174,6 +1170,7 @@ class CredentialViewSet(NetBoxModelViewSet):
                 port=data.get('port'),
                 service_template=data.get('service_template'),
                 service_name=data.get('service_name') or None,
+                ip_addresses=[data['ip_address']] if data.get('ip_address') else None,
                 user=request.user,
                 request=request,
                 conform=conform,
@@ -1718,56 +1715,50 @@ class CredentialAssignmentViewSet(NetBoxModelViewSet):
     serializer_class = CredentialAssignmentSerializer
     filterset_class = filtersets.CredentialAssignmentFilterSet
 
-
-class ServiceEndpointViewSet(NetBoxModelViewSet):
-    queryset = ServiceEndpoint.objects.select_related(
-        'assigned_object_type', 'credential', 'credential__policy',
-    ).prefetch_related('assigned_object')
-    serializer_class = ServiceEndpointSerializer
-    filterset_class = filtersets.ServiceEndpointFilterSet
-
     @staticmethod
-    def _authorize_with_credential(request, data):
-        """Object-level checks for the atomic endpoint-with-credential write."""
-        user = request.user
-        model = data['assigned_object_type'].model_class()
-        if model is None:
-            raise DRFValidationError({'assigned_object_type': 'Unknown object type.'})
-        target = get_object_or_404(model.objects.restrict(user, 'view'), pk=data['assigned_object_id'])
-        if not user.has_perm('netbox_openbao.add_serviceendpoint') or not user.has_perm(
-            'netbox_openbao.change_serviceendpoint'
-        ):
-            raise PermissionDenied('You may not create or change service endpoints.')
-        existing = data.get('existing_credential')
-        if existing is not None and not Credential.objects.restrict(user, 'view').filter(pk=existing.pk).exists():
-            raise PermissionDenied('The selected credential is not permitted.')
-        new = data.get('new_credential')
-        if new is not None:
-            if not user.has_perm('netbox_openbao.add_credential'):
-                raise PermissionDenied('You may not create credentials.')
-            if not CredentialPolicy.objects.restrict(user, 'view').filter(pk=new['policy'].pk).exists():
-                raise PermissionDenied('The selected credential policy is not permitted.')
-        return target
-
-    @staticmethod
-    def _endpoint_identity(endpoint):
+    def _assignment_identity(assignment):
         return {
-            'last_updated': endpoint.last_updated,
-            'object_type': f'{endpoint.assigned_object_type.app_label}.{endpoint.assigned_object_type.model}',
-            'object_id': endpoint.assigned_object_id,
-            'credential_id': endpoint.credential_id,
-            'enabled': (endpoint.options or {}).get('enabled') is not False,
+            'assignment_revision': assignment.last_updated,
+            'object_type': f'{assignment.assigned_object_type.app_label}.{assignment.assigned_object_type.model}',
+            'object_id': assignment.assigned_object_id,
+            'purpose': assignment.purpose,
+            'enabled': assignment.enabled,
         }
 
     @staticmethod
-    def _identity_mismatch(identity, credential, expected):
-        """Return the first expectation `identity`/`credential` fails, or None."""
+    def _connection_mismatch(assignment, expected):
+        """Fail when the caller approved a host or port the Application Service no longer has."""
+        from ipam.models import Service
+
+        service = Service.objects.filter(pk=assignment.assigned_object_id).first()
+        if assignment.assigned_object_type.model_class() is not Service:
+            # Only service assignments carry a connection; a direct target must not claim one.
+            return 'connection' if ('host' in expected or 'port' in expected) else None
+        if service is None:
+            return 'connection'
+        # A service assignment is revealed only for an explicitly approved, still usable connection.
+        if 'host' not in expected or 'port' not in expected:
+            return 'connection'
+        connection = service_connection(service)
+        if not connection.usable:
+            return connection.error
+        if connection.host != expected['host']:
+            return 'host'
+        if connection.port != expected['port']:
+            return 'port'
+        return None
+
+    @classmethod
+    def _identity_mismatch(cls, assignment, credential, expected):
+        """Return the first expectation the assignment or credential fails, or None."""
+        identity = cls._assignment_identity(assignment)
         checks = (
             ('enabled', identity['enabled'], True),
-            ('credential_id', identity['credential_id'], credential.pk),
-            ('endpoint_revision', identity['last_updated'], parse_datetime(expected['endpoint_revision'])),
+            ('credential_id', assignment.credential_id, credential.pk),
+            ('assignment_revision', identity['assignment_revision'], parse_datetime(expected['assignment_revision'])),
             ('object_type', identity['object_type'], expected['object_type']),
             ('object_id', identity['object_id'], expected['object_id']),
+            ('purpose', identity['purpose'], expected['purpose']),
             ('credential_uuid', str(credential.uuid), str(expected['credential_uuid'])),
             ('credential_type', credential.credential_type, expected['credential_type']),
         )
@@ -1779,64 +1770,85 @@ class ServiceEndpointViewSet(NetBoxModelViewSet):
         served = credential.live_kv_version if credential.live_kv_version is not None else credential.kv_version
         if served != expected['kv_version']:
             return 'kv_version'
-        return None
+        return cls._connection_mismatch(assignment, expected)
 
-    @extend_schema(request=EndpointRevealRequestSerializer)
+    @staticmethod
+    def _reauthorize(request, assignment, credential):
+        """Re-evaluate object permissions and the policy group gate from committed state."""
+        # NetBox caches object permissions on the user for the request; drop
+        # that cache so the check reads committed state.
+        request.user.__dict__.pop('_object_perm_cache', None)
+        if not (
+            CredentialAssignment.objects.restrict(request.user, 'view').filter(pk=assignment.pk).exists()
+            and Credential.objects.restrict(request.user, 'reveal').filter(pk=credential.pk).exists()
+        ):
+            raise PermissionDenied('The assignment or credential is no longer permitted.')
+        enforce_policy_access(
+            credential, request.user, CredentialViewSet._GATE_AUDIT_ACTION.get('reveal'), request=request,
+        )
+
+    @extend_schema(request=AssignmentRevealRequestSerializer)
     @action(
         detail=True, methods=['post'], url_path='reveal-credential', renderer_classes=[JSONRenderer],
         throttle_classes=[RevealRateThrottle], permission_classes=[SecretActionPermissions],
     )
     def reveal_credential(self, request, pk=None):
-        """Reveal an endpoint's credential only while the endpoint still matches the caller's approval.
+        """Reveal an assignment's credential only while the assignment still matches the caller's approval.
 
-        The endpoint's state (enabled, owner, revision) and the credential's
-        identity are verified before the audited reveal and re-verified after
-        it. If anything changed in between, no material is returned.
+        The assignment (enabled, owner, purpose, revision, and for a service
+        the host and port it resolves to) and the credential's identity are
+        verified before the audited reveal and re-verified after it. If
+        anything changed in between, no material is returned.
         """
-        params = EndpointRevealRequestSerializer(data=request.data)
+        params = AssignmentRevealRequestSerializer(data=request.data)
         params.is_valid(raise_exception=True)
         expected = params.validated_data
-        endpoint = get_object_or_404(
-            ServiceEndpoint.objects.restrict(request.user, 'view').select_related('assigned_object_type'), pk=pk,
+        assignment = get_object_or_404(
+            CredentialAssignment.objects.restrict(request.user, 'view').select_related('assigned_object_type'), pk=pk,
         )
-        if endpoint.credential_id is None:
-            return _no_store(Response({'detail': 'The endpoint has no credential.'}, status=status.HTTP_409_CONFLICT))
-        credential = CredentialViewSet()._authorize(request, endpoint.credential_id, 'reveal')
+        credential = CredentialViewSet()._authorize(request, assignment.credential_id, 'reveal')
         try:
             with transaction.atomic():
                 # Row locks make every concurrent disable, reassignment,
                 # deletion, or rotation wait until this reveal has finished, so
                 # the state verified here is the state the material is read in.
-                endpoint = ServiceEndpoint.objects.select_for_update().select_related(
+                # Lock order matches automation resolution: service, then
+                # credential, then assignment. Opposite orders deadlock.
+                if assignment.assigned_object_type.model == 'service':
+                    from ipam.models import Service
+
+                    list(Service.objects.select_for_update().filter(pk=assignment.assigned_object_id))
+                # Policy, engine and credential locks (the same graph automation
+                # takes) also hold back policy-group and tier changes.
+                credential = lock_credential_graph(credential.pk)
+                assignment = CredentialAssignment.objects.select_for_update().select_related(
                     'assigned_object_type',
-                ).get(pk=endpoint.pk)
-                credential = Credential.objects.select_for_update().get(pk=credential.pk)
-                # A permission revoked while this request waited for the locks
-                # must stop the reveal, so authorization is re-evaluated here.
-                # NetBox caches object permissions on the user for the request;
-                # drop that cache so the re-check reads committed state.
-                request.user.__dict__.pop('_object_perm_cache', None)
-                if not (
-                    ServiceEndpoint.objects.restrict(request.user, 'view').filter(pk=endpoint.pk).exists()
-                    and Credential.objects.restrict(request.user, 'reveal').filter(pk=credential.pk).exists()
-                ):
-                    raise PermissionDenied('The endpoint or credential is no longer permitted.')
-                mismatch = self._identity_mismatch(self._endpoint_identity(endpoint), credential, expected)
+                ).get(pk=assignment.pk)
+                self._reauthorize(request, assignment, credential)
+                mismatch = self._identity_mismatch(assignment, credential, expected)
                 if mismatch:
-                    return _no_store(Response({'detail': 'The endpoint no longer matches.', 'mismatch': mismatch},
+                    return _no_store(Response({'detail': 'The assignment no longer matches.', 'mismatch': mismatch},
                                               status=status.HTTP_409_CONFLICT))
                 data, ttl = reveal_material(
                     credential, request.user, request=request, reason=expected['reason'],
                     version=expected['kv_version'],
                 )
-        except ServiceEndpoint.DoesNotExist:
-            return _no_store(Response({'detail': 'The endpoint no longer exists.'}, status=status.HTTP_409_CONFLICT))
+                # Authorization and the service's IP or port may have changed
+                # during the backend read; withhold the material if so.
+                self._reauthorize(request, assignment, credential)
+                if self._connection_mismatch(assignment, expected):
+                    return _no_store(Response(
+                        {'detail': 'The service connection changed during the reveal.', 'mismatch': 'connection'},
+                        status=status.HTTP_409_CONFLICT,
+                    ))
+        except CredentialAssignment.DoesNotExist:
+            return _no_store(Response({'detail': 'The assignment no longer exists.'}, status=status.HTTP_409_CONFLICT))
         except DjangoValidationError as exc:
             raise _as_drf_validation_error(exc) from None
         except OpenBaoError as exc:
             return _no_store(Response({'detail': str(exc)}, status=exc.status_code or status.HTTP_502_BAD_GATEWAY))
         return _no_store(Response({
-            'endpoint_id': endpoint.pk,
+            'assignment_id': assignment.pk,
             'id': credential.pk,
             'uuid': str(credential.uuid),
             'credential_type': credential.credential_type,
@@ -1846,67 +1858,27 @@ class ServiceEndpointViewSet(NetBoxModelViewSet):
             'secret_data': data,
         }))
 
-    @extend_schema(request=EndpointWithCredentialRequestSerializer, responses={201: ServiceEndpointSerializer})
-    @action(detail=False, methods=['post'], url_path='with-credential', renderer_classes=[JSONRenderer])
-    @material_api_operation
-    @sensitive_variables()
-    def with_credential(self, request):
-        """Atomically create or update an endpoint and the credential it uses."""
-        serializer = EndpointWithCredentialRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-        target = self._authorize_with_credential(request, data)
-        endpoint_fields = {
-            key: data[key] for key in (
-                'service_type', 'host', 'port', 'options',
-                'ssh_known_hosts_entry', 'ssh_strict_host_key_checking',
-            )
-        }
-
-        def reauthorize():
-            # Authorization checked before the locks may be stale once they are
-            # held; drop NetBox's per-request permission cache and re-check.
-            request.user.__dict__.pop('_object_perm_cache', None)
-            self._authorize_with_credential(request, data)
-
-        def conform(credential):
-            # Runs after every lock is held, so re-check the whole request too.
-            reauthorize()
-            if not Credential.objects.restrict(request.user, 'view').filter(pk=credential.pk).exists():
-                raise ObjectDoesNotExist
-
-        try:
-            endpoint, _credential, created = upsert_endpoint_with_credential(
-                target, endpoint_fields,
-                existing_credential=data.get('existing_credential'),
-                new_credential=data.get('new_credential'),
-                idempotency_key=data.get('idempotency_key'),
-                user=request.user, request=request, conform=conform, reauthorize=reauthorize,
-            )
-        except ObjectDoesNotExist:
-            raise PermissionDenied('The credential is outside the permitted scope.') from None
-        except DjangoValidationError as exc:
-            raise _as_drf_validation_error(exc) from None
-        except OpenBaoMutationUnknown:
-            raise
-        except OpenBaoError:
-            return _no_store(Response(
-                {'detail': 'The service endpoint could not be saved.'}, status=status.HTTP_502_BAD_GATEWAY,
-            ))
-        body = ServiceEndpointSerializer(endpoint, context={'request': request}).data
-        return _no_store(Response(body, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK))
-
 
 class SSHPublicKeyViewSet(NetBoxModelViewSet):
-    queryset = SSHPublicKey.objects.select_related('user', 'service_endpoint')
+    queryset = SSHPublicKey.objects.select_related('user', 'application_service')
     serializer_class = SSHPublicKeySerializer
     filterset_class = filtersets.SSHPublicKeyFilterSet
 
 
 class ResolveView(APIView):
+    """Credentials reachable from an object, through its Application Services.
+
+    A device or virtual machine reaches its credentials through the Application
+    Services on it (Credential > Application Service > Device/VM). Each service
+    is reported with the host and port it resolves to, or with the reason it
+    cannot: the service must list exactly one IP address and one TCP port.
+    """
+
     permission_classes = (IsAuthenticated,)
 
     def get(self, request):
+        from ipam.models import Service
+
         object_type = request.query_params.get('object_type', '')
         object_id = request.query_params.get('object_id')
         if '.' not in object_type or not object_id:
@@ -1923,22 +1895,36 @@ class ResolveView(APIView):
         if not target_qs.filter(pk=object_id).exists():
             raise PermissionDenied('View permission is required for the assigned object.')
 
-        endpoints = ServiceEndpoint.objects.restrict(request.user, 'view').filter(
-            assigned_object_type=content_type, assigned_object_id=object_id,
-        ).select_related('credential')
+        service_ct = ContentType.objects.get_for_model(Service)
+        services = Service.objects.restrict(request.user, 'view').prefetch_related('ipaddresses')
+        if model_class is Service:
+            services = services.filter(pk=object_id)
+        else:
+            services = services.filter(parent_object_type=content_type, parent_object_id=object_id)
         if service_type := request.query_params.get('service_type'):
-            endpoints = endpoints.filter(service_type=service_type)
-        assignments = CredentialAssignment.objects.restrict(request.user, 'view').filter(
-            assigned_object_type=content_type, assigned_object_id=object_id,
-        ).select_related('credential')
-        if purpose := request.query_params.get('purpose'):
-            assignments = assignments.filter(purpose=purpose)
+            services = services.filter(name__iexact=service_type)
+        purpose = request.query_params.get('purpose')
+
         visible_credentials = set(
             Credential.objects.restrict(request.user, 'view').values_list('pk', flat=True)
         )
+        assignments = CredentialAssignment.objects.restrict(request.user, 'view').select_related('credential')
+        if purpose:
+            assignments = assignments.filter(purpose=purpose)
+        by_service = {}
+        for assignment in assignments.filter(
+            assigned_object_type=service_ct, assigned_object_id__in=services.values('pk'),
+        ):
+            by_service.setdefault(assignment.assigned_object_id, []).append(assignment)
+        direct = assignments.filter(assigned_object_type=content_type, assigned_object_id=object_id)
+
         return Response({
-            'service_endpoints': [self._endpoint(item, visible_credentials) for item in endpoints],
-            'credential_assignments': [self._assignment(item, visible_credentials) for item in assignments],
+            'services': [
+                self._service(service, by_service.get(service.pk, []), visible_credentials)
+                for service in services
+                if by_service.get(service.pk)
+            ],
+            'credential_assignments': [self._assignment(item, visible_credentials) for item in direct],
         })
 
     @staticmethod
@@ -1951,16 +1937,23 @@ class ResolveView(APIView):
             'credential_type': credential.credential_type,
             'username': credential.username,
             'reveal_url': f'/api/plugins/openbao/credentials/{credential.pk}/reveal/',
+            'kv_version': (
+                credential.live_kv_version if credential.live_kv_version is not None else credential.kv_version
+            ),
         }
 
     @classmethod
-    def _endpoint(cls, endpoint, visible_credentials):
+    def _service(cls, service, assignments, visible_credentials):
+        connection = service_connection(service)
         return {
-            'id': endpoint.pk, 'service_type': endpoint.service_type,
-            'host': endpoint.host, 'port': endpoint.port, 'options': endpoint.options,
-            'ssh_known_hosts_entry': endpoint.ssh_known_hosts_entry,
-            'ssh_strict_host_key_checking': endpoint.ssh_strict_host_key_checking,
-            'credential': cls._credential(endpoint.credential, visible_credentials),
+            'id': service.pk,
+            'name': service.name,
+            'service_type': service.name.lower(),
+            'host': connection.host,
+            'port': connection.port,
+            'error': connection.error,
+            'message': connection.message,
+            'assignments': [cls._assignment(item, visible_credentials) for item in assignments],
         }
 
     @classmethod
@@ -1968,6 +1961,9 @@ class ResolveView(APIView):
         return {
             'id': assignment.pk, 'purpose': assignment.purpose,
             'is_primary': assignment.is_primary, 'enabled': assignment.enabled,
+            'revision': assignment.last_updated,
+            'ssh_known_hosts_entry': assignment.ssh_known_hosts_entry,
+            'ssh_strict_host_key_checking': assignment.ssh_strict_host_key_checking,
             'credential': cls._credential(assignment.credential, visible_credentials),
         }
 

@@ -31,8 +31,6 @@ urlpatterns = (
     path('assignments/', include(get_model_urls('netbox_openbao', 'credentialassignment', detail=False))),
     path('assignments/<int:pk>/', include(get_model_urls('netbox_openbao', 'credentialassignment'))),
 
-    path('service-endpoints/', include(get_model_urls('netbox_openbao', 'serviceendpoint', detail=False))),
-    path('service-endpoints/<int:pk>/', include(get_model_urls('netbox_openbao', 'serviceendpoint'))),
     path('ssh-public-keys/', include(get_model_urls('netbox_openbao', 'sshpublickey', detail=False))),
     path('ssh-public-keys/<int:pk>/', include(get_model_urls('netbox_openbao', 'sshpublickey'))),
 

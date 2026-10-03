@@ -11,7 +11,6 @@ from .choices import (
     CredentialStatusChoices,
     EngineStatusChoices,
     PurposeChoices,
-    ServiceTypeChoices,
 )
 from .models import (
     Credential,
@@ -25,7 +24,6 @@ from .models import (
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
-    ServiceEndpoint,
     SSHPublicKey,
 )
 
@@ -41,7 +39,6 @@ __all__ = (
     'OpenBaoClusterFilterSet',
     'OpenBaoSettingsFilterSet',
     'SecretEngineFilterSet',
-    'ServiceEndpointFilterSet',
     'SSHPublicKeyFilterSet',
 )
 
@@ -253,28 +250,11 @@ class CredentialAssignmentFilterSet(NetBoxModelFilterSet):
         )
 
 
-class ServiceEndpointFilterSet(NetBoxModelFilterSet):
-    assigned_object_type = ContentTypeFilter()
-    service_type = django_filters.MultipleChoiceFilter(choices=ServiceTypeChoices)
-    credential_id = django_filters.ModelMultipleChoiceFilter(
-        field_name='credential', queryset=Credential.objects.all(), label=_('Credential (ID)'),
-    )
-
-    class Meta:
-        model = ServiceEndpoint
-        fields = ('id', 'assigned_object_id', 'host', 'port', 'ssh_strict_host_key_checking')
-
-    def search(self, queryset, name, value):
-        if not value.strip():
-            return queryset
-        return queryset.filter(Q(host__icontains=value) | Q(ssh_known_hosts_entry__icontains=value))
-
-
 class SSHPublicKeyFilterSet(NetBoxModelFilterSet):
     user_id = django_filters.ModelMultipleChoiceFilter(
         field_name='user', queryset=User.objects.all(), label=_('User (ID)'),
     )
-    service_endpoint_id = MultiValueNumberFilter(field_name='service_endpoint_id')
+    application_service_id = MultiValueNumberFilter(field_name='application_service_id')
 
     class Meta:
         model = SSHPublicKey

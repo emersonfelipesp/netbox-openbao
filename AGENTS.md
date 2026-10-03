@@ -207,7 +207,7 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
 SSH credential types are assigned only to an `ipam.Service` (enforced in
 `CredentialAssignment.clean()`); quick-add builds that service from a
 `ServiceTemplate` (seeded `SSH`, `tcp/22`, migration `0024`) in the same
-transaction. `ipam.service` is in the default `assignable_models`; denying it makes SSH assignment fail with a clear error. NetBox 4.7+ only: no
+transaction. Connecting needs exactly one IP and one TCP port on the service (`connection.py`). `ipam.service` is in the default `assignable_models`; denying it makes SSH assignment fail with a clear error. NetBox 4.7+ only: no
 `protocol`/`ports` path exists.
 
 ## Quick-add SSH password auth
@@ -557,68 +557,31 @@ NetBox 4.6.5 as the backward-regression target.
 
 ## When changing things
 
-- **Device, VM, and service credentials are owned here.** `ServiceEndpoint`
-  stores connection metadata, `SSHPublicKey` stores public material only, and
-  plaintext remains in OpenBao. Source-plugin imports use Django's app registry,
-  copy without deleting, and never introduce a Python import dependency on the
-  source plugins. Resolution returns metadata and reveal URLs only.
+- **Device, VM, and service credentials are owned here, and the Application
+  Service is the only connection model.** `ServiceEndpoint` was removed in 0.2.1.
+  `connection.service_connection()` resolves the host and port from the
+  `ipam.Service`: exactly one IP and exactly one TCP port, else a closed error
+  (`no_ip`, `multiple_ips`, `no_tcp_port`, `multiple_tcp_ports`). Never guess
+  among several. The SSH host-key pin lives on `CredentialAssignment`.
+  `SSHPublicKey` stores public material only and points at the service.
+  Resolution returns metadata and reveal URLs only.
 
-- **Endpoint writes and endpoint reveals have one atomic path each.**
-  `POST service-endpoints/with-credential/` creates or updates a ServiceEndpoint
-  and a new or existing credential in one transaction and one material write,
-  rejects protocol-incompatible credential types, enforces constrained
-  add/change ObjectPermissions on the endpoint (`restrict()`, never bare
-  `has_perm()`), and accepts an `idempotency_key` persisted as
-  `import_source="idempotency:<key>"` so a replay reuses the first credential.
-  `POST service-endpoints/{id}/reveal-credential/` reveals only while the
-  endpoint is enabled (`options.enabled` is not false), assigned to the expected
-  object, unchanged since the approved revision, and bound to the expected
-  credential uuid, type, and **required** `kv_version` (compared with the
-  served version — `live_kv_version`, or `kv_version` when nothing was ever
-  promoted — and read at exactly that version). Checks and the read run
-  under `select_for_update()` on both rows, so a concurrent disable, rotation, or
-  reassignment waits; any mismatch is `409` with no material. The locked
-  endpoint must still reference the locked credential (`credential_id`), which
-  catches a rebinding that did not advance `last_updated`. Both paths drop
-  NetBox's per-request `_object_perm_cache` and re-check permissions from
-  committed state once their locks are held, so a permission revoked while the
-  request waited stops the write or reveal. Do not split these back into
-  separate client requests.
+- **Assignment reveal has one atomic path.**
+  `POST assignments/{id}/reveal-credential/` reveals only while the assignment is
+  enabled, unchanged since the approved `assignment_revision`, bound to the
+  expected object, purpose, credential uuid, type and **required** `kv_version`
+  (compared with the served version, `live_kv_version` or `kv_version` when
+  nothing was promoted, and read at exactly that version), and, for a service,
+  the expected host and port. Checks and the read run under `select_for_update()`
+  on both rows; any mismatch is `409` with no material. The permission is
+  re-checked from committed state once the locks are held (drop NetBox's
+  per-request `_object_perm_cache` first). Do not split this into separate
+  client requests.
 
-- **`ServiceEndpointSerializer.credential` and `ResolveView`'s credential
-  representation are permission-bounded, never the full `CredentialSerializer`.**
-  Nesting `CredentialSerializer(nested=True)` directly would render every
-  brief field of a credential the caller cannot otherwise view, purely because
-  they can view the endpoint or assignment it hangs off of. Both surfaces null
-  the credential unless `Credential.objects.restrict(request.user, 'view')`
-  contains it, and when present render only `id`, `url`, `display`, `name`,
-  `credential_type`, `username` (`ServiceEndpointCredentialSerializer`). Widen
-  that bounded set deliberately, never by swapping back to the full
-  `CredentialSerializer` or its `brief_fields`. See
-  `docs/architecture/service-endpoints-and-import.md`.
-- **`openbao_import_nms_credentials` reconciles an existing `ServiceEndpoint`
-  on every run** (credential, target, host, port, SSH settings, options), and
-  serializes concurrent `Credential` claims for the same source row with a
-  session-scoped PostgreSQL advisory lock plus a partial unique constraint on
-  `Credential.import_source`. Do not go back to "look it up, create if
-  absent" without the lock — the whole point is to survive two overlapping
-  runs claiming the same source row. Detail and the reason it is
-  session-scoped rather than `pg_advisory_xact_lock`:
-  `docs/architecture/service-endpoints-and-import.md`.
-- **Run `openbao_import_nms_credentials_preflight` before either importer
-  mode.** It is the read-only readiness contract: exactly one compact JSON
-  object on stdout, closed categories, bounded database reads, and no source
-  row, credential, backend, or secret access. Keep diagnostic details and
-  exception text out of its output. It validates the effective database-backed
-  `get_config('path_prefix', 'netbox')` value, not only static plugin settings.
-  Preserve the stage order startup, literal database probe, effective
-  configuration, then policy; a `DatabaseError` during effective configuration
-  is a closed `database` failure.
-- **The importer start marker is a process-boundary contract.** After
-  `openbao_import_nms_credentials` enters `handle()`, dry-run and apply must
-  write and flush `{"version":1,"event":"openbao_import_started"}` plus LF as
-  the first stdout bytes, before source discovery or database access, exactly
-  once. Its absence means importer `handle()` never started.
+- **`ResolveView` renders credentials permission-bounded.** It nulls a credential
+  the caller cannot view and otherwise returns only `id`, `uuid`,
+  `credential_type`, `username`, `reveal_url` and `kv_version`. Never swap in the
+  full `CredentialSerializer`.
 
 - **A new credential type** → `CredentialTypeChoices` + `CREDENTIAL_SCHEMAS` +
   (if needed) an extractor returning only `EXTRACTABLE_FIELDS` keys +

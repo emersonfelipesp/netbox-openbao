@@ -8,7 +8,7 @@ from .engines import SecretEngine
 from .policies import CredentialPolicy
 from .procedure_runs import OpenBaoProcedureRun
 from .schemas import CredentialTypeSchema
-from .service_endpoints import ServiceEndpoint, SSHPublicKey
+from .service_endpoints import SSHPublicKey
 from .settings import OpenBaoSettings
 
 __all__ = (
@@ -24,6 +24,5 @@ __all__ = (
     'OpenBaoAdministrationLog',
     'OpenBaoCluster',
     'SecretEngine',
-    'ServiceEndpoint',
     'SSHPublicKey',
 )

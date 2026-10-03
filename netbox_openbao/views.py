@@ -46,7 +46,6 @@ from .models import (
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
-    ServiceEndpoint,
     SSHPublicKey,
 )
 from .models.auth import AUTH_MATERIAL_FIELDS
@@ -865,38 +864,9 @@ class CredentialAssignmentDeleteView(generic.ObjectDeleteView):
     queryset = CredentialAssignment.objects.all()
 
 
-@register_model_view(ServiceEndpoint, 'list', path='', detail=False)
-class ServiceEndpointListView(generic.ObjectListView):
-    queryset = ServiceEndpoint.objects.select_related('assigned_object_type', 'credential')
-    table = tables.ServiceEndpointTable
-    filterset = filtersets.ServiceEndpointFilterSet
-    filterset_form = forms.ServiceEndpointFilterForm
-
-
-@register_model_view(ServiceEndpoint)
-class ServiceEndpointView(generic.ObjectView):
-    queryset = ServiceEndpoint.objects.select_related('assigned_object_type', 'credential')
-    layout = layout.SimpleLayout(
-        left_panels=[openbao_panels.ServiceEndpointDetailPanel()],
-        right_panels=[CustomFieldsPanel(), TagsPanel()],
-    )
-
-
-@register_model_view(ServiceEndpoint, 'add', detail=False)
-@register_model_view(ServiceEndpoint, 'edit')
-class ServiceEndpointEditView(generic.ObjectEditView):
-    queryset = ServiceEndpoint.objects.all()
-    form = forms.ServiceEndpointForm
-
-
-@register_model_view(ServiceEndpoint, 'delete')
-class ServiceEndpointDeleteView(generic.ObjectDeleteView):
-    queryset = ServiceEndpoint.objects.all()
-
-
 @register_model_view(SSHPublicKey, 'list', path='', detail=False)
 class SSHPublicKeyListView(generic.ObjectListView):
-    queryset = SSHPublicKey.objects.select_related('user', 'service_endpoint')
+    queryset = SSHPublicKey.objects.select_related('user', 'application_service')
     table = tables.SSHPublicKeyTable
     filterset = filtersets.SSHPublicKeyFilterSet
     filterset_form = forms.SSHPublicKeyFilterForm
@@ -904,7 +874,7 @@ class SSHPublicKeyListView(generic.ObjectListView):
 
 @register_model_view(SSHPublicKey)
 class SSHPublicKeyView(generic.ObjectView):
-    queryset = SSHPublicKey.objects.select_related('user', 'service_endpoint')
+    queryset = SSHPublicKey.objects.select_related('user', 'application_service')
     layout = layout.SimpleLayout(
         left_panels=[openbao_panels.SSHPublicKeyDetailPanel()],
         right_panels=[CustomFieldsPanel(), TagsPanel()],
@@ -1058,6 +1028,7 @@ class QuickAddSSHView(ObjectPermissionRequiredMixin, View):
                     port=data.get('port'),
                     service_template=data['service_template'],
                     service_name=data.get('service_name') or None,
+                    ip_addresses=[data['ip_address']] if data.get('ip_address') else None,
                     user=request.user,
                     request=request,
                 )

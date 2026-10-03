@@ -1,6 +1,6 @@
 from netbox.search import SearchIndex, register_search
 
-from .models import Credential, CredentialPolicy, SecretEngine, ServiceEndpoint, SSHPublicKey
+from .models import Credential, CredentialPolicy, SecretEngine, SSHPublicKey
 
 
 @register_search
@@ -53,16 +53,7 @@ class CredentialIndex(SearchIndex):
 
 
 @register_search
-class ServiceEndpointIndex(SearchIndex):
-    model = ServiceEndpoint
-    fields = (('host', 100), ('ssh_known_hosts_entry', 500))
-    # The credential is omitted: search results do not apply credential object
-    # permissions, so naming it here would leak it to endpoint-only viewers.
-    display_attrs = ('assigned_object', 'service_type', 'host', 'port')
-
-
-@register_search
 class SSHPublicKeyIndex(SearchIndex):
     model = SSHPublicKey
     fields = (('fingerprint', 100), ('public_key', 500))
-    display_attrs = ('user', 'service_endpoint', 'fingerprint', 'key_type')
+    display_attrs = ('user', 'application_service', 'fingerprint', 'key_type')

@@ -1,5 +1,4 @@
 import django_tables2 as tables
-from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from netbox.tables import NetBoxTable, columns
 
@@ -15,10 +14,8 @@ from .models import (
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
-    ServiceEndpoint,
     SSHPublicKey,
 )
-from .models.service_endpoints import credential_visible
 
 __all__ = (
     'CredentialAccessLogTable',
@@ -31,7 +28,6 @@ __all__ = (
     'OpenBaoAdministrationLogTable',
     'OpenBaoClusterTable',
     'SecretEngineTable',
-    'ServiceEndpointTable',
     'SSHPublicKeyTable',
 )
 
@@ -209,43 +205,17 @@ class CredentialAssignmentTable(NetBoxTable):
         default_columns = ('credential', 'assigned_object_type', 'assigned_object', 'purpose', 'is_primary')
 
 
-class ServiceEndpointTable(NetBoxTable):
-    service_type = columns.ChoiceFieldColumn()
-    assigned_object = tables.Column(linkify=True, orderable=False)
-    # Not `linkify=True`: django-tables2 builds that href from the column's
-    # resolved value (`record.credential.get_absolute_url()`) unconditionally,
-    # *after* `render_credential` runs — so a placeholder returned here would
-    # still be wrapped in a link to the credential the viewer cannot see.
-    # `render_credential` builds the anchor tag itself, only when visible.
-    credential = tables.Column()
-
-    def render_credential(self, value, record):
-        """Render only credentials the requesting user may view."""
-        request = getattr(self, 'request', None)
-        if request is None or not credential_visible(request.user, record.credential_id):
-            return '—'
-        return format_html('<a href="{}">{}</a>', value.get_absolute_url(), value)
-
-    class Meta(NetBoxTable.Meta):
-        model = ServiceEndpoint
-        fields = (
-            'pk', 'id', 'assigned_object', 'service_type', 'host', 'port', 'credential',
-            'ssh_strict_host_key_checking', 'tags', 'created', 'last_updated',
-        )
-        default_columns = ('assigned_object', 'service_type', 'host', 'port', 'credential')
-
-
 class SSHPublicKeyTable(NetBoxTable):
     user = tables.Column(linkify=True)
-    service_endpoint = tables.Column(linkify=True)
+    application_service = tables.Column(linkify=True)
 
     class Meta(NetBoxTable.Meta):
         model = SSHPublicKey
         fields = (
-            'pk', 'id', 'user', 'service_endpoint', 'fingerprint', 'key_type',
+            'pk', 'id', 'user', 'application_service', 'fingerprint', 'key_type',
             'installed_at', 'tags', 'created', 'last_updated',
         )
-        default_columns = ('user', 'service_endpoint', 'fingerprint', 'key_type', 'installed_at')
+        default_columns = ('user', 'application_service', 'fingerprint', 'key_type', 'installed_at')
 
 
 class CredentialAccessLogTable(NetBoxTable):

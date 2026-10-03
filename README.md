@@ -224,9 +224,8 @@ per-user authorization.
 | `SecretEngine` | One credential-storage mount, associated with a cluster. Holds no auth material. |
 | `CredentialPolicy` | An authorization tier mapped onto a real OpenBao policy, with its own AppRole. |
 | `Credential` | The inventory record: identity, public material, lifecycle. Never the secret. |
-| `CredentialAssignment` | Many-to-many binding to Devices, VMs, and Services, with a purpose. |
-| `ServiceEndpoint` | Connection metadata and an optional credential for an assignable object. |
-| `SSHPublicKey` | A user's public SSH key and computed fingerprint for an SSH endpoint. |
+| `CredentialAssignment` | Many-to-many binding to Devices, VMs, and Application Services, with a purpose. For SSH it also holds the pinned host key. |
+| `SSHPublicKey` | A user's public SSH key and computed fingerprint for an SSH Application Service. |
 | `CredentialAccessLog` | Append-only correlation between a NetBox user and an OpenBao read. |
 | `OpenBaoAdministrationLog` | Append-only metadata correlation for administrative probes and operations. |
 
@@ -297,27 +296,13 @@ The importer copies — it never deletes — infers each secret's type and prove
 the inference by extraction, and is resumable. See
 [`docs/migration-from-netbox-secrets.md`](docs/migration-from-netbox-secrets.md).
 
-Device, VM, and service credential migration from the optional NMS/network
-plugins uses `openbao_import_nms_credentials`. Its dry run performs no database
-or OpenBao writes, and repeated imports use provenance markers instead of
-creating duplicates. See
-[`docs/architecture/service-endpoints-and-import.md`](docs/architecture/service-endpoints-and-import.md).
-
-Both dry-run and apply write and flush
-`{"version":1,"event":"openbao_import_started"}` as the first stdout record
-after the management command enters `handle()`, before model discovery or any
-database access. Absence means command startup never reached the importer.
-
-Before invoking either importer mode, run the dedicated read-only preflight:
-
-```bash
-python manage.py openbao_import_nms_credentials_preflight
-```
-
-It validates plugin startup, the effective database-backed storage-path configuration, the
-required credential policy, and database connectivity. Standard output is
-exactly one compact, closed JSON record; it never contains exception text,
-URLs, paths, rows, credential metadata, command output, or secret material.
+Connections use NetBox's built-in Application Service (`ipam.Service`); the
+plugin has no endpoint model of its own. The host is the single IP address
+filled in on the service and the port is its single TCP port. A service with no
+IP, several IPs, no TCP port or several TCP ports cannot be used to connect and
+is reported with a clear error. The SSH host-key pin lives on the credential
+assignment. The earlier NMS credential importer and its preflight command were
+removed in 0.2.1.
 
 ## Development
 

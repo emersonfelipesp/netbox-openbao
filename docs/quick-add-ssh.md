@@ -20,6 +20,8 @@ The chain is mandatory and always the same:
    (`tcp/22`) by default. The port is taken from the template and may be
    overridden for a non-standard SSH port. An existing service of the same name
    on the object is reused, with the port added if it is not already there.
+   Fill in the **IP address** on the form (or later on the service): a credential
+   can connect only when the service has exactly one IP and one TCP port.
 2. A `Credential` written to OpenBao — either `ssh-password` (login password)
    or `ssh-keypair` (private key + optional passphrase), with public metadata
    extracted into NetBox for keypairs.

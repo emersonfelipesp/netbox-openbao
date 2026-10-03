@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.1 - 2026-10-03
+
+- **Breaking: `ServiceEndpoint` is removed.** Connections now use NetBox's
+  built-in Application Service. For a credential to be usable the service must
+  list exactly one IP address and exactly one TCP port; otherwise resolution
+  fails closed with a clear error. The `service-endpoints` REST routes, UI pages,
+  menu entry and `with-credential` action are gone.
+- The SSH host-key pin (`ssh_known_hosts_entry`, `ssh_strict_host_key_checking`)
+  moved onto the credential assignment. `SSHPublicKey` now references the
+  Application Service (`application_service`) instead of an endpoint.
+- New `POST assignments/{id}/reveal-credential/` replaces the endpoint reveal
+  with the same revision-bound checks, plus host and port for service targets.
+  `GET resolve/` now returns `services` (with `host`, `port`, `error`) and
+  assignments instead of `service_endpoints`.
+- Quick-add SSH accepts an IP address for the new Application Service.
+- Removed `openbao_import_nms_credentials` and its preflight command.
+- Migration `0025_application_service_connection` carries pins and SSH keys over
+  to services. Endpoints attached directly to a device or VM, and their keys,
+  have no service and are not carried over. Reversing the migration clears SSH
+  keys; restore a backup to recover old data.
+
 ## 0.2.0 - 2026-10-02
 
 - **Upgrade action required.** OpenBao login material (AppRole role and secret

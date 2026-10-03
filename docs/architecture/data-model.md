@@ -14,8 +14,7 @@ erDiagram
     SecretEngine ||--o{ Credential : "stores material for"
     CredentialPolicy ||--o{ Credential : "governs"
     Credential ||--o{ CredentialAssignment : "is bound by"
-    Credential ||--o{ ServiceEndpoint : "authenticates"
-    ServiceEndpoint ||--o{ SSHPublicKey : "accepts"
+    Service ||--o{ SSHPublicKey : "accepts"
     Credential ||--o{ CredentialAccessLog : "is read through"
     CredentialAssignment }o--|| Device : "GFK"
     CredentialAssignment }o--|| VirtualMachine : "GFK"
@@ -230,16 +229,24 @@ deployment to restate them in a settings file. The deny list exists so that
 adding is not the same as deciding: registration comes from installed code, and
 the operator keeps the final word.
 
-## `ServiceEndpoint` and `SSHPublicKey`
+## Application Service connections and `SSHPublicKey`
 
-`ServiceEndpoint` applies the assignment registry to connection metadata:
-object, service type, host, port, SSH host-key policy, non-secret options, and
-an optional credential. Its uniqueness constraint is `(object_type, object_id,
-service_type, port)`. Options reject secret-shaped keys.
+There is no endpoint model. A credential reaches a host through NetBox's
+built-in Application Service: `Credential > Application Service > Device/VM`.
+`netbox_openbao/connection.py` resolves the connection target from the service
+itself. The host is the service's IP address and the port is its TCP port
+mapping, and each must be unique. No IP, several IPs, no TCP port or several TCP
+ports fails closed with a closed error code (`no_ip`, `multiple_ips`,
+`no_tcp_port`, `multiple_tcp_ports`).
 
-`SSHPublicKey` binds a NetBox user to an SSH endpoint. It stores public material
-only and computes the OpenSSH SHA256 fingerprint and key type on every save.
-Private key material has no field on this model.
+The SSH host-key pin (`ssh_known_hosts_entry`, `ssh_strict_host_key_checking`)
+is stored on the `CredentialAssignment` that binds the credential to the
+service.
+
+`SSHPublicKey` binds a NetBox user to an Application Service. It stores public
+material only and computes the OpenSSH SHA256 fingerprint and key type on every
+save. Private key material has no field on this model. The uniqueness
+constraint is `(user, application_service)`.
 
 ## `CredentialAccessLog` — evidence, not an object
 

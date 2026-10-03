@@ -41,7 +41,6 @@ __all__ = (
     'OpenBaoClusterPanel',
     'OpenBaoClusterStatusPanel',
     'OpenBaoAdministrationLogPanel',
-    'ServiceEndpointDetailPanel',
     'SSHPublicKeyDetailPanel',
 )
 
@@ -207,6 +206,10 @@ class CredentialAssignmentDetailPanel(panels.ObjectAttributesPanel):
     purpose = attrs.ChoiceAttr('purpose')
     is_primary = attrs.BooleanAttr('is_primary', label=_('Primary'))
     description = attrs.TextAttr('description')
+    ssh_known_hosts_entry = attrs.TextAttr('ssh_known_hosts_entry', label=_('SSH known hosts'))
+    ssh_strict_host_key_checking = attrs.BooleanAttr(
+        'ssh_strict_host_key_checking', label=_('Strict SSH host key checking'),
+    )
 
 
 class VisibleCredentialAttr(attrs.RelatedObjectAttr):
@@ -219,22 +222,9 @@ class VisibleCredentialAttr(attrs.RelatedObjectAttr):
         return super().render(obj, context)
 
 
-class ServiceEndpointDetailPanel(panels.ObjectAttributesPanel):
-    assigned_object = attrs.GenericForeignKeyAttr('assigned_object', label=_('Object'), linkify=True)
-    service_type = attrs.ChoiceAttr('service_type')
-    host = attrs.TextAttr('host')
-    port = attrs.NumericAttr('port')
-    credential = VisibleCredentialAttr('credential', linkify=True)
-    ssh_known_hosts_entry = attrs.TextAttr('ssh_known_hosts_entry', label=_('SSH known hosts'))
-    ssh_strict_host_key_checking = attrs.BooleanAttr(
-        'ssh_strict_host_key_checking', label=_('Strict SSH host key checking'),
-    )
-    options = attrs.TextAttr('options')
-
-
 class SSHPublicKeyDetailPanel(panels.ObjectAttributesPanel):
     user = attrs.RelatedObjectAttr('user', linkify=True)
-    service_endpoint = attrs.RelatedObjectAttr('service_endpoint', linkify=True)
+    application_service = attrs.RelatedObjectAttr('application_service', label=_('Application Service'), linkify=True)
     public_key = attrs.TextAttr('public_key', style='font-monospace')
     fingerprint = attrs.TextAttr('fingerprint', style='font-monospace', copy_button=True)
     key_type = attrs.TextAttr('key_type', label=_('Key type'))

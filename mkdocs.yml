@@ -137,7 +137,6 @@ nav:
   - Architecture:
       - Overview: architecture/index.md
       - Data model: architecture/data-model.md
-      - Service endpoints and NMS import: architecture/service-endpoints-and-import.md
       - The write path: architecture/write-path.md
       - The reveal path: architecture/reveal-path.md
       - Staged rotation: architecture/staged-rotation.md

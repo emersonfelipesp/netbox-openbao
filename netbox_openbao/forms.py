@@ -17,7 +17,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import PermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.translation import gettext_lazy as _
-from ipam.models import ServiceTemplate
+from ipam.models import IPAddress, Service, ServiceTemplate
 from netbox.context import current_request
 from netbox.forms import NetBoxModelFilterSetForm, NetBoxModelForm, OrganizationalModelForm, PrimaryModelForm
 from users.models import Group, User
@@ -46,7 +46,6 @@ from .choices import (
     CredentialTypeChoices,
     EngineStatusChoices,
     PurposeChoices,
-    ServiceTypeChoices,
     SSHKeyTypeChoices,
 )
 from .config import get_config
@@ -61,7 +60,6 @@ from .models import (
     OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
-    ServiceEndpoint,
     SSHPublicKey,
 )
 from .models.auth import AUTH_MATERIAL_FIELDS
@@ -85,8 +83,6 @@ __all__ = (
     'EngineAuthMaterialForm',
     'SecretEngineFilterForm',
     'SecretEngineForm',
-    'ServiceEndpointFilterForm',
-    'ServiceEndpointForm',
     'SSHPublicKeyFilterForm',
     'SSHPublicKeyForm',
     'RunProcedureForm',
@@ -635,12 +631,16 @@ class CredentialAssignmentForm(GenericObjectFormMixin, NetBoxModelForm):
     fieldsets = (
         FieldSet('credential', *_OBJECT_FIELDS, 'purpose', 'is_primary', 'enabled', 'description',
                  name=_('Assignment'), **_ASSIGNMENT_FIELDSET_KWARGS),
+        FieldSet('ssh_known_hosts_entry', 'ssh_strict_host_key_checking', name=_('SSH host key')),
         FieldSet('tags', name=_('Tags')),
     )
 
     class Meta:
         model = CredentialAssignment
-        fields = ('credential', 'purpose', 'is_primary', 'enabled', 'description', 'tags')
+        fields = (
+            'credential', 'purpose', 'is_primary', 'enabled', 'description',
+            'ssh_known_hosts_entry', 'ssh_strict_host_key_checking', 'tags',
+        )
 
     def __init__(self, *args, **kwargs):
         # Evaluated per-instantiation so a saved settings change takes effect
@@ -696,71 +696,24 @@ class CredentialAssignmentFilterForm(NetBoxModelFilterSetForm):
     is_primary = forms.NullBooleanField(required=False)
 
 
-class ServiceEndpointForm(GenericObjectFormMixin, NetBoxModelForm):
-    credential = DynamicModelChoiceField(queryset=Credential.objects.all(), required=False)
-    if HAS_GENERIC_OBJECT_FIELD:
-        assigned_object = GenericObjectChoiceField(
-            content_type_queryset=ContentType.objects.none(), label=_('Object'), selector=True,
-        )
-    else:
-        assigned_object_type = forms.ModelChoiceField(queryset=ContentType.objects.none())
-        assigned_object_id = forms.IntegerField()
-
-    class Meta:
-        model = ServiceEndpoint
-        fields = (
-            'service_type', 'host', 'port', 'ssh_known_hosts_entry',
-            'ssh_strict_host_key_checking', 'options', 'credential', 'tags',
-        )
-
-    def __init__(self, *args, **kwargs):
-        field = 'assigned_object' if HAS_GENERIC_OBJECT_FIELD else 'assigned_object_type'
-        if HAS_GENERIC_OBJECT_FIELD:
-            self.base_fields[field].content_type_queryset = assignable_content_types()
-        else:
-            self.base_fields[field].queryset = assignable_content_types()
-        super().__init__(*args, **kwargs)
-        if not HAS_GENERIC_OBJECT_FIELD and self.instance.pk:
-            self.fields['assigned_object_type'].initial = self.instance.assigned_object_type_id
-            self.fields['assigned_object_id'].initial = self.instance.assigned_object_id
-
-    def clean(self):
-        cleaned = super().clean() or self.cleaned_data
-        if HAS_GENERIC_OBJECT_FIELD:
-            return cleaned
-        object_type = cleaned.get('assigned_object_type')
-        object_id = cleaned.get('assigned_object_id')
-        if object_type and object_id is not None:
-            model = object_type.model_class()
-            if model is None or not model.objects.filter(pk=object_id).exists():
-                raise forms.ValidationError({'assigned_object_id': _('The selected object does not exist.')})
-            self.instance.assigned_object_type = object_type
-            self.instance.assigned_object_id = object_id
-        return cleaned
-
-
-class ServiceEndpointFilterForm(NetBoxModelFilterSetForm):
-    model = ServiceEndpoint
-    service_type = forms.MultipleChoiceField(choices=ServiceTypeChoices, required=False)
-    credential_id = DynamicModelMultipleChoiceField(queryset=Credential.objects.all(), required=False)
-
-
 class SSHPublicKeyForm(NetBoxModelForm):
     user = DynamicModelChoiceField(queryset=User.objects.all())
-    service_endpoint = DynamicModelChoiceField(
-        queryset=ServiceEndpoint.objects.filter(service_type=ServiceTypeChoices.TYPE_SSH),
+    application_service = DynamicModelChoiceField(
+        queryset=Service.objects.all(),
+        label=_('Application Service'),
+        help_text=_('The SSH Application Service the key is installed on.'),
     )
 
     class Meta:
         model = SSHPublicKey
-        fields = ('user', 'service_endpoint', 'public_key', 'installed_at', 'tags')
+        fields = ('user', 'application_service', 'public_key', 'installed_at', 'tags')
 
 
 class SSHPublicKeyFilterForm(NetBoxModelFilterSetForm):
     model = SSHPublicKey
     user_id = DynamicModelMultipleChoiceField(queryset=User.objects.all(), required=False)
-    service_endpoint_id = DynamicModelMultipleChoiceField(
-        queryset=ServiceEndpoint.objects.all(), required=False,
+    application_service_id = DynamicModelMultipleChoiceField(
+        queryset=Service.objects.all(), required=False, label=_('Application Service'),
     )
 
 
@@ -791,6 +744,15 @@ class QuickAddSSHForm(forms.Form):
         required=False,
         label=_('Service name'),
         help_text=_('Defaults to the template name, lowercased.'),
+    )
+    ip_address = DynamicModelChoiceField(
+        queryset=IPAddress.objects.all(),
+        required=False,
+        label=_('IP address'),
+        help_text=_(
+            'The address connections use. NetBox needs exactly one IP on the Application Service '
+            'before a credential can be used to connect; it can also be added on the service later.'
+        ),
     )
     port = forms.IntegerField(
         required=False,
@@ -844,7 +806,7 @@ class QuickAddSSHForm(forms.Form):
 
     fieldsets = (
         FieldSet('name', 'username', 'policy', name=_('Credential')),
-        FieldSet('service_template', 'service_name', 'port', name=_('SSH Application Service')),
+        FieldSet('service_template', 'service_name', 'ip_address', 'port', name=_('SSH Application Service')),
         FieldSet('auth_method', 'password', name=_('Authentication')),
         FieldSet('source', 'key_type', 'private_key', 'passphrase', 'existing_credential',
                  name=_('Key material')),

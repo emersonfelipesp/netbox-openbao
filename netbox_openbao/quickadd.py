@@ -87,6 +87,19 @@ def _require_service_permission(user, action, service):
             raise PermissionDenied(f'ipam.{action}_service does not permit this service.')
 
 
+def _visible_ip_addresses(user, ip_addresses):
+    """Return the IPs the caller may view, or refuse. Never attach an address the caller cannot see."""
+    from ipam.models import IPAddress
+
+    ids = [getattr(ip, 'pk', ip) for ip in ip_addresses]
+    if user is None:
+        return list(IPAddress.objects.filter(pk__in=ids))
+    visible = list(IPAddress.objects.restrict(user, 'view').filter(pk__in=ids))
+    if len(visible) != len(set(ids)):
+        raise PermissionDenied(_('You do not have permission to use that IP address.'))
+    return visible
+
+
 def _get_or_create_service(target, template, port, name, ip_addresses=None, user=None):
     """
     Find or create the Application Service on `target` that holds the credential.
@@ -106,6 +119,8 @@ def _get_or_create_service(target, template, port, name, ip_addresses=None, user
     # quick-adds are serialized on the parent row. The lookup then locks the
     # existing service, so concurrent widening cannot drop a requested port.
     type(target).objects.select_for_update().filter(pk=target.pk).first()
+    if ip_addresses:
+        ip_addresses = _visible_ip_addresses(user, ip_addresses)
     existing = Service.objects.select_for_update().filter(
         parent_object_type=parent_type,
         parent_object_id=target.pk,
@@ -123,6 +138,9 @@ def _get_or_create_service(target, template, port, name, ip_addresses=None, user
             existing.port_mappings = [*existing.port_mappings, *missing]
             existing.full_clean()
             existing.save()
+        if ip_addresses and not existing.ipaddresses.exists():
+            _require_service_permission(user, 'change', existing)
+            existing.ipaddresses.set(ip_addresses)
         return existing, False
 
     _require_service_permission(user, 'add', None)

@@ -396,6 +396,15 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
         data.update(overrides)
         return data
 
+    def test_ip_address_the_caller_cannot_view_is_refused(self):
+        from ipam.models import IPAddress
+
+        self.grant()
+        ip = IPAddress.objects.create(address='198.51.100.7/24')
+        response = self.client.post(self.url, self.payload(ip_address=ip.pk), format='json', **self.header)
+        self.assertIn(response.status_code, (403, 400), response.content)
+        self.assertFalse(Credential.objects.filter(name__icontains='api-switch').exists())
+
     def test_requires_add_credential_permission(self):
         self.add_permissions('dcim.view_device', 'netbox_openbao.view_credentialpolicy')
         response = self.client.post(self.url, self.payload(), format='json', **self.header)

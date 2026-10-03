@@ -42,16 +42,6 @@ assignments = PluginMenuItem(
     ),
 )
 
-service_endpoints = PluginMenuItem(
-    link='plugins:netbox_openbao:serviceendpoint_list',
-    link_text='Service endpoints',
-    permissions=['netbox_openbao.view_serviceendpoint'],
-    buttons=(PluginMenuButton(
-        link='plugins:netbox_openbao:serviceendpoint_add', title='Add',
-        icon_class='mdi mdi-plus-thick', permissions=['netbox_openbao.add_serviceendpoint'],
-    ),),
-)
-
 ssh_public_keys = PluginMenuItem(
     link='plugins:netbox_openbao:sshpublickey_list',
     link_text='SSH public keys',
@@ -131,7 +121,7 @@ settings_item = PluginMenuItem(
 menu = PluginMenu(
     label='OpenBao',
     groups=(
-        ('Credentials', (credentials, assignments, service_endpoints, ssh_public_keys)),
+        ('Credentials', (credentials, assignments, ssh_public_keys)),
         ('Administration', (clusters,)),
         ('Configuration', (policies, engines, type_schemas, settings_item)),
         ('Audit', (access_logs, administration_logs, procedure_runs)),

@@ -69,6 +69,16 @@ class CredentialAssignment(NetBoxModel):
         max_length=200,
         blank=True,
     )
+    ssh_known_hosts_entry = models.TextField(
+        verbose_name=_('SSH known_hosts entry'),
+        blank=True,
+        help_text=_('Pinned host key of the service this credential logs in to (SSH only)'),
+    )
+    ssh_strict_host_key_checking = models.BooleanField(
+        verbose_name=_('strict host key checking'),
+        default=True,
+        help_text=_('Refuse to connect when the host key does not match the pinned entry (SSH only)'),
+    )
 
     clone_fields = ('credential', 'assigned_object_type', 'purpose')
 
