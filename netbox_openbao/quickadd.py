@@ -100,6 +100,91 @@ def _visible_ip_addresses(user, ip_addresses):
     return visible
 
 
+def _primary_ip_addresses(user, target):
+    """The target's own primary IP, when the caller may view it; the default connection address."""
+    from ipam.models import IPAddress
+
+    primary = getattr(target, 'primary_ip', None)
+    if primary is None:
+        return []
+    # A default, not a request: a primary IP the caller cannot view is simply not used, so it
+    # never blocks reusing a service that already has an address.
+    visible = IPAddress.objects.filter(pk=primary.pk)
+    if user is not None:
+        visible = visible.restrict(user, 'view')
+    return list(visible)
+
+
+def _new_ip_address(user, cidr):
+    """Create the connection IP, or reuse the visible no-VRF address with the same CIDR.
+
+    NetBox allows duplicate addresses, so a quick-add that always created one
+    would leave a second row beside the existing one and make the service
+    ambiguous. Creating needs the caller's own IPAM permission, never the
+    credential one.
+    """
+    import netaddr
+    from ipam.models import IPAddress
+
+    try:
+        network = netaddr.IPNetwork(str(cidr).strip())
+    except (netaddr.AddrFormatError, ValueError, TypeError):
+        raise ValidationError(
+            _('Enter the IP address as an address with a prefix length, for example 10.0.0.5/24.')
+        ) from None
+    if '/' not in str(cidr):
+        raise ValidationError(_('Enter the IP address as an address with a prefix length, for example 10.0.0.5/24.'))
+    # Two requests for the same address must not both miss the lookup and both insert, so
+    # same-CIDR lookup and creation are serialized for the rest of the transaction.
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', [f'netbox_openbao.quickadd.ip:{network}'])
+    existing = IPAddress.objects.filter(vrf__isnull=True, address=str(network))
+    if user is not None:
+        existing = existing.restrict(user, 'view')
+    matches = list(existing[:2])
+    if len(matches) > 1:
+        raise ValidationError(_('More than one IP address %(address)s exists; choose one.') % {'address': network})
+    if matches:
+        return matches
+    if user is not None:
+        if not user.has_perm('ipam.add_ipaddress'):
+            raise PermissionDenied('ipam.add_ipaddress is required to create the IP address.')
+    created = IPAddress(address=str(network), status='active', description='SSH access (quick-add)')
+    created.full_clean()
+    created.save()
+    if user is not None and not IPAddress.objects.restrict(user, 'add').filter(pk=created.pk).exists():
+        raise PermissionDenied('ipam.add_ipaddress does not permit this IP address.')
+    return [created]
+
+
+def _connection_ip_addresses(user, target, ip_addresses, new_ip_address):
+    """Pick the IP for the new service: given, newly created, or the target's primary IP."""
+    if ip_addresses and new_ip_address:
+        raise ValidationError(_('Choose an existing IP address or enter a new one, not both.'))
+    if new_ip_address:
+        return _new_ip_address(user, new_ip_address)
+    if ip_addresses:
+        return ip_addresses
+    return _primary_ip_addresses(user, target)
+
+
+def _require_requested_ip_on_existing_service(service, ip_addresses):
+    """Refuse an explicitly requested address that a reused service does not have.
+
+    A reused service keeps the address it already has, so quietly connecting through
+    that address while a different one was asked for (and possibly just created)
+    would commit an unattached IP and send the credential to another host.
+    """
+    attached = set(service.ipaddresses.values_list('pk', flat=True))
+    if attached and not {ip.pk for ip in ip_addresses} <= attached:
+        raise ValidationError(
+            _('The existing "%(name)s" service already has a different IP address; change it in NetBox, '
+              'or leave the address empty to keep it.') % {'name': service.name}
+        )
+
+
 def _get_or_create_service(target, template, port, name, ip_addresses=None, user=None):
     """
     Find or create the Application Service on `target` that holds the credential.
@@ -177,6 +262,7 @@ def quick_add_ssh(
     service_template=None,
     service_name=None,
     ip_addresses=None,
+    new_ip_address=None,
     purpose=PurposeChoices.PURPOSE_LOGIN,
     user=None,
     request=None,
@@ -192,6 +278,10 @@ def quick_add_ssh(
 
     Password auth stores ``TYPE_SSH_PASSWORD`` in OpenBao. Keypair auth uses
     exactly one of ``existing_credential``, ``private_key``, or ``generate``.
+
+    The service needs exactly one IP to be usable. Pass an existing ``ip_addresses``
+    list, or ``new_ip_address`` (a CIDR string) to create the address here in the
+    same transaction; with neither, the target's primary IP is used when it has one.
 
     Returns ``(credential, service, public_key)``. ``public_key`` is only
     populated when a key was generated here.
@@ -217,6 +307,8 @@ def quick_add_ssh(
 
             if not ServiceTemplate.objects.restrict(user, 'view').filter(pk=template.pk).exists():
                 raise PermissionDenied('The selected service template is not permitted.')
+        explicit_ip = bool(ip_addresses or new_ip_address)
+        ip_addresses = _connection_ip_addresses(user, target, ip_addresses, new_ip_address)
         service, _created = _get_or_create_service(
             target,
             template,
@@ -225,6 +317,8 @@ def quick_add_ssh(
             ip_addresses,
             user,
         )
+        if explicit_ip and not _created:
+            _require_requested_ip_on_existing_service(service, ip_addresses)
 
         if existing_credential is not None:
             credential = existing_credential

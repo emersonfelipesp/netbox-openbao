@@ -396,6 +396,181 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
         data.update(overrides)
         return data
 
+    def grant_ip_create(self):
+        self.add_permissions('ipam.add_ipaddress', 'ipam.view_ipaddress')
+
+    def test_new_ip_address_is_created_in_the_same_transaction(self):
+        from ipam.models import IPAddress, Service
+
+        self.grant()
+        self.grant_ip_create()
+        response = self.client.post(
+            self.url, self.payload(new_ip_address='192.0.2.50/24'), format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.data['ip_address'], '192.0.2.50/24')
+        service = Service.objects.get(pk=response.data['service_id'])
+        self.assertEqual([str(ip.address) for ip in service.ipaddresses.all()], ['192.0.2.50/24'])
+        self.assertEqual(IPAddress.objects.filter(address='192.0.2.50/24').count(), 1)
+
+    def test_existing_address_with_the_same_cidr_is_reused_not_duplicated(self):
+        from ipam.models import IPAddress
+
+        self.grant()
+        self.grant_ip_create()
+        existing = IPAddress.objects.create(address='192.0.2.51/24')
+        response = self.client.post(
+            self.url, self.payload(new_ip_address='192.0.2.51/24'), format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.data['ip_address_id'], existing.pk)
+        self.assertEqual(IPAddress.objects.filter(address='192.0.2.51/24').count(), 1)
+
+    def test_creating_the_ip_needs_ipam_add_permission_and_rolls_everything_back(self):
+        from ipam.models import IPAddress, Service
+
+        self.grant()
+        self.add_permissions('ipam.view_ipaddress')
+        response = self.client.post(
+            self.url, self.payload(new_ip_address='192.0.2.52/24'), format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertFalse(IPAddress.objects.filter(address='192.0.2.52/24').exists())
+        self.assertFalse(Service.objects.filter(name__iexact='ssh').exists())
+
+    def test_existing_and_new_ip_together_are_rejected(self):
+        from ipam.models import IPAddress
+
+        self.grant()
+        self.grant_ip_create()
+        ip = IPAddress.objects.create(address='192.0.2.53/24')
+        response = self.client.post(
+            self.url, self.payload(ip_address=ip.pk, new_ip_address='192.0.2.54/24'), format='json',
+            **self.header,
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_new_ip_address_without_a_prefix_length_is_rejected(self):
+        self.grant()
+        self.grant_ip_create()
+        response = self.client.post(
+            self.url, self.payload(new_ip_address='192.0.2.55'), format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_primary_ip_of_the_target_is_the_default_connection_address(self):
+        from ipam.models import IPAddress
+
+        self.grant()
+        self.grant_ip_create()
+        primary = IPAddress.objects.create(address='192.0.2.56/24')
+        self.device.primary_ip4 = primary
+        self.device.save()
+        response = self.client.post(self.url, self.payload(), format='json', **self.header)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.data['ip_address_id'], primary.pk)
+
+    def test_response_never_reports_an_existing_service_ip_the_caller_cannot_view(self):
+        from ipam.models import IPAddress, Service
+
+        self.grant()
+        hidden = IPAddress.objects.create(address='203.0.113.9/24')
+        service = Service(
+            parent_object_type=self.device_type, parent_object_id=self.device.pk, name='ssh',
+            port_mappings=['tcp/22'],
+        )
+        service.save()
+        service.ipaddresses.set([hidden])
+        # The caller may view only addresses inside 192.0.2.0/24, so the service's address is hidden.
+        visible = ObjectPermission.objects.create(
+            name='visible-ips', actions=['view'], constraints={'address__net_contained_or_equal': '192.0.2.0/24'},
+        )
+        visible.object_types.add(ContentType.objects.get_for_model(IPAddress))
+        visible.users.add(self.user)
+        response = self.client.post(self.url, self.payload(), format='json', **self.header)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.data['service_id'], service.pk)
+        self.assertNotIn('203.0.113.9', response.content.decode())
+        self.assertIsNone(response.data['ip_address_id'])
+
+    def test_a_different_address_for_a_populated_existing_service_is_rejected_and_rolled_back(self):
+        from ipam.models import IPAddress, Service
+
+        self.grant()
+        self.grant_ip_create()
+        current = IPAddress.objects.create(address='192.0.2.70/24')
+        service = Service(
+            parent_object_type=self.device_type, parent_object_id=self.device.pk, name='ssh',
+            port_mappings=['tcp/22'],
+        )
+        service.save()
+        service.ipaddresses.set([current])
+        response = self.client.post(
+            self.url, self.payload(new_ip_address='192.0.2.71/24'), format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        # The rejected request leaves no unattached address and no credential behind.
+        self.assertFalse(IPAddress.objects.filter(address='192.0.2.71/24').exists())
+        self.assertEqual(list(service.ipaddresses.values_list('pk', flat=True)), [current.pk])
+        self.assertFalse(Credential.objects.filter(name__icontains='api-switch').exists())
+
+    def test_the_same_address_for_a_populated_existing_service_is_accepted(self):
+        from ipam.models import IPAddress, Service
+
+        self.grant()
+        self.grant_ip_create()
+        current = IPAddress.objects.create(address='192.0.2.72/24')
+        service = Service(
+            parent_object_type=self.device_type, parent_object_id=self.device.pk, name='ssh',
+            port_mappings=['tcp/22'],
+        )
+        service.save()
+        service.ipaddresses.set([current])
+        response = self.client.post(
+            self.url, self.payload(new_ip_address='192.0.2.72/24'), format='json', **self.header,
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.data['ip_address_id'], current.pk)
+
+    def test_a_hidden_primary_ip_does_not_block_reusing_a_service_that_has_an_address(self):
+        from ipam.models import IPAddress, Service
+
+        self.grant()
+        permitted = IPAddress.objects.create(address='192.0.2.80/24')
+        hidden_primary = IPAddress.objects.create(address='203.0.113.80/24')
+        self.device.primary_ip4 = hidden_primary
+        self.device.save()
+        service = Service(
+            parent_object_type=self.device_type, parent_object_id=self.device.pk, name='ssh',
+            port_mappings=['tcp/22'],
+        )
+        service.save()
+        service.ipaddresses.set([permitted])
+        visible = ObjectPermission.objects.create(
+            name='visible-ips-80', actions=['view'], constraints={'address__net_contained_or_equal': '192.0.2.0/24'},
+        )
+        visible.object_types.add(ContentType.objects.get_for_model(IPAddress))
+        visible.users.add(self.user)
+        response = self.client.post(self.url, self.payload(), format='json', **self.header)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.data['ip_address_id'], permitted.pk)
+
+    def test_creating_an_ip_takes_the_same_cidr_lock_before_the_lookup(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self.grant()
+        self.grant_ip_create()
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.post(
+                self.url, self.payload(new_ip_address='192.0.2.60/24'), format='json', **self.header,
+            )
+        self.assertEqual(response.status_code, 201, response.content)
+        statements = [q['sql'] for q in queries]
+        lock = next(i for i, sql in enumerate(statements) if 'pg_advisory_xact_lock' in sql)
+        lookup = next(i for i, sql in enumerate(statements) if 'ipam_ipaddress' in sql and 'SELECT' in sql and i > lock)
+        self.assertLess(lock, lookup)
+
     def test_ip_address_the_caller_cannot_view_is_refused(self):
         from ipam.models import IPAddress
 
@@ -476,7 +651,7 @@ class QuickAddSSHAPITest(OpenBaoAPITestCase):
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(set(response.data), {
             'credential_id', 'credential_uuid', 'credential_type', 'public_key', 'fingerprint',
-            'key_type', 'service_id', 'assignment_ids', 'target_type', 'target_id',
+            'key_type', 'service_id', 'ip_address_id', 'ip_address', 'assignment_ids', 'target_type', 'target_id',
         })
         self.assertTrue(response.data['public_key'].startswith('ssh-ed25519 '))
         self.assertNotIn(b'PRIVATE KEY', response.content)

@@ -1171,6 +1171,7 @@ class CredentialViewSet(NetBoxModelViewSet):
                 service_template=data.get('service_template'),
                 service_name=data.get('service_name') or None,
                 ip_addresses=[data['ip_address']] if data.get('ip_address') else None,
+                new_ip_address=(data.get('new_ip_address') or '').strip() or None,
                 user=request.user,
                 request=request,
                 conform=conform,
@@ -1195,6 +1196,11 @@ class CredentialViewSet(NetBoxModelViewSet):
 
             service_type = ContentType.objects.get_for_model(service)
             assignment_scope |= Q(assigned_object_type=service_type, assigned_object_id=service.pk)
+        connection_ip = None
+        if service is not None:
+            # A reused service may already hold an address the caller cannot view; never report it.
+            addresses = list(service.ipaddresses.restrict(request.user, 'view')[:2])
+            connection_ip = addresses[0] if len(addresses) == 1 else None
         assignment_ids = list(CredentialAssignment.objects.filter(
             assignment_scope, credential=credential,
         ).values_list('pk', flat=True))
@@ -1206,6 +1212,8 @@ class CredentialViewSet(NetBoxModelViewSet):
             'fingerprint': credential.fingerprint,
             'key_type': credential.key_type,
             'service_id': service.pk if service is not None else None,
+            'ip_address_id': connection_ip.pk if connection_ip is not None else None,
+            'ip_address': str(connection_ip.address) if connection_ip is not None else '',
             'assignment_ids': assignment_ids,
             'target_type': f'{target._meta.app_label}.{target._meta.model_name}',
             'target_id': target.pk,

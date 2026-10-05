@@ -207,7 +207,7 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
 SSH credential types are assigned only to an `ipam.Service` (enforced in
 `CredentialAssignment.clean()`); quick-add builds that service from a
 `ServiceTemplate` (seeded `SSH`, `tcp/22`, migration `0024`) in the same
-transaction. Connecting needs exactly one IP and one TCP port on the service (`connection.py`). `ipam.service` is in the default `assignable_models`; denying it makes SSH assignment fail with a clear error. NetBox 4.7+ only: no
+transaction. Connecting needs exactly one IP and one TCP port on the service (`connection.py`). Quick-add takes `ip_address` (existing) or `new_ip_address` (CIDR, created in the same transaction, reusing a visible same-CIDR no-VRF address, needing `ipam.add_ipaddress`), else the target's primary IP. `ipam.service` is in the default `assignable_models`; denying it makes SSH assignment fail with a clear error. NetBox 4.7+ only: no
 `protocol`/`ports` path exists.
 
 ## Quick-add SSH password auth

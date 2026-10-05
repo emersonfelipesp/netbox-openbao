@@ -754,6 +754,15 @@ class QuickAddSSHForm(forms.Form):
             'before a credential can be used to connect; it can also be added on the service later.'
         ),
     )
+    new_ip_address = forms.CharField(
+        required=False,
+        max_length=64,
+        label=_('New IP address'),
+        help_text=_(
+            'Create the address here instead of choosing one, for example 10.0.0.5/24. With neither, '
+            "the object's primary IP is used."
+        ),
+    )
     port = forms.IntegerField(
         required=False,
         min_value=1,
@@ -806,7 +815,10 @@ class QuickAddSSHForm(forms.Form):
 
     fieldsets = (
         FieldSet('name', 'username', 'policy', name=_('Credential')),
-        FieldSet('service_template', 'service_name', 'ip_address', 'port', name=_('SSH Application Service')),
+        FieldSet(
+            'service_template', 'service_name', 'ip_address', 'new_ip_address', 'port',
+            name=_('SSH Application Service'),
+        ),
         FieldSet('auth_method', 'password', name=_('Authentication')),
         FieldSet('source', 'key_type', 'private_key', 'passphrase', 'existing_credential',
                  name=_('Key material')),

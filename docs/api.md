@@ -371,6 +371,11 @@ requires `add_credential`, view access to the target and policy, and view
 access to an existing credential when one is reused. Object-permission
 constraints apply. Only Device and VirtualMachine targets are accepted.
 
+The request takes `ip_address` (an existing IP id) or `new_ip_address` (a CIDR string such as
+`10.0.0.5/24`) but not both. A new address is created in the same transaction and needs
+`ipam.add_ipaddress`; an existing visible address with the same CIDR and no VRF is reused. With
+neither, the target's primary IP is used. The response reports `ip_address_id` and `ip_address`.
+
 The request identifies the target with `target_type` (the numeric content-type
 ID; `<app_label>.<model>` strings are not accepted) and `target_id`, then
 supplies `name`, `username`, `policy`, an optional `service_template` (the seeded `SSH` template by default), an optional `service_name`, an optional `port`, and an

@@ -1029,6 +1029,7 @@ class QuickAddSSHView(ObjectPermissionRequiredMixin, View):
                     service_template=data['service_template'],
                     service_name=data.get('service_name') or None,
                     ip_addresses=[data['ip_address']] if data.get('ip_address') else None,
+                    new_ip_address=(data.get('new_ip_address') or '').strip() or None,
                     user=request.user,
                     request=request,
                 )

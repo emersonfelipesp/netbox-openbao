@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.2 - 2026-10-05
+
+- Quick-add SSH can create the connection IP address in the same transaction. Pass
+  `new_ip_address` (a CIDR string) instead of `ip_address`; the action and the UI
+  form reuse a visible address with the same CIDR and no VRF rather than creating a
+  duplicate, require your own `ipam.add_ipaddress` permission, and fall back to the
+  object's primary IP when neither is given. The response reports `ip_address_id` and
+  `ip_address`.
+
 ## 0.2.1 - 2026-10-03
 
 - **Breaking: `ServiceEndpoint` is removed.** Connections now use NetBox's

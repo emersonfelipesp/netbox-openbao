@@ -20,8 +20,14 @@ The chain is mandatory and always the same:
    (`tcp/22`) by default. The port is taken from the template and may be
    overridden for a non-standard SSH port. An existing service of the same name
    on the object is reused, with the port added if it is not already there.
-   Fill in the **IP address** on the form (or later on the service): a credential
-   can connect only when the service has exactly one IP and one TCP port.
+   A credential can connect only when the service has exactly one IP and one
+   TCP port, so the form takes the address too: choose an **existing IP
+   address**, or enter a **new IP address** (for example `10.0.0.5/24`) and the
+   form creates it in the same transaction. If an address with the same CIDR and
+   no VRF is already visible to you it is reused, never duplicated. With
+   neither, the object's primary IP is used when it has one. Creating the
+   address needs your own `ipam.add_ipaddress` permission, and a refusal rolls
+   back the whole quick-add.
 2. A `Credential` written to OpenBao — either `ssh-password` (login password)
    or `ssh-keypair` (private key + optional passphrase), with public metadata
    extracted into NetBox for keypairs.

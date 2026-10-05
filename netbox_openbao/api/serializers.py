@@ -701,6 +701,7 @@ class QuickAddSSHRequestSerializer(serializers.Serializer):
     )
     service_name = serializers.CharField(required=False, allow_blank=True, max_length=100)
     ip_address = serializers.PrimaryKeyRelatedField(queryset=IPAddress.objects.all(), required=False, allow_null=True)
+    new_ip_address = serializers.CharField(required=False, allow_blank=True, max_length=64)
     port = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=65535)
     auth_method = serializers.ChoiceField(choices=('password', 'keypair'))
     source = serializers.ChoiceField(
@@ -793,6 +794,8 @@ class QuickAddSSHResponseSerializer(serializers.Serializer):
     fingerprint = serializers.CharField(allow_blank=True)
     key_type = serializers.CharField(allow_blank=True)
     service_id = serializers.IntegerField(allow_null=True)
+    ip_address_id = serializers.IntegerField(allow_null=True, required=False)
+    ip_address = serializers.CharField(allow_blank=True, required=False)
     assignment_ids = serializers.ListField(child=serializers.IntegerField())
     target_type = serializers.CharField()
     target_id = serializers.IntegerField()
