@@ -33,7 +33,7 @@ from django.views.decorators.debug import sensitive_variables
 from netbox_openbao.backends import get_backend
 from netbox_openbao.backends.exceptions import OpenBaoError
 from netbox_openbao.choices import AccessActionChoices, CredentialStatusChoices
-from netbox_openbao.config import get_config
+from netbox_openbao.conf import get_config
 from netbox_openbao.material_transactions import MaterialAttempt, current_material_transaction, material_operation
 from netbox_openbao.secrets.registry import extract_metadata, validate_payload
 from netbox_openbao.synchronization import (

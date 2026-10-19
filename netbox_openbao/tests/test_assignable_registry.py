@@ -21,7 +21,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from netbox_openbao import registry
-from netbox_openbao.config import assignable_model_labels
+from netbox_openbao.conf import assignable_model_labels
 from netbox_openbao.models import CredentialAssignment, OpenBaoSettings
 
 from .base import OpenBaoTestCase

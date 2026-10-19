@@ -241,6 +241,14 @@ no-store `503` unknown outcome with an explicit do-not-retry instruction.
 
 Each of these cost a debugging cycle. They are load-bearing, not stylistic.
 
+- **Never add a submodule named `config` to this package.** NetBox reads the
+  PluginConfig through the package attribute `netbox_openbao.config`, at
+  startup and again on every request to `/core/plugins/`. Importing a
+  `netbox_openbao/config.py` submodule rebinds that attribute to the module,
+  so startup works and the plugins page fails with `module
+  'netbox_openbao.config' has no attribute 'version'` (0.2.2 shipped this).
+  Settings resolution lives in `conf.py`; `tests/test_plugin_config.py`
+  guards the name.
 - **`get_client_ip()` returns a `netaddr.IPAddress`, not a string.**
   `GenericIPAddressField` cannot adapt it. Because the audit write is
   best-effort (it must never mask the operation's outcome), the failure was
@@ -293,7 +301,7 @@ Each of these cost a debugging cycle. They are load-bearing, not stylistic.
   source/destination graph before its first metadata save.
 - **`super().clean()` can return `None`** in NetBox's form chain; fall back to
   `self.cleaned_data`.
-- **Runtime configuration is database-only.** `config.get_config()` reads an
+- **Runtime configuration is database-only.** `conf.get_config()` reads an
   `OpenBaoSettings` row and then the model field default. Never restore a
   `PLUGINS_CONFIG` fallback or an automatic environment credential reader.
   `checks.py` names every ignored legacy plugin key. The explicit
@@ -613,7 +621,7 @@ NetBox 4.6.5 as the backward-regression target.
   Reach a backend through `getattr` or a long attribute chain and the scan will
   not see it; do not, or extend `_BackendCallScanner` in the same change.
 - **Configuration is database-backed, and the read path has five properties
-  that are load-bearing.** `config.get_config()` resolves per-request memo →
+  that are load-bearing.** `conf.get_config()` resolves per-request memo →
   `OpenBaoSettings` row → model field default.
   1. **A read must never create the row** — `.first()`, never `get_or_create()`.
      The Settings page renders an unsaved defaults instance on a fresh install;
@@ -721,7 +729,7 @@ NetBox 4.6.5 as the backward-regression target.
   `ready()`** — `netbox_openbao.registry.register_assignable_models(...)` — it
   does not ask the operator to duplicate the registration. The resolved allowlist is
   `assignable_models` ∪ registry − `assignable_models_deny`, computed in
-  `config.assignable_model_labels()`. Three properties are load-bearing:
+  `conf.assignable_model_labels()`. Three properties are load-bearing:
   **deny wins**, so an operator can refuse an integration's choice without
   patching someone else's plugin; the result is **sorted**, because it is
   rendered into `CredentialAssignment.clean()`'s error message and that message

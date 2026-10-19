@@ -175,7 +175,7 @@ not listed there is built but unreachable.
 netbox_openbao/
 ├── __init__.py          PluginConfig
 ├── choices.py           ChoiceSets
-├── config.py            cached settings-row and model-default resolution
+├── conf.py              cached settings-row and model-default resolution
 ├── models/              settings, encrypted auth, clusters, engines, policies, credentials, assignments, audit
 ├── administration/      capability discovery, transport boundary, audit, parity manifest
 ├── backends/            SecretBackend ABC, OpenBao/Vault/broker implementations, exceptions

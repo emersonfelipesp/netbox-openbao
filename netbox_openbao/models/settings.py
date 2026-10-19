@@ -386,7 +386,7 @@ class OpenBaoSettings(NetBoxModel):
         Concrete fields whose change is worth an audit record.
 
         Derived from the model rather than imported from
-        `config.MODEL_BACKED_SETTINGS`: that module imports this one lazily to
+        `conf.MODEL_BACKED_SETTINGS`: that module imports this one lazily to
         break a cycle, and importing it back at class-definition time would
         reinstate it.
         """

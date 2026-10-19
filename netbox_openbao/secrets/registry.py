@@ -17,7 +17,7 @@ from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 
 from netbox_openbao.choices import CredentialTypeChoices
-from netbox_openbao.config import get_config
+from netbox_openbao.conf import get_config
 
 from .extractors import extract_certificate_metadata, extract_ssh_metadata
 

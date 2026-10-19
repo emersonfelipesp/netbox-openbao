@@ -48,7 +48,7 @@ from .choices import (
     PurposeChoices,
     SSHKeyTypeChoices,
 )
-from .config import get_config
+from .conf import get_config
 from .material_transactions import material_operation
 from .models import (
     Credential,

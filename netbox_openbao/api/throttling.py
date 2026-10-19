@@ -2,7 +2,7 @@
 
 from rest_framework.throttling import UserRateThrottle
 
-from netbox_openbao.config import get_config
+from netbox_openbao.conf import get_config
 
 __all__ = ('RevealRateThrottle',)
 

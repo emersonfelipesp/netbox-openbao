@@ -20,7 +20,7 @@ from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
 from netbox_openbao.choices import CredentialStatusChoices
-from netbox_openbao.config import assignable_model_labels
+from netbox_openbao.conf import assignable_model_labels
 from netbox_openbao.models import (
     AutomationResolutionReceipt,
     Credential,

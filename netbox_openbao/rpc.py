@@ -12,7 +12,7 @@ from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 from rest_framework.exceptions import PermissionDenied
 
-from netbox_openbao.config import get_config
+from netbox_openbao.conf import get_config
 
 # Read-only catalogue entries the plugin exposes. Destructive and approval-gated
 # writes stay on netbox-rpc's own UI until a dedicated workflow lands here.

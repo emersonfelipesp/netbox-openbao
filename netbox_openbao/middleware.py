@@ -20,7 +20,7 @@ response, for exactly this reason. The plugin declares this middleware through
 an operator installs nothing and configures nothing for it to apply.
 """
 
-from .config import clear_config
+from .conf import clear_config
 
 __all__ = ('SettingsCacheMiddleware',)
 

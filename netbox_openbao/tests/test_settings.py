@@ -26,9 +26,9 @@ from rest_framework.test import APIClient
 from utilities.exceptions import AbortRequest
 from utilities.testing import APITestCase
 
-from netbox_openbao import config as config_module
+from netbox_openbao import conf as config_module
 from netbox_openbao.choices import CredentialTypeChoices
-from netbox_openbao.config import (
+from netbox_openbao.conf import (
     MODEL_BACKED_SETTINGS,
     assignable_model_labels,
     clear_config,

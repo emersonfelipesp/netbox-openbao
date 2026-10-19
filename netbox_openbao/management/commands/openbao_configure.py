@@ -14,7 +14,7 @@ from django.db import transaction
 
 from netbox_openbao.backends import get_backend
 from netbox_openbao.choices import AuthMethodChoices, BackendChoices
-from netbox_openbao.config import MODEL_BACKED_SETTINGS, clear_config, get_config
+from netbox_openbao.conf import MODEL_BACKED_SETTINGS, clear_config, get_config
 from netbox_openbao.models import (
     CredentialPolicy,
     EngineAuthMaterial,

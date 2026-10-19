@@ -18,7 +18,7 @@ from netbox_openbao import backends
 from netbox_openbao.backends.exceptions import OpenBaoMutationUnknown
 from netbox_openbao.backends.openbao import OpenBaoBackend
 from netbox_openbao.choices import CredentialTypeChoices
-from netbox_openbao.config import clear_config
+from netbox_openbao.conf import clear_config
 from netbox_openbao.models import (
     Credential,
     CredentialAccessLog,

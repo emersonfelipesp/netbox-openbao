@@ -32,7 +32,7 @@ from .administration import get_administration_backend, record_capability_observ
 from .administration.audit import AdministrationAuditError, log_administration
 from .backends.exceptions import OpenBaoError
 from .choices import AuthMethodChoices, BackendChoices
-from .config import assignable_model_labels
+from .conf import assignable_model_labels
 from .material_transactions import material_transaction
 from .models import (
     Credential,

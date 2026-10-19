@@ -116,7 +116,7 @@ def audit_settings_deletion(instance, **kwargs):
 @receiver([post_save, post_delete], sender=OpenBaoSettings)
 def clear_settings_memo(using, **kwargs):
     """Make the next read observe a saved row or the restored fallback."""
-    from .config import clear_config
+    from .conf import clear_config
 
     # Signals run before their surrounding transaction commits. Record an
     # in-flight write so reads until it ends bypass the memo instead of caching

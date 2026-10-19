@@ -35,7 +35,7 @@ from netbox_openbao.backends.broker import BrokerBackend
 from netbox_openbao.backends.exceptions import BackendConfigurationError
 from netbox_openbao.backends.openbao import OpenBaoBackend
 from netbox_openbao.backends.tls import _cleanup_private_files
-from netbox_openbao.config import clear_config, get_config
+from netbox_openbao.conf import clear_config, get_config
 from netbox_openbao.forms import EngineAuthMaterialForm
 from netbox_openbao.models import (
     CredentialPolicy,
@@ -597,7 +597,7 @@ class ConfigurationCommandTest(AuthMaterialFixture):
 class PluginsConfigIgnoredMutationTest(TestCase):
 
     def test_plugins_config_cannot_mutate_a_missing_settings_row(self):
-        from netbox_openbao.config import clear_config, get_config
+        from netbox_openbao.conf import clear_config, get_config
 
         configured = {**settings.PLUGINS_CONFIG, 'netbox_openbao': {'reveal_ttl': 9999}}
         with override_settings(PLUGINS_CONFIG=configured):

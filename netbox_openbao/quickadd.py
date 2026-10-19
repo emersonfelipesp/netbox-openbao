@@ -18,7 +18,7 @@ from django.db import transaction
 from django.utils.translation import gettext_lazy as _
 
 from netbox_openbao.choices import CredentialTypeChoices, PurposeChoices, SSHKeyTypeChoices
-from netbox_openbao.config import get_config
+from netbox_openbao.conf import get_config
 from netbox_openbao.material_transactions import material_operation
 from netbox_openbao.models import Credential, CredentialAssignment
 from netbox_openbao.secrets.generators import generate_ssh_keypair

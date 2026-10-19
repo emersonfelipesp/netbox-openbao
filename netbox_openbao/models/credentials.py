@@ -7,7 +7,7 @@ from django.utils.translation import gettext_lazy as _
 from netbox.models import PrimaryModel
 
 from netbox_openbao.choices import CredentialStatusChoices, CredentialTypeChoices
-from netbox_openbao.config import get_config
+from netbox_openbao.conf import get_config
 
 __all__ = ('Credential',)
 

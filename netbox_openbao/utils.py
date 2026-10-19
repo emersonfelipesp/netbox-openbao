@@ -3,7 +3,7 @@
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 
-from .config import assignable_model_labels
+from .conf import assignable_model_labels
 
 __all__ = ('assignable_content_types', 'get_default_engine')
 

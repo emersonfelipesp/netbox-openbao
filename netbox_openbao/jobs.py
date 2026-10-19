@@ -22,7 +22,7 @@ from netbox.jobs import JobRunner, system_job
 from .backends import get_backend
 from .backends.exceptions import OpenBaoError
 from .choices import CredentialStatusChoices, EngineStatusChoices
-from .config import clear_config, get_config
+from .conf import clear_config, get_config
 from .models import Credential, CredentialAccessLog, SecretEngine
 
 logger = logging.getLogger('netbox.plugins.netbox_openbao')

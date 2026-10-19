@@ -24,7 +24,7 @@ import threading
 from django.core.cache import cache
 
 from netbox_openbao.choices import AuthMethodChoices, EngineStatusChoices
-from netbox_openbao.config import get_config
+from netbox_openbao.conf import get_config
 from netbox_openbao.models.auth import AuthMaterialDecryptionError
 
 from .base import SecretBackend

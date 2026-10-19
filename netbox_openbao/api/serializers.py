@@ -38,7 +38,7 @@ from netbox_openbao.choices import (
     PurposeChoices,
     SSHKeyTypeChoices,
 )
-from netbox_openbao.config import get_config
+from netbox_openbao.conf import get_config
 from netbox_openbao.models import (
     Credential,
     CredentialAccessLog,

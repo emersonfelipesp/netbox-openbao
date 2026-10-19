@@ -5,7 +5,7 @@ from django.utils.translation import gettext_lazy as _
 from netbox.models import NetBoxModel
 
 from netbox_openbao.choices import CredentialTypeChoices, PurposeChoices
-from netbox_openbao.config import assignable_model_labels
+from netbox_openbao.conf import assignable_model_labels
 
 __all__ = ('CredentialAssignment',)
 

@@ -13,7 +13,7 @@ from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from netbox.plugins import PluginTemplateExtension
 
-from .config import assignable_model_labels
+from .conf import assignable_model_labels
 from .models import CredentialAssignment
 
 __all__ = ('template_extensions',)

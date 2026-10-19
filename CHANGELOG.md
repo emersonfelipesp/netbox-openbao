@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.2.post1 - 2026-10-19
+
+- Fix the NetBox plugins page (`/core/plugins/`) failing with
+  `AttributeError: module 'netbox_openbao.config' has no attribute 'version'`.
+  The settings-resolution module was named `config.py`, and importing it
+  replaced the package's `config` attribute, which NetBox reads to find the
+  plugin's `PluginConfig`. The module is now `netbox_openbao.conf`; code that
+  imported `netbox_openbao.config.get_config` or `assignable_model_labels`
+  must import them from `netbox_openbao.conf`. No model or migration change.
+
 ## 0.2.2 - 2026-10-05
 
 - Quick-add SSH can create the connection IP address in the same transaction. Pass

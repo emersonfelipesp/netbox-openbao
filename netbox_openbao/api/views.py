@@ -59,7 +59,7 @@ from netbox_openbao.api.transactions import material_api_operation
 from netbox_openbao.backends import get_backend
 from netbox_openbao.backends.exceptions import OpenBaoConflict, OpenBaoError, OpenBaoMutationUnknown
 from netbox_openbao.choices import AccessActionChoices, SSHKeyTypeChoices
-from netbox_openbao.config import assignable_model_labels, get_config
+from netbox_openbao.conf import assignable_model_labels, get_config
 from netbox_openbao.connection import service_connection
 from netbox_openbao.material_transactions import material_operation
 from netbox_openbao.models import (
