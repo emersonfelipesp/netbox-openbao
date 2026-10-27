@@ -1,13 +1,12 @@
 ---
 name: NetBox compatibility
 
-# Full NetBox/Django execution needs PostgreSQL and Redis, which the
-# unprivileged pull-request container does not expose. This workflow therefore
-# runs on `trusted-exact` — the host executor on the dedicated
-# credentials-free CI VM, which provides both — after trusted pushes to the
-# protected branch, or on an explicit dispatch by the repository owner. Never
-# add a pull-request trigger here; `ci.yml` remains the untrusted pre-merge
-# gate.
+# Full NetBox/Django execution uses pre-provisioned PostgreSQL and Redis on
+# `trusted-exact`, the host executor on the dedicated credentials-free CI VM.
+# The untrusted pull-request job starts its own local services and runs only
+# the 63 affected tests. This full workflow runs after trusted pushes to main
+# or an explicit owner dispatch. Never add a pull-request trigger here;
+# `ci.yml` remains the untrusted pre-merge gate.
 on:
   push:
     branches: [main]

@@ -54,9 +54,20 @@ PLUGINS = ['netbox_rpc', 'netbox_openbao']
 PLUGINS_CONFIG = {'netbox_rpc': {}}
 ```
 
-The checkout above is the exact NetBox 4.7 beta certification target. The
-hosted compatibility gate also runs this suite on NetBox 4.6.5 so work on the
-beta cannot silently drop the supported floor.
+The checkout above is the exact NetBox 4.7 beta certification target. NetBox
+4.7 is the supported range; the plugin's declared floor is 4.7.0. The Gitea
+pull-request workflow runs static checks and 63 affected DB-backed tests from
+`test_automation`, `test_automation_composed_concurrency`,
+`test_automation_key_identity`, and `test_assignable_registry` for `develop`
+and `main` pull requests. The job asserts the exact collection count. It uses
+the non-root, credentials-free `ci-untrusted-python312` runner, starts local
+PostgreSQL 15 from Debian's signed package repository and Redis from a
+hash-pinned wheel, and executes the pinned NetBox and netbox-rpc source
+harness. The pull-request gate pins NetBox v4.7.0 GA at
+`5f06007e4c9bacc93ce17c1e645fc1143d60df3d`. The local full-suite command
+below and the owner-dispatched `trusted-exact` compatibility workflow retain
+the full plugin-suite scope; the trusted workflow uses the earlier beta2
+certification target and also runs on a push to `main`.
 
 `netbox-rpc` is a required private source dependency. The hosted compatibility
 gate checks it out without persisted credentials at the immutable commit shown
@@ -65,12 +76,9 @@ above, verifies the exact checkout SHA and installed distribution version
 distribution version `0.1.8.post1` and source SHA must be updated together when
 the reviewed dependency source changes.
 
-The compatibility suite intentionally exercises the complete plugin under
-both NetBox versions. NetBox 4.6 and 4.7 differ in their inherited serializer
-fields, custom-action permission mapping, and bulk-list validation order. Code
-must preserve the same authorization, database rollback, and OpenBao material
-compensation guarantees even when the framework performs validation before any
-item is created or creates an earlier item before a later item fails.
+The compatibility suite exercises the complete plugin. Code must preserve the
+same authorization, database rollback, and OpenBao material compensation
+guarantees when framework validation order changes.
 
 When `NETBOX_SOURCE_DIR` is supplied, the harness requires a clean checkout at
 the expected commit and runs against an archive of that verified commit. It

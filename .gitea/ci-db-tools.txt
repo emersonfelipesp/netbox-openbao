@@ -1,0 +1,2 @@
+# CI-only Redis binary. This wheel is installed without dependencies or build steps.
+redislite==6.2.912183 --hash=sha256:6610f867c2c1b2022613c093d56cfe8293bdf6e081d2259d62b5f5318487c30e

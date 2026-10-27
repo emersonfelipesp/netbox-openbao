@@ -21,6 +21,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import close_old_connections, connection, transaction
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
+from ipam.models import Service
 from netbox_rpc.credential_authority import SecretResolutionAuthorization
 from netbox_rpc.credential_contract import CredentialReferenceV1
 from psycopg import sql
@@ -68,16 +69,23 @@ class _AutomationFixture:
         role = DeviceRole.objects.create(name='Test', slug='test')
         site = Site.objects.create(name='Test', slug='test')
         self.target = Device.objects.create(name='target', device_type=device_type, role=role, site=site)
+        self.service = Service.objects.create(
+            parent_object_type=ContentType.objects.get_for_model(Device),
+            parent_object_id=self.target.pk,
+            name='SSH',
+            port_mappings=['tcp/22'],
+        )
         self.engine = SecretEngine.objects.create(name='Test', slug='test', api_url='https://bao.invalid:8200')
         self.policy = CredentialPolicy.objects.create(name='Test', slug='test', engine=self.engine)
         self.credential = Credential(name='Credential', credential_type='password', policy=self.policy,
                                      engine=self.engine)
         write_material(self.credential, {'password': CANARY})
         self.assignment = CredentialAssignment.objects.create(
-            credential=self.credential, assigned_object_type=ContentType.objects.get_for_model(Device),
-            assigned_object_id=self.target.pk, purpose='login',
+            credential=self.credential, assigned_object_type=ContentType.objects.get_for_model(Service),
+            assigned_object_id=self.service.pk, purpose='login',
         )
-        for model, actions in ((Credential, ['view', 'reveal']), (CredentialAssignment, ['view']), (Device, ['view'])):
+        for model, actions in ((Credential, ['view', 'reveal']), (CredentialAssignment, ['view']),
+                               (Device, ['view']), (Service, ['view'])):
             permission = ObjectPermission.objects.create(name=model.__name__, actions=actions)
             permission.object_types.add(ObjectType.objects.get_for_model(model))
             permission.users.add(self.actor)

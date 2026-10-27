@@ -1,26 +1,27 @@
 ---
 name: CI
 
-# Pre-merge gate.
+# Pre-merge static and affected DB-backed gates. Both use the credentials-free,
+# non-root ci-untrusted-python312 host executor without Docker access.
 #
-# Scope: static checks and packaging only. The functional suite needs a full
-# NetBox 4.7 install plus PostgreSQL 15+ (with ltree), Redis 6+, and an OpenBao
-# dev server, and the untrusted runner provides no services. That suite runs
-# against the real stack via docker-compose.dev.yml — see docs/development.md.
+# The PR job extracts signed Debian PostgreSQL 15 packages and a hash-pinned
+# Redis 6 wheel, then starts both as unprivileged local processes. Optional
+# live OpenBao tests still require the development stack in docs/development.md.
 #
 # Runner: `ci-untrusted-python312` is a self-hosted label carrying Python 3.12
-# and `uv`. It runs with no service containers and fetches no actions from the
-# network, which is why this job builds its environment with `uv` from the
-# image rather than with `actions/setup-python`.
+# and `uv`. It runs with no service containers or Docker socket, and uses the
+# image's pinned Python toolchain rather than `actions/setup-python`.
 #
-# The equivalent job for GitHub pull requests is `.github/workflows/ci.yml`,
-# which runs the same checks on GitHub-hosted runners.
+# GitHub's separate workflow currently runs the same static checks on
+# GitHub-hosted runners; this 63-test DB-backed gate runs on Gitea PRs into
+# develop and main. The trusted compatibility harness defaults to the full
+# plugin suite.
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [develop, main]
   workflow_dispatch:
 
 concurrency:
@@ -40,6 +41,15 @@ jobs:
       UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
       UV_PYTHON_DOWNLOADS: never
     steps:
+      - name: Assert the untrusted runner has no Docker socket
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e /var/run/docker.sock
+          test ! -e /run/docker.sock
+          test -z "${DOCKER_HOST:-}"
+          echo 'Untrusted runner has no Docker socket or Docker host configured'
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -102,3 +112,57 @@ jobs:
       - name: Assert the OpenBao UI parity manifest
         shell: bash
         run: .venv/bin/python scripts/check_openbao_ui_parity.py
+
+  netbox-tests:
+    name: NetBox 4.7 affected automation and registry tests
+    needs: quality
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ci-untrusted-python312
+    timeout-minutes: 55
+    env:
+      HOME: ${{ github.workspace }}
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+      UV_PYTHON_DOWNLOADS: never
+      NETBOX_SHA: 5f06007e4c9bacc93ce17c1e645fc1143d60df3d # v4.7.0 GA
+      NETBOX_RPC_SHA: e8d4ba3535e2b4f33125c16281a34da52b634df0
+      NETBOX_CI_TEST_SCOPE: affected
+    steps:
+      - name: Assert the untrusted runner has no Docker socket
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e /var/run/docker.sock
+          test ! -e /run/docker.sock
+          test -z "${DOCKER_HOST:-}"
+          test "$(id -u)" -ne 0
+          echo 'Rootless PR runner has no Docker socket or Docker host configured'
+
+      - name: Checkout pull request
+        uses: https://git.nmulti.cloud/actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Fetch pinned RPC source from the public mirror
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .deps/netbox-rpc
+          git -C .deps/netbox-rpc init -q
+          git -C .deps/netbox-rpc remote add origin https://github.com/N-MultiCloud/netbox-rpc.git
+          git -C .deps/netbox-rpc fetch --depth=1 origin "$NETBOX_RPC_SHA"
+          git -C .deps/netbox-rpc checkout --detach FETCH_HEAD
+          test "$(git -C .deps/netbox-rpc rev-parse HEAD)" = "$NETBOX_RPC_SHA"
+          test -z "$(git -C .deps/netbox-rpc status --porcelain=v1 --untracked-files=all)"
+
+      - name: Install the hash-locked Redis CI binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v uv
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python --require-hashes --no-deps \
+            --only-binary :all: -r .gitea/ci-db-tools.txt
+
+      - name: Run the 63 affected tests against pinned NetBox source
+        shell: bash
+        run: bash scripts/ci_rootless_netbox_suite.sh

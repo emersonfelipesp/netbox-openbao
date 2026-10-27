@@ -4,7 +4,7 @@
 
 | Component | Version | Why |
 |---|---|---|
-| NetBox | **4.7.0 – 4.7.99** | See [NetBox 4.6 and 4.7](#netbox-46-and-47) |
+| NetBox | **4.7.0 – 4.7.99** | See [NetBox compatibility](#netbox-compatibility) |
 | Python | 3.12+ | NetBox 4.7 requires it |
 | PostgreSQL | 15+ **with `ltree`** | NetBox 4.7 backs hierarchical models with ltree |
 | Redis | 6+ | Job queue and the OpenBao token cache |
@@ -266,44 +266,16 @@ A `healthy` status means the URL, TLS, and authentication all work. `unauthorize
 means the stored identity is missing or OpenBao rejected it. Check the Settings
 page's configured/missing status, then run `openbao_configure test`.
 
-## NetBox 4.6 and 4.7
+## NetBox compatibility
 
-Both are supported. This section used to say 4.7 was a hard floor and list four
-reasons; three of them turned out not to be true, and they are worth correcting
-rather than deleting, because the same mistake is easy to repeat.
+Install this release on NetBox 4.7.0 through 4.7.99. NetBox 4.6 is outside the
+declared support range. SSH credentials use an `ipam.Service` attached to a
+Device or VM, and the service stores its ports in NetBox 4.7's
+`port_mappings` field. The seeded SSH service template migration also depends
+on the NetBox 4.7 `ipam` schema.
 
-Each name the plugin uses was imported under both releases. **61 of 64 NetBox
-imports, and 29 of 30 `netbox.ui` attributes, are identical.**
-
-| Claimed 4.7-only | Actually |
-|---|---|
-| `ipam.Service` moved its parent to a generic foreign key | Already true in 4.6 |
-| `register_model_actions` for custom permissions | Present in 4.6 |
-| The declarative `netbox.ui` panel framework | Present in 4.6 |
-| `GenericObjectChoiceField` | **Genuinely 4.7-only** |
-
-So the real differences are four, all handled in `netbox_openbao/compat.py`:
-
-- **Service ports.** 4.7 uses a `port_mappings` array; 4.6 used `protocol` +
-  `ports`. Quick-add writes `port_mappings` only; 4.6 is no longer supported.
-- **`Choice`.** 4.7 wraps choice entries in a class carrying a description;
-  4.6 uses plain tuples. Descriptions do not render on 4.6.
-- **`ArrayAttr`.** 4.7 renders list attributes as chips; on 4.6 they are joined
-  into text.
-- **`GenericObjectChoiceField`.** The assignment form uses one combined
-  selector on 4.7 and a separate type + ID pair on 4.6. Same assignment, but
-  the 4.6 object list does not narrow as you choose a type.
-
-Nothing about how secrets are stored, revealed, or audited differs between the
-two.
-
-### One wart, on 4.6 only
-
-`makemigrations --check` is not clean on 4.6. NetBox's own inherited `owner`
-field renders with `related_name='+'` on 4.7 and the default on 4.6, and the
-committed migration can only record one of them.
-
-It is state-only — `related_name` never touches the database, so the migration
-Django wants to generate would produce no SQL — and it does not affect
-`migrate`, which is what installs and upgrades run. Do not run
-`makemigrations` for this plugin on 4.6 and commit the result.
+The development guide describes the full plugin suite against pinned NetBox
+4.7 source with local PostgreSQL and Redis. The Gitea pull-request workflow
+automatically gates the 63 affected automation and registry tests on its
+credentials-free runner. The full suite remains available locally and in the
+owner-dispatched trusted compatibility workflow.

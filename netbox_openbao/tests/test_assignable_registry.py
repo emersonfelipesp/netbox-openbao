@@ -37,6 +37,15 @@ class RegistryCleanupMixin:
     reading of it meaningless.
     """
 
+    def setUp(self):
+        super().setUp()
+        with registry._lock:
+            registered = registry._registered.copy()
+            rejected = registry._rejected.copy()
+            registry._registered.clear()
+            registry._rejected.clear()
+        self.addCleanup(self._restore, registered, rejected)
+
     def register(self, *labels):
         self.addCleanup(
             self._restore,

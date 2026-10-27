@@ -24,12 +24,13 @@ tied to an Application Service (`Credential > ipam.Service > Device/VM`) whose
 ports use 4.7's `port_mappings`, and the seeded `SSH` service template migration
 depends on the 4.7 `ipam` schema. Do not add 4.6 shims for the service logic.
 
-**Every runtime 4.6/4.7 difference lives in `netbox_openbao/compat.py`** — read
+**Runtime NetBox compatibility logic lives in `netbox_openbao/compat.py`** — read
 its docstring before adding a runtime version check anywhere else, and add it
-there if you must add one. Migration-state differences are the exception: keep
-them self-contained in the migration graph and derive inherited field state
-from the running NetBox core, as migrations `0006` and `0014` do. Never import
-runtime compatibility helpers from a migration. See
+there if one is needed within the supported 4.7 range. Migration-state
+differences are the exception: keep them self-contained in the migration graph
+and derive inherited field state from the running NetBox core, as migrations
+`0006` and `0014` do. Never import runtime compatibility helpers from a
+migration. See
 [Verified 4.7 facts](#verified-47-facts).
 
 **Python 3.12+, PostgreSQL 15+ with `ltree`, Redis 6+.**
@@ -184,18 +185,17 @@ what 4.5/4.6-era plugin documentation says — do not "correct" them back:
    this plugin uses that 4.6 lacks is `ArrayAttr`, shimmed in `compat.py`.
 6. The **version gate compares `RELEASE.version`**, which is `"4.7.0"` on
    `4.7.0-beta2` (the `beta2` designation is a separate field), so the current
-   beta remains within the declared `4.6.0`–`4.7.99` range.
+   beta remains within the declared `4.7.0`–`4.7.99` range.
 7. `GenericObjectChoiceField` / `GenericObjectFormMixin` handle generic-FK
-   form fields. **4.7 only** — `CredentialAssignmentForm` falls back to a
-   separate type + ID pair on 4.6, which loses the HTMX re-render but produces
-   the same assignment. `FieldSet(html_id=…)` is 4.7-only for the same reason
-   and is passed conditionally.
+   form fields on the supported NetBox 4.7 range. Historical 4.6 fallbacks in
+   `CredentialAssignmentForm` and `FieldSet(html_id=…)` do not establish 4.6
+   support.
 8. GFK idiom: `to='contenttypes.ContentType'`, `on_delete=models.PROTECT`,
    `related_name='+'`.
-9. NetBox 4.6 and 4.7 differ in inherited serializer fields, custom-action
-   permission mapping, and bulk-list validation order. Compatibility tests must
-   accept either no provisional secret write or an exactly compensated write,
-   while requiring identical authorization and final database/backend state.
+9. Compatibility tests must accept either no provisional secret write or an
+   exactly compensated write while requiring identical authorization and final
+   database/backend state. Older 4.6 code paths are historical and do not
+   extend the supported range.
 10. The exact-source harness rejects a dirty `NETBOX_SOURCE_DIR`, tests an
     archive of the verified commit, and owns its virtual environment beneath
     the unique validated work root. Do not restore `NETBOX_VENV_DIR` or a
@@ -557,11 +557,16 @@ that last one broke credential creation against every real server while 200+
 tests stayed green (#17). A fake only fails in ways its author already thought
 of. Run against a real server before believing a green suite.
 
-Current beta2 state: **308 tests** pass against exact NetBox 4.7.0-beta2 with a
-live OpenBao 2.6 development server (`18` optional live-backend tests skip when
-their endpoints are not configured). `ruff check` and
-`makemigrations --check` are clean. The hosted compatibility matrix also keeps
-NetBox 4.6.5 as the backward-regression target.
+The Gitea pull-request workflow runs static checks and 63 affected DB-backed
+automation, concurrency, key-identity, and registry tests for `develop` and
+`main` on the non-root, credentials-free `ci-untrusted-python312` runner. It
+asserts the exact test count. The job starts local PostgreSQL 15 from Debian's
+signed package repository and Redis from a hash-pinned wheel. It tests exact
+NetBox v4.7.0 GA source and exact netbox-rpc source from the public GitHub
+mirror. The separate `trusted-exact` compatibility workflow defaults to the
+full plugin suite and runs only on owner dispatch or a push to `main`.
+Optional live-backend tests require an explicitly configured OpenBao
+development server.
 
 ## When changing things
 

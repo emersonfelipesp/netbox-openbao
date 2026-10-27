@@ -108,7 +108,26 @@ git -C "$NETBOX_RPC_DIR" archive \
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 PY="$VENV_DIR/bin/python"
 "$PY" -m pip install --upgrade pip wheel setuptools
-"$PY" -m pip install -r "$NETBOX_DIR/requirements.txt"
+NETBOX_REQUIREMENTS="$NETBOX_DIR/requirements.txt"
+if [[ "${NETBOX_CI_BINARY_PSYCOPG:-}" == "1" ]]; then
+  # The non-root PR runner has no compiler. Change only the driver extra in a
+  # temporary dependency list; never modify the archived NetBox source.
+  [[ "$NETBOX_SHA" == "5f06007e4c9bacc93ce17c1e645fc1143d60df3d" ]]
+  [[ "$(grep -Fxc 'psycopg[c,pool]==3.3.5' "$NETBOX_REQUIREMENTS")" == "1" ]]
+  NETBOX_CI_REQUIREMENTS="$WORK_BASE/netbox-requirements-ci.txt"
+  sed 's/^psycopg\[c,pool\]==3\.3\.5$/psycopg[binary,pool]==3.3.5/' \
+    "$NETBOX_REQUIREMENTS" > "$NETBOX_CI_REQUIREMENTS"
+  sed 's/^psycopg\[binary,pool\]==3\.3\.5$/psycopg[c,pool]==3.3.5/' \
+    "$NETBOX_CI_REQUIREMENTS" | cmp - "$NETBOX_REQUIREMENTS"
+  NETBOX_REQUIREMENTS="$NETBOX_CI_REQUIREMENTS"
+elif [[ -n "${NETBOX_CI_BINARY_PSYCOPG:-}" ]]; then
+  echo 'Unsupported NETBOX_CI_BINARY_PSYCOPG value' >&2
+  exit 1
+fi
+"$PY" -m pip install -r "$NETBOX_REQUIREMENTS"
+if [[ "${NETBOX_CI_BINARY_PSYCOPG:-}" == "1" ]]; then
+  "$PY" -m pip show psycopg-binary | grep -Fx 'Version: 3.3.5'
+fi
 "$PY" -m pip install --no-build-isolation "$NETBOX_RPC_ARCHIVE"
 actual_rpc_version="$("$PY" -c 'from importlib.metadata import version; print(version("netbox-rpc"))')"
 if [[ "$actual_rpc_version" != "$NETBOX_RPC_VERSION" ]]; then
@@ -173,12 +192,38 @@ export PYTHONPATH="$NETBOX_DIR/netbox:$ROOT_DIR:${PYTHONPATH:-}"
   makemigrations netbox_openbao --check --dry-run --noinput
 
 TEST_OUTPUT="$WORK_BASE/django-test-output.log"
-if ! "$PY" "$NETBOX_DIR/netbox/manage.py" test netbox_openbao \
+TEST_TARGETS=(netbox_openbao)
+EXPECTED_TEST_COUNT=''
+case "${NETBOX_CI_TEST_SCOPE:-full}" in
+  full) ;;
+  affected)
+    [[ "${NETBOX_CI_BINARY_PSYCOPG:-}" == 1 ]]
+    [[ "$NETBOX_SHA" == 5f06007e4c9bacc93ce17c1e645fc1143d60df3d ]]
+    TEST_TARGETS=(
+      netbox_openbao.tests.test_automation
+      netbox_openbao.tests.test_automation_composed_concurrency
+      netbox_openbao.tests.test_automation_key_identity
+      netbox_openbao.tests.test_assignable_registry
+    )
+    EXPECTED_TEST_COUNT=63
+    ;;
+  *)
+    echo 'Unsupported NETBOX_CI_TEST_SCOPE value' >&2
+    exit 1
+    ;;
+esac
+printf 'CI test scope: %s\n' "${NETBOX_CI_TEST_SCOPE:-full}"
+if ! "$PY" "$NETBOX_DIR/netbox/manage.py" test "${TEST_TARGETS[@]}" \
   --noinput --keepdb --verbosity 1 2>&1 | tee "$TEST_OUTPUT"; then
   echo "Django compatibility suite failed" >&2
   exit 1
 fi
-if ! grep -Eq '^Found [1-9][0-9]* test\(s\)\.$' "$TEST_OUTPUT"; then
+if [[ -n "$EXPECTED_TEST_COUNT" ]]; then
+  if ! grep -Fxq "Found $EXPECTED_TEST_COUNT test(s)." "$TEST_OUTPUT"; then
+    echo "The affected CI suite did not collect exactly $EXPECTED_TEST_COUNT tests" >&2
+    exit 1
+  fi
+elif ! grep -Eq '^Found [1-9][0-9]* test\(s\)\.$' "$TEST_OUTPUT"; then
   echo "Django runner did not report any collected tests; failing closed" >&2
   exit 1
 fi
