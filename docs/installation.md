@@ -276,6 +276,7 @@ on the NetBox 4.7 `ipam` schema.
 
 The development guide describes the full plugin suite against pinned NetBox
 4.7 source with local PostgreSQL and Redis. The Gitea pull-request workflow
-automatically gates the 63 affected automation and registry tests on its
-credentials-free runner. The full suite remains available locally and in the
+automatically gates 70 affected tests on its credentials-free runner. The
+selection covers automation, registry, API filters, and scanner scope. The
+full suite remains available locally and in the
 owner-dispatched trusted compatibility workflow.

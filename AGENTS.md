@@ -557,10 +557,11 @@ that last one broke credential creation against every real server while 200+
 tests stayed green (#17). A fake only fails in ways its author already thought
 of. Run against a real server before believing a green suite.
 
-The Gitea pull-request workflow runs static checks and 63 affected DB-backed
-automation, concurrency, key-identity, and registry tests for `develop` and
-`main` on the non-root, credentials-free `ci-untrusted-python312` runner. It
-asserts the exact test count. The job starts local PostgreSQL 15 from Debian's
+The Gitea pull-request workflow runs static checks and 70 affected DB-backed
+tests. The selection covers automation, concurrency, key identity, registry,
+API filters, and scanner scope. It runs on the non-root, credentials-free
+`ci-untrusted-python312` runner for `develop` and `main`. It asserts the exact
+test count. The job starts local PostgreSQL 15 from Debian's
 signed package repository and Redis from a hash-pinned wheel. It tests exact
 NetBox v4.7.0 GA source and exact netbox-rpc source from the public GitHub
 mirror. The separate `trusted-exact` compatibility workflow defaults to the

@@ -11,7 +11,8 @@ from unittest.mock import patch
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
 from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
-from users.models import ObjectPermission
+from netbox_rpc.models import RPCExecution
+from users.models import ObjectPermission, User
 from utilities.testing import APITestCase
 
 from netbox_openbao import backends
@@ -24,6 +25,7 @@ from netbox_openbao.models import (
     CredentialAccessLog,
     CredentialAssignment,
     CredentialPolicy,
+    OpenBaoProcedureRun,
     OpenBaoSettings,
     SecretEngine,
 )
@@ -31,6 +33,72 @@ from netbox_openbao.services import write_material
 
 from .base import MaterialTransactionTestMixin
 from .fakes import FakeBackend
+from .test_rpc import _make_device, _make_procedure
+
+
+class OpenBaoProcedureRunFilterAPITest(APITestCase):
+    """Exercise procedure-run filters through the authenticated REST endpoint."""
+
+    def setUp(self):
+        super().setUp()
+        self.add_permissions('netbox_openbao.view_openbaoprocedurerun')
+        users = (
+            self.user,
+            User.objects.create_user(username='openbao-api-second'),
+            User.objects.create_user(username='openbao-api-third'),
+        )
+        device = _make_device()
+        device_type = ContentType.objects.get_for_model(Device)
+        self.runs = []
+        for index, user in enumerate(users):
+            engine = SecretEngine.objects.create(
+                name=f'Procedure engine {index}',
+                slug=f'procedure-engine-{index}',
+                api_url=f'https://bao-{index}.example.net:8200',
+            )
+            procedure_name = f'service.openbao.1.api_filter_{index}'
+            execution = RPCExecution.objects.create(
+                procedure=_make_procedure(procedure_name),
+                assigned_object_type=device_type,
+                assigned_object_id=device.pk,
+                requested_by=user,
+            )
+            self.runs.append(OpenBaoProcedureRun.objects.create(
+                engine=engine,
+                rpc_execution=execution,
+                procedure_name=procedure_name,
+                initiated_by=user,
+            ))
+        self.list_url = reverse('plugins-api:netbox_openbao-api:openbaoprocedurerun-list')
+
+    def assert_filtered_ids(self, params, expected_runs):
+        response = self.client.get(self.list_url, params, **self.header)
+        expected_ids = {run.pk for run in expected_runs}
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.data['count'], len(expected_ids))
+        self.assertEqual({result['id'] for result in response.data['results']}, expected_ids)
+
+    def test_repeated_initiator_ids_include_both_users_but_exclude_a_third(self):
+        self.assert_filtered_ids(
+            {'initiated_by_id': [self.runs[0].initiated_by_id, self.runs[1].initiated_by_id]},
+            self.runs[:2],
+        )
+
+    def test_unknown_initiator_id_returns_bad_request(self):
+        missing_id = User.objects.order_by('-pk').first().pk + 1
+        response = self.client.get(self.list_url, {'initiated_by_id': missing_id}, **self.header)
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('initiated_by_id', response.data)
+
+    def test_engine_id_filters_api_results(self):
+        self.assert_filtered_ids({'engine_id': self.runs[1].engine_id}, self.runs[1:2])
+
+    def test_procedure_name_filters_api_results(self):
+        self.assert_filtered_ids(
+            {'procedure_name': self.runs[2].procedure_name.upper()},
+            self.runs[2:3],
+        )
 
 
 class OpenBaoAPITestCase(MaterialTransactionTestMixin, APITestCase):

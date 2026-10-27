@@ -13,7 +13,7 @@ name: CI
 # image's pinned Python toolchain rather than `actions/setup-python`.
 #
 # GitHub's separate workflow currently runs the same static checks on
-# GitHub-hosted runners; this 63-test DB-backed gate runs on Gitea PRs into
+# GitHub-hosted runners; this 70-test DB-backed gate runs on Gitea PRs into
 # develop and main. The trusted compatibility harness defaults to the full
 # plugin suite.
 
@@ -114,7 +114,7 @@ jobs:
         run: .venv/bin/python scripts/check_openbao_ui_parity.py
 
   netbox-tests:
-    name: NetBox 4.7 affected automation and registry tests
+    name: NetBox 4.7 affected regression tests
     needs: quality
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ci-untrusted-python312
@@ -163,6 +163,6 @@ jobs:
           uv pip install --python .venv/bin/python --require-hashes --no-deps \
             --only-binary :all: -r .gitea/ci-db-tools.txt
 
-      - name: Run the 63 affected tests against pinned NetBox source
+      - name: Run the 70 affected tests against pinned NetBox source
         shell: bash
         run: bash scripts/ci_rootless_netbox_suite.sh

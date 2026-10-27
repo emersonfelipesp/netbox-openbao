@@ -302,6 +302,20 @@ class BackendContractTest(TestCase):
         )
         self.assertEqual(_scan_source(source), set())
 
+    def test_the_scan_conservatively_includes_a_name_rebound_in_another_function(self):
+        # Aliases are collected across the module. A false requirement fails
+        # loudly; omitting a real backend call would silently weaken the guard.
+        source = (
+            'def backend_call(engine):\n'
+            '    store = get_backend(engine)\n'
+            '    return store.read_metadata("path")\n'
+            'def unrelated_call():\n'
+            '    store = build_something()\n'
+            '    return store.frobnicate()\n'
+        )
+
+        self.assertEqual(_scan_source(source), {'read_metadata', 'frobnicate'})
+
     def test_subclass_missing_a_required_method_cannot_be_instantiated(self):
         required = sorted(SecretBackend.__abstractmethods__)
         for omitted in required:

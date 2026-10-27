@@ -15,14 +15,24 @@ every test that runs afterwards, and the resulting failure would point at the
 wrong test entirely.
 """
 
+from unittest.mock import patch
+
 from dcim.models import Site
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
+from utilities.testing import TestCase as NetBoxTestCase
 
 from netbox_openbao import registry
+from netbox_openbao.choices import CredentialTypeChoices
 from netbox_openbao.conf import assignable_model_labels
-from netbox_openbao.models import CredentialAssignment, OpenBaoSettings
+from netbox_openbao.models import (
+    Credential,
+    CredentialAssignment,
+    CredentialPolicy,
+    OpenBaoSettings,
+    SecretEngine,
+)
 
 from .base import OpenBaoTestCase
 
@@ -254,6 +264,16 @@ class MalformedRegistrationTest(RegistryCleanupMixin, TestCase):
 
         self.assertNotIn('no_such_plugin.endpoint', assignable_model_labels())
 
+    def test_an_unexpected_app_registry_error_rejects_without_propagating(self):
+        with patch('django.apps.apps.get_model', side_effect=RuntimeError('registry probe failed')):
+            with self.assertLogs('netbox.plugins.netbox_openbao', level='ERROR') as logs:
+                self.register('dcim.site')
+
+        self.assertNotIn('dcim.site', registry.registered_assignable_models())
+        self.assertNotIn('dcim.site', assignable_model_labels())
+        self.assertIn('dcim.site', registry.rejected_assignable_models())
+        self.assertIn('dcim.site', '\n'.join(logs.output))
+
     def test_registration_never_raises(self):
         """`ready()` must survive whatever a plugin hands it."""
         with self.assertLogs('netbox.plugins.netbox_openbao', level='ERROR'):
@@ -278,6 +298,47 @@ class SiteProxy(Site):
     class Meta:
         proxy = True
         app_label = 'dcim'
+
+
+class PanelAssignmentRenderingTest(RegistryCleanupMixin, NetBoxTestCase):
+    """A proxy must show assignments stored for its concrete content type."""
+
+    def test_proxy_renders_its_concrete_objects_credential_assignment(self):
+        from netbox_openbao.template_content import CredentialsPanel
+
+        self.add_permissions('netbox_openbao.view_credentialassignment')
+        self.register('dcim.site')
+        site = Site.objects.create(name='Proxy assignment site', slug='proxy-assignment-site')
+        engine = SecretEngine.objects.create(
+            name='Proxy assignment engine',
+            slug='proxy-assignment-engine',
+            api_url='https://bao.example.net:8200',
+        )
+        policy = CredentialPolicy.objects.create(
+            name='Proxy assignment policy',
+            slug='proxy-assignment-policy',
+            engine=engine,
+            openbao_policy='netbox-lab',
+        )
+        credential = Credential.objects.create(
+            name='proxy-site-login',
+            credential_type=CredentialTypeChoices.TYPE_PASSWORD,
+            policy=policy,
+            engine=engine,
+        )
+        CredentialAssignment.objects.create(
+            credential=credential,
+            assigned_object_type=ContentType.objects.get_for_model(Site),
+            assigned_object_id=site.pk,
+        )
+        request = RequestFactory().get('/')
+        request.user = self.user
+        proxied_site = SiteProxy.objects.get(pk=site.pk)
+
+        html = CredentialsPanel({'object': proxied_site, 'request': request}).right_page()
+
+        self.assertIn(credential.get_absolute_url(), html)
+        self.assertIn(f'>{credential.name}</a>', html)
 
 
 class PanelRegistrationTest(TestCase):
