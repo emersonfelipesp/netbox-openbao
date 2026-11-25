@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from math import isfinite
 from typing import Any
 
 from .schema import CapabilitySchemaError
@@ -11,6 +12,8 @@ MAX_CLUSTER_JSON_BYTES = 1_000_000
 MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 MAX_HA_NODES = 256
 MAX_RAFT_PEERS = 256
+MAX_METRIC_ENTRIES = 5_000
+MAX_METRIC_NUMBER = 2**63
 SNAPSHOT_CHUNK_BYTES = 64 * 1024
 
 
@@ -120,6 +123,197 @@ class RaftConfiguration:
 
     def peer(self, node_id: str) -> RaftPeer | None:
         return next((peer for peer in self.peers if peer.node_id == node_id), None)
+
+
+@dataclass(frozen=True, slots=True)
+class MetricsSnapshot:
+    timestamp: str
+    active: int | float | None = None
+    unsealed: int | float | None = None
+    in_flight_requests: int | float | None = None
+    locked_users: int | float | None = None
+    leases: int | float | None = None
+    irrevocable_leases: int | float | None = None
+    alloc_bytes: int | float | None = None
+    sys_bytes: int | float | None = None
+    heap_objects: int | float | None = None
+    goroutines: int | float | None = None
+    total_gc_runs: int | float | None = None
+    total_gc_pause_ns: int | float | None = None
+    auth_mounts: int | float | None = None
+    secret_mounts: int | float | None = None
+    audit_request_failures: int | float | None = None
+    audit_response_failures: int | float | None = None
+
+
+_GAUGE_FIELDS = {
+    'vault.core.active': 'active',
+    'vault.core.unsealed': 'unsealed',
+    'vault.core.in_flight_requests': 'in_flight_requests',
+    'vault.core.locked_users': 'locked_users',
+    'vault.expire.num_leases': 'leases',
+    'vault.expire.num_irrevocable_leases': 'irrevocable_leases',
+    'vault.runtime.alloc_bytes': 'alloc_bytes',
+    'vault.runtime.sys_bytes': 'sys_bytes',
+    'vault.runtime.heap_objects': 'heap_objects',
+    'vault.runtime.num_goroutines': 'goroutines',
+    'vault.runtime.total_gc_runs': 'total_gc_runs',
+    'vault.runtime.total_gc_pause_ns': 'total_gc_pause_ns',
+}
+_COUNTER_FIELDS = {
+    'vault.audit.log_request_failure': 'audit_request_failures',
+    'vault.audit.log_response_failure': 'audit_response_failures',
+}
+
+
+def _metric_number(value: Any, field_name: str) -> int | float:
+    try:
+        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
+    except OverflowError:
+        valid = False
+    if not valid or value < 0 or value > MAX_METRIC_NUMBER:
+        raise CapabilitySchemaError(f'OpenBao returned invalid {field_name}.')
+    return value
+
+
+def _metric_entries(payload: dict[str, Any], key: str) -> list[Any]:
+    entries = payload.get(key, [])
+    if not isinstance(entries, list) or len(entries) > MAX_METRIC_ENTRIES:
+        raise CapabilitySchemaError(f'OpenBao returned invalid {key}.')
+    return entries
+
+
+def _metric_entry(value: Any, group: str) -> tuple[str, dict[str, Any]]:
+    entry = _mapping(value, f'{group} metric')
+    name = entry.get('Name')
+    if not isinstance(name, str):
+        raise CapabilitySchemaError(f'OpenBao returned invalid {group} metric name.')
+    return name, entry
+
+
+def _metric_labels(entry: dict[str, Any]) -> dict[str, str]:
+    labels = _mapping(entry.get('Labels', {}), 'metric labels')
+    if any(not isinstance(value, str) for value in labels.values()):
+        raise CapabilitySchemaError('OpenBao returned invalid metric labels.')
+    return labels
+
+
+def _record_mount_metric(
+    entry: dict[str, Any], mounts: dict[str, int | float], mount_seen: set[str]
+) -> None:
+    labels = _metric_labels(entry)
+    mount_type = labels.get('type')
+    if mount_type in mounts:
+        total = mounts[mount_type] + _metric_number(entry.get('Value'), 'metric value')
+        mounts[mount_type] = _metric_number(total, 'aggregated mount total')
+        mount_seen.add(mount_type)
+
+
+def _record_gauge_metric(
+    entry: dict[str, Any], field_name: str, values: dict[str, int | float | None], clustered: dict[str, bool]
+) -> None:
+    number = _metric_number(entry.get('Value'), 'metric value')
+    labels = _metric_labels(entry)
+    has_cluster = bool(labels.get('cluster'))
+    current = values[field_name]
+    if has_cluster:
+        values[field_name] = (
+            max(current, number) if clustered.get(field_name, False) and current is not None else number
+        )
+        clustered[field_name] = True
+    elif not clustered.get(field_name, False):
+        values[field_name] = number if current is None else max(current, number)
+
+
+def _normalize_gauges(entries: list[Any]) -> dict[str, int | float | None]:
+    values: dict[str, int | float | None] = {field: None for field in _GAUGE_FIELDS.values()}
+    clustered: dict[str, bool] = {}
+    mounts: dict[str, int | float] = {'auth': 0, 'logical': 0}
+    mount_seen: set[str] = set()
+    for raw_entry in entries:
+        name, entry = _metric_entry(raw_entry, 'gauge')
+        if name == 'vault.core.mount_table.num_entries':
+            _record_mount_metric(entry, mounts, mount_seen)
+            continue
+        field_name = _GAUGE_FIELDS.get(name)
+        if field_name is None:
+            continue
+        _record_gauge_metric(entry, field_name, values, clustered)
+    values['auth_mounts'] = mounts['auth'] if 'auth' in mount_seen else None
+    values['secret_mounts'] = mounts['logical'] if 'logical' in mount_seen else None
+    return values
+
+
+def _normalize_counters(entries: list[Any]) -> dict[str, int | float | None]:
+    values: dict[str, int | float | None] = {field: None for field in _COUNTER_FIELDS.values()}
+    for raw_entry in entries:
+        name, entry = _metric_entry(raw_entry, 'counter')
+        field_name = _COUNTER_FIELDS.get(name)
+        if field_name is not None:
+            _metric_labels(entry)
+            values[field_name] = _metric_number(entry.get('Count'), 'metric count')
+    return values
+
+
+def normalize_metrics(payload: Any) -> MetricsSnapshot:
+    value = _mapping(payload, 'metrics payload')
+    timestamp = _optional_string(value.get('Timestamp'), 'metrics timestamp', maximum=100)
+    fields = _normalize_gauges(_metric_entries(value, 'Gauges'))
+    fields.update(_normalize_counters(_metric_entries(value, 'Counters')))
+    return MetricsSnapshot(timestamp=timestamp, **fields)
+
+
+def _bounded_kwargs(kwargs: dict[str, Any], budget) -> dict[str, Any] | None:
+    """Return request kwargs capped by the caller's remaining budget, or None when spent.
+
+    `budget` is an optional callable returning the seconds left. Without one,
+    the kwargs pass through unchanged, so the Administration tab keeps its
+    default behaviour.
+    """
+    if budget is None:
+        return kwargs
+    remaining = budget()
+    if remaining <= 0:
+        return None
+    timeout = kwargs.get('timeout')
+    return {**kwargs, 'timeout': remaining if timeout is None else min(timeout, remaining)}
+
+
+def _read_leader(backend, seal, kwargs, budget):
+    if not seal.initialized or seal.sealed:
+        return None
+    bounded = _bounded_kwargs(kwargs, budget)
+    return None if bounded is None else backend.leader_status(**bounded)
+
+
+def _read_ha(backend, leader, kwargs, budget):
+    if leader is None or not leader.ha_enabled:
+        return None
+    bounded = _bounded_kwargs(kwargs, budget)
+    return None if bounded is None else backend.ha_status(**bounded)
+
+
+def _read_raft(backend, seal, kwargs, budget):
+    if seal.storage_type != 'raft' or seal.sealed:
+        return None
+    bounded = _bounded_kwargs(kwargs, budget)
+    return None if bounded is None else backend.raft_configuration(**bounded)
+
+
+def collect_cluster_state(backend, *, timeout=None, seal: SealStatus | None = None, budget=None) -> dict[str, Any]:
+    """Read lifecycle state with the reviewed gating shared by every cluster view.
+
+    Leader state is read only on an initialized, unsealed node; HA only when the
+    leader reports HA; Raft only for unsealed Raft storage. A caller that already
+    holds a fresh seal status passes it in so it is not read twice.
+    """
+    kwargs = {} if timeout is None else {'timeout': timeout}
+    if seal is None:
+        seal = backend.seal_status(**kwargs)
+    leader = _read_leader(backend, seal, kwargs, budget)
+    ha = _read_ha(backend, leader, kwargs, budget)
+    raft = _read_raft(backend, seal, kwargs, budget)
+    return {'seal': seal, 'leader': leader, 'ha': ha, 'raft': raft}
 
 
 @dataclass(frozen=True, slots=True, repr=False)

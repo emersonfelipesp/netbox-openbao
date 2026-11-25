@@ -77,6 +77,10 @@
     "ui-configuration": {
       "direct": ["netbox_openbao/tests/test_finalization_administration.py"],
       "broker": ["netbox_openbao/tests/test_broker_administration.py"]
+    },
+    "dashboard": {
+      "direct": ["netbox_openbao/tests/test_overview.py"],
+      "broker": ["netbox_openbao/tests/test_overview.py"]
     }
   },
   "families": [
@@ -760,6 +764,25 @@
           "implementation": ["netbox_openbao/administration/finalization.py", "netbox_openbao/administration/openbao-final-v2.6.2.json", "netbox_openbao/api/finalization_views.py"],
           "ui": ["netbox_openbao/templates/netbox_openbao/openbaocluster_operations.html", "netbox_openbao/static/netbox_openbao/finalization_administration.js"],
           "tests": ["netbox_openbao/tests/test_finalization_administration.py", "netbox_openbao/tests/test_finalization_administration_live.py", "netbox_openbao/tests/test_finalization_administration_browser.py"]
+        }
+      }
+    },
+    {
+      "id": "dashboard",
+      "upstream_routes": [
+        "dashboard"
+      ],
+      "capability": "Read-only cluster inventory, live lifecycle state, HA and Raft topology, and allowlisted operational metrics",
+      "owner_issue": 171,
+      "status": "complete",
+      "equivalence": {
+        "dashboard": "The plugin root combines permission-filtered stored inventory with independently loaded, audited live cluster state and a closed allowlist of sys/metrics values; broker mode reports metrics as unsupported without direct fallback."
+      },
+      "evidence": {
+        "dashboard": {
+          "implementation": ["netbox_openbao/administration/cluster.py", "netbox_openbao/administration/backends.py", "netbox_openbao/views.py"],
+          "ui": ["netbox_openbao/templates/netbox_openbao/overview.html", "netbox_openbao/templates/netbox_openbao/inc/overview_cluster_card.html"],
+          "tests": ["netbox_openbao/tests/test_overview.py"]
         }
       }
     }

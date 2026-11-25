@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.3 - Unreleased
+
+- Add an OpenBao Overview page at the plugin root (`/plugins/openbao/`). It
+  renders a permission-filtered database summary immediately: stored cluster
+  and secret-engine health, credential counts by lifecycle status, staged
+  credentials, and credential access in the last 24 hours. Engines on a cluster
+  the user cannot view show `Restricted cluster`.
+- Each cluster the user may discover loads a live card independently. The card
+  shows the sealed or unsealed state, initialization, unseal progress, seal
+  type, recovery seal, migration, version, storage type, cluster identity, the
+  node role, the HA leader, Raft indices and peers, HA nodes, and an allowlisted
+  set of OpenBao metrics. Every card is permission-checked, audited, and
+  `no-store`. A refused or failed detail or metrics read degrades only that
+  section.
+- Add a reviewed `sys/metrics` administration read. It is fixed-path,
+  size-bounded, and normalised through an allowlist that discards labels and
+  unknown metrics. The cluster service identity needs
+  `path "sys/metrics" { capabilities = ["read"] }` for the metrics table.
+  Broker mode does not support metrics and never falls back to direct access.
+- `get_administration_backend()` accepts a request-scoped timeout that also
+  bounds authentication and broker transport for that instance. Callers that
+  pass none keep the 30-second default. The overview card uses a five-second
+  timeout and a twelve-second budget that caps every read after the seal
+  state.
+- No model or migration change.
+
 ## 0.2.2.post1 - 2026-10-19
 
 - Fix the NetBox plugins page (`/core/plugins/`) failing with

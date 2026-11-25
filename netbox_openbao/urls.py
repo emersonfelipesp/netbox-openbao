@@ -6,6 +6,12 @@ from . import views
 app_name = 'netbox_openbao'
 
 urlpatterns = (
+    path('', views.OpenBaoOverviewView.as_view(), name='overview'),
+    path(
+        'overview/clusters/<int:pk>/live/',
+        views.OpenBaoOverviewClusterCardView.as_view(),
+        name='overview_cluster_card',
+    ),
     path('clusters/', include(get_model_urls('netbox_openbao', 'openbaocluster', detail=False))),
     path('clusters/<int:pk>/', include(get_model_urls('netbox_openbao', 'openbaocluster'))),
 

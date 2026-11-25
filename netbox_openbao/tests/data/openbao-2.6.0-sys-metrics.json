@@ -1,0 +1,658 @@
+{
+    "Timestamp": "2026-11-25 14:41:10 +0000 UTC",
+    "Gauges": [
+        {
+            "Name": "vault.core.active",
+            "Value": 1,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad"
+            }
+        },
+        {
+            "Name": "vault.core.in_flight_requests",
+            "Value": 0,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad"
+            }
+        },
+        {
+            "Name": "vault.core.locked_users",
+            "Value": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.core.mount_table.num_entries",
+            "Value": 1,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad",
+                "local": "false",
+                "type": "auth"
+            }
+        },
+        {
+            "Name": "vault.core.mount_table.num_entries",
+            "Value": 0,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad",
+                "local": "true",
+                "type": "auth"
+            }
+        },
+        {
+            "Name": "vault.core.mount_table.num_entries",
+            "Value": 3,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad",
+                "local": "false",
+                "type": "logical"
+            }
+        },
+        {
+            "Name": "vault.core.mount_table.num_entries",
+            "Value": 1,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad",
+                "local": "true",
+                "type": "logical"
+            }
+        },
+        {
+            "Name": "vault.core.mount_table.size",
+            "Value": 308,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad",
+                "local": "false",
+                "type": "auth"
+            }
+        },
+        {
+            "Name": "vault.core.mount_table.size",
+            "Value": 0,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad",
+                "local": "true",
+                "type": "auth"
+            }
+        },
+        {
+            "Name": "vault.core.mount_table.size",
+            "Value": 358,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad",
+                "local": "false",
+                "type": "logical"
+            }
+        },
+        {
+            "Name": "vault.core.mount_table.size",
+            "Value": 371,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad",
+                "local": "true",
+                "type": "logical"
+            }
+        },
+        {
+            "Name": "vault.core.unsealed",
+            "Value": 0,
+            "Labels": {
+                "cluster": ""
+            }
+        },
+        {
+            "Name": "vault.core.unsealed",
+            "Value": 1,
+            "Labels": {
+                "cluster": "vault-cluster-74acfaad"
+            }
+        },
+        {
+            "Name": "vault.expire.num_irrevocable_leases",
+            "Value": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.expire.num_leases",
+            "Value": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.runtime.alloc_bytes",
+            "Value": 13373768,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.runtime.free_count",
+            "Value": 67003,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.runtime.heap_objects",
+            "Value": 68204,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.runtime.malloc_count",
+            "Value": 135207,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.runtime.num_goroutines",
+            "Value": 498,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.runtime.sys_bytes",
+            "Value": 51120410,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.runtime.total_gc_pause_ns",
+            "Value": 2061008,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.runtime.total_gc_runs",
+            "Value": 5,
+            "Labels": {}
+        }
+    ],
+    "Points": [],
+    "Counters": [
+        {
+            "Name": "vault.audit.log_request_failure",
+            "Count": 3,
+            "Rate": 0,
+            "Sum": 0,
+            "Min": 0,
+            "Max": 0,
+            "Mean": 0,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.audit.log_response_failure",
+            "Count": 3,
+            "Rate": 0,
+            "Sum": 0,
+            "Min": 0,
+            "Max": 0,
+            "Mean": 0,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.barrier.estimated_encryptions",
+            "Count": 30,
+            "Rate": 3,
+            "Sum": 30,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {
+                "term": "1"
+            }
+        },
+        {
+            "Name": "vault.cache.hit",
+            "Count": 10,
+            "Rate": 1,
+            "Sum": 10,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.cache.miss",
+            "Count": 51,
+            "Rate": 5.1,
+            "Sum": 51,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.cache.write",
+            "Count": 25,
+            "Rate": 2.5,
+            "Sum": 25,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.seal.decrypt",
+            "Count": 1,
+            "Rate": 0.1,
+            "Sum": 1,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.seal.encrypt",
+            "Count": 1,
+            "Rate": 0.1,
+            "Sum": 1,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.seal.shamir.decrypt",
+            "Count": 1,
+            "Rate": 0.1,
+            "Sum": 1,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.seal.shamir.encrypt",
+            "Count": 1,
+            "Rate": 0.1,
+            "Sum": 1,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.token.create_root",
+            "Count": 2,
+            "Rate": 0.2,
+            "Sum": 2,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.token.creation",
+            "Count": 1,
+            "Rate": 0.1,
+            "Sum": 1,
+            "Min": 1,
+            "Max": 1,
+            "Mean": 1,
+            "Stddev": 0,
+            "Labels": {
+                "auth_method": "token",
+                "cluster": "vault-cluster-74acfaad",
+                "creation_ttl": "1m",
+                "mount_point": "auth/token/",
+                "namespace": "root",
+                "token_type": "service"
+            }
+        }
+    ],
+    "Samples": [
+        {
+            "Name": "vault.audit.log_request",
+            "Count": 3,
+            "Rate": 0.0022514999844133856,
+            "Sum": 0.022514999844133854,
+            "Min": 0.0059079998172819614,
+            "Max": 0.008816000074148178,
+            "Mean": 0.007504999948044618,
+            "Stddev": 0.00147494521101031,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.audit.log_response",
+            "Count": 3,
+            "Rate": 0.0020610000472515823,
+            "Sum": 0.02061000047251582,
+            "Min": 0.002549000084400177,
+            "Max": 0.013314000330865383,
+            "Mean": 0.006870000157505274,
+            "Stddev": 0.005687851496466929,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.barrier.delete",
+            "Count": 9,
+            "Rate": 0.003512699983548373,
+            "Sum": 0.03512699983548373,
+            "Min": 0.0012710000155493617,
+            "Max": 0.011812999844551086,
+            "Mean": 0.0039029999817204145,
+            "Stddev": 0.003123213847479368,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.barrier.get",
+            "Count": 70,
+            "Rate": 0.0815130002098158,
+            "Sum": 0.815130002098158,
+            "Min": 0.001276999944821,
+            "Max": 0.08296199887990952,
+            "Mean": 0.011644714315687971,
+            "Stddev": 0.01233494478197656,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.barrier.list",
+            "Count": 26,
+            "Rate": 0.009810299891978503,
+            "Sum": 0.09810299891978502,
+            "Min": 0.0005159999709576368,
+            "Max": 0.04952799901366234,
+            "Mean": 0.0037731922661455777,
+            "Stddev": 0.009454385303955246,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.barrier.list-page",
+            "Count": 17,
+            "Rate": 0.14307770126033575,
+            "Sum": 1.4307770126033574,
+            "Min": 0.0006680000224150717,
+            "Max": 1.3144400119781494,
+            "Mean": 0.08416335368255044,
+            "Stddev": 0.3172201574154244,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.barrier.put",
+            "Count": 28,
+            "Rate": 0.0669192002620548,
+            "Sum": 0.669192002620548,
+            "Min": 0.006393000017851591,
+            "Max": 0.06905700266361237,
+            "Mean": 0.023899714379305288,
+            "Stddev": 0.015433216190149222,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.core.check_token",
+            "Count": 3,
+            "Rate": 0.6539525836706161,
+            "Sum": 6.5395258367061615,
+            "Min": 0.04298999905586243,
+            "Max": 6.201213836669922,
+            "Mean": 2.1798419455687204,
+            "Stddev": 3.4848948010955723,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.core.fetch_acl_and_token",
+            "Count": 3,
+            "Rate": 0.0039899000898003575,
+            "Sum": 0.03989900089800358,
+            "Min": 0.009677000343799591,
+            "Max": 0.016339000314474106,
+            "Mean": 0.013299666966001192,
+            "Stddev": 0.003369090260514859,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.core.handle_request",
+            "Count": 3,
+            "Rate": 1.479783648252487,
+            "Sum": 14.797836482524872,
+            "Min": 0.6210569739341736,
+            "Max": 10.723946571350098,
+            "Mean": 4.932612160841624,
+            "Stddev": 5.211468551890595,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.core.post_unseal",
+            "Count": 2,
+            "Rate": 8.629903268814086,
+            "Sum": 86.29903268814087,
+            "Min": 7.000463962554932,
+            "Max": 79.29856872558594,
+            "Mean": 43.149516344070435,
+            "Stddev": 51.12248014487465,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.core.pre_seal",
+            "Count": 1,
+            "Rate": 0.19583920240402222,
+            "Sum": 1.9583920240402222,
+            "Min": 1.9583920240402222,
+            "Max": 1.9583920240402222,
+            "Mean": 1.9583920240402222,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.core.unseal",
+            "Count": 1,
+            "Rate": 0.8944767951965332,
+            "Sum": 8.944767951965332,
+            "Min": 8.944767951965332,
+            "Max": 8.944767951965332,
+            "Mean": 8.944767951965332,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.expire.register-auth",
+            "Count": 1,
+            "Rate": 0.03824450075626373,
+            "Sum": 0.38244500756263733,
+            "Min": 0.38244500756263733,
+            "Max": 0.38244500756263733,
+            "Mean": 0.38244500756263733,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.expire.revoke",
+            "Count": 1,
+            "Rate": 0.04727340042591095,
+            "Sum": 0.4727340042591095,
+            "Min": 0.4727340042591095,
+            "Max": 0.4727340042591095,
+            "Mean": 0.4727340042591095,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.expire.revoke-by-token",
+            "Count": 1,
+            "Rate": 0.0069899000227451324,
+            "Sum": 0.06989900022745132,
+            "Min": 0.06989900022745132,
+            "Max": 0.06989900022745132,
+            "Mean": 0.06989900022745132,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.expire.revoke-common",
+            "Count": 2,
+            "Rate": 0.05027580037713051,
+            "Sum": 0.5027580037713051,
+            "Min": 0.044822998344898224,
+            "Max": 0.45793500542640686,
+            "Mean": 0.25137900188565254,
+            "Stddev": 0.2921143015969198,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.namespace.get_namespace_by_accessor",
+            "Count": 37,
+            "Rate": 0.003885199999785982,
+            "Sum": 0.03885199999785982,
+            "Min": 0.0003480000013951212,
+            "Max": 0.007780000101774931,
+            "Mean": 0.0010500540539962113,
+            "Stddev": 0.00125288532927665,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.namespace.list_namespaces",
+            "Count": 20,
+            "Rate": 0.013867500022752211,
+            "Sum": 0.1386750002275221,
+            "Min": 0.0007110000005923212,
+            "Max": 0.05215900018811226,
+            "Mean": 0.006933750011376106,
+            "Stddev": 0.011125755223631581,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.policy.get_policy",
+            "Count": 9,
+            "Rate": 0.09061509964521974,
+            "Sum": 0.9061509964521974,
+            "Min": 0.0023139999248087406,
+            "Max": 0.6882359981536865,
+            "Mean": 0.10068344405024415,
+            "Stddev": 0.22401427257647327,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.route.update.auth-token-",
+            "Count": 2,
+            "Rate": 0.31865320205688474,
+            "Sum": 3.1865320205688477,
+            "Min": 0.5611670017242432,
+            "Max": 2.6253650188446045,
+            "Mean": 1.5932660102844238,
+            "Stddev": 1.4596084156176325,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.route.update.sys-",
+            "Count": 1,
+            "Rate": 0.4466819763183594,
+            "Sum": 4.466819763183594,
+            "Min": 4.466819763183594,
+            "Max": 4.466819763183594,
+            "Mean": 4.466819763183594,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.runtime.gc_pause_ns",
+            "Count": 5,
+            "Rate": 206100.8,
+            "Sum": 2061008,
+            "Min": 148134,
+            "Max": 739752,
+            "Mean": 412201.6,
+            "Stddev": 244671.20981901407,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.seal.decrypt.time",
+            "Count": 1,
+            "Rate": 0.0019770000129938126,
+            "Sum": 0.019770000129938126,
+            "Min": 0.019770000129938126,
+            "Max": 0.019770000129938126,
+            "Mean": 0.019770000129938126,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.seal.encrypt.time",
+            "Count": 1,
+            "Rate": 0.1725693941116333,
+            "Sum": 1.725693941116333,
+            "Min": 1.725693941116333,
+            "Max": 1.725693941116333,
+            "Mean": 1.725693941116333,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.seal.shamir.decrypt.time",
+            "Count": 1,
+            "Rate": 0.0041207998991012575,
+            "Sum": 0.04120799899101257,
+            "Min": 0.04120799899101257,
+            "Max": 0.04120799899101257,
+            "Mean": 0.04120799899101257,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.seal.shamir.encrypt.time",
+            "Count": 1,
+            "Rate": 0.6023465156555176,
+            "Sum": 6.023465156555176,
+            "Min": 6.023465156555176,
+            "Max": 6.023465156555176,
+            "Mean": 6.023465156555176,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.token.create",
+            "Count": 2,
+            "Rate": 0.03838500082492828,
+            "Sum": 0.38385000824928284,
+            "Min": 0.096670001745224,
+            "Max": 0.28718000650405884,
+            "Mean": 0.19192500412464142,
+            "Stddev": 0.13471091624885356,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.token.createAccessor",
+            "Count": 2,
+            "Rate": 0.013005099818110466,
+            "Sum": 0.13005099818110466,
+            "Min": 0.040970999747514725,
+            "Max": 0.08907999843358994,
+            "Mean": 0.06502549909055233,
+            "Stddev": 0.034018199207018485,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.token.lookup",
+            "Count": 6,
+            "Rate": 0.02850010022521019,
+            "Sum": 0.2850010022521019,
+            "Min": 0.02245499938726425,
+            "Max": 0.08310399949550629,
+            "Mean": 0.04750016704201698,
+            "Stddev": 0.02293181932573912,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.token.revoke-tree",
+            "Count": 1,
+            "Rate": 0.033856400847435,
+            "Sum": 0.33856400847435,
+            "Min": 0.33856400847435,
+            "Max": 0.33856400847435,
+            "Mean": 0.33856400847435,
+            "Stddev": 0,
+            "Labels": {}
+        },
+        {
+            "Name": "vault.token.store",
+            "Count": 1,
+            "Rate": 0.002094900049269199,
+            "Sum": 0.020949000492691994,
+            "Min": 0.020949000492691994,
+            "Max": 0.020949000492691994,
+            "Mean": 0.020949000492691994,
+            "Stddev": 0,
+            "Labels": {}
+        }
+    ]
+}

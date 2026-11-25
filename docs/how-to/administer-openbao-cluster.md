@@ -47,6 +47,52 @@ Apply NetBox ObjectPermission constraints to each grant. A broad model
 permission is inappropriate for a multi-cluster deployment. Force restore must
 not be bundled into a normal backup or normal restore role.
 
+## Overview page
+
+Open **OpenBao > Overview** to see the stored cluster and secret-engine health
+inventory, credential lifecycle counts, and the last 24 hours of credential
+access activity. `view_openbaocluster` controls which cluster cards appear.
+The initial page does not contact OpenBao.
+
+Live seal, leader, HA, Raft, and metrics state loads separately for clusters on
+which the user has `discover_openbaocluster`. A user who can view a cluster but
+cannot discover it sees only stored status. Live responses are audited and
+marked `no-store`; an unavailable cluster does not prevent other cards from
+loading. Secret engines remain visible under their own object permission, but
+an engine whose cluster is not visible shows `Restricted cluster` instead of
+the cluster name or link.
+
+Each card constructs its backend with a request-scoped five-second timeout.
+That timeout covers direct authentication and broker contract verification as
+well as subsequent reads. The card also has a twelve-second budget. The seal
+state is read first; every later leader, HA, Raft, or metrics read is given the
+smaller of five seconds and the time left in the budget, and is skipped once
+the budget is spent. These are socket timeouts, not a hard wall-clock limit:
+authentication on a cold token cache and broker contract verification each
+have their own five-second allowance, and an endpoint that keeps sending bytes
+slowly can extend a read up to the 1 MB response bound. The completion audit records only the fixed
+section outcomes: `Rendered the OpenBao overview cluster card (details:
+ok|policy-denied|unavailable|skipped; metrics:
+ok|policy-denied|unsupported|unavailable|skipped)`.
+
+Direct mode needs this least-privilege OpenBao policy grant to populate the
+metrics table:
+
+```hcl
+path "sys/metrics" {
+  capabilities = ["read"]
+}
+```
+
+A missing grant is reported on the metrics section without hiding seal state.
+The seal state comes from the unauthenticated seal-status endpoint. Leader,
+HA, and Raft details use the cluster service identity; if its policy refuses
+those reads, only the detail section reports it and the seal state still
+renders. The node role (active, standby, sealed, or not initialized) is
+derived from the seal and leader state, not from a separate health probe.
+Broker mode does not expose metrics, and the plugin never falls back to direct
+OpenBao access.
+
 ## Bootstrap and custody
 
 Open the cluster and select **Administration**. Verify the endpoint, reported

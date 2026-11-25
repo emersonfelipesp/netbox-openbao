@@ -79,9 +79,10 @@ def close_auth_material_sessions(material_id, revision):
 class OpenBaoBackend(SecretBackend):
     """Read/write access to one KV mount on one OpenBao instance."""
 
-    def __init__(self, engine, auth_material=None):
+    def __init__(self, engine, auth_material=None, *, timeout=None):
         super().__init__(engine, auth_material=auth_material)
         self._client = None
+        self.request_timeout = timeout or 30
 
     # ------------------------------------------------------------------
     # Connection and authentication
@@ -151,7 +152,7 @@ class OpenBaoBackend(SecretBackend):
             namespace=self.engine.namespace or None,
             verify=verify,
             session=self._get_session(),
-            timeout=30,
+            timeout=self.request_timeout,
         )
         if token:
             client.token = token

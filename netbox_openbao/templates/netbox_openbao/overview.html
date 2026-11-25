@@ -1,0 +1,95 @@
+{% extends 'base/layout.html' %}
+
+{% block title %}OpenBao Overview{% endblock %}
+
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 class="h2">OpenBao Overview</h1>
+      <p class="text-secondary mb-0">Stored inventory loads immediately. Permitted live cluster state loads independently.</p>
+    </div>
+  </div>
+
+  {% if clusters %}
+    <div class="row row-cards mb-4">
+      {% for cluster in clusters %}
+        <div class="col-12 col-xl-6">
+          <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <h2 class="card-title mb-0"><a href="{{ cluster.get_absolute_url }}">{{ cluster.name }}</a></h2>
+              <span class="badge text-bg-{{ cluster.get_status_color }}">{{ cluster.get_status_display }}</span>
+            </div>
+            <div class="card-body">
+              <dl class="row mb-3">
+                <dt class="col-sm-4">Backend</dt><dd class="col-sm-8">{{ cluster.get_backend_display }}</dd>
+                <dt class="col-sm-4">API URL</dt><dd class="col-sm-8"><code>{{ cluster.api_url }}</code></dd>
+                <dt class="col-sm-4">Stored message</dt><dd class="col-sm-8">{{ cluster.status_message|default:"No stored health message." }}</dd>
+                <dt class="col-sm-4">Last checked</dt><dd class="col-sm-8">{{ cluster.last_checked|default:"Never" }}</dd>
+              </dl>
+              {% if cluster.pk in discoverable_cluster_ids %}
+                <div
+                  hx-get="{% url 'plugins:netbox_openbao:overview_cluster_card' pk=cluster.pk %}"
+                  hx-trigger="load"
+                  hx-swap="innerHTML"
+                >
+                  <div class="text-center text-secondary py-4" role="status">
+                    <span class="spinner-border spinner-border-sm me-2"></span>Loading live state…
+                  </div>
+                </div>
+              {% else %}
+                <div class="alert alert-info mb-0">Live state requires the discover permission for this cluster.</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="row row-cards">
+      <div class="col-12 col-xl-6">
+        <div class="card h-100">
+          <div class="card-header"><h2 class="card-title">Secret engines</h2></div>
+          <div class="table-responsive">
+            <table class="table table-hover card-table">
+              <thead><tr><th>Engine</th><th>Cluster</th><th>Status</th><th>Last checked</th></tr></thead>
+              <tbody>
+                {% for engine in engines %}
+                  <tr>
+                    <td><a href="{{ engine.get_absolute_url }}">{{ engine.name }}</a><div class="text-secondary">{{ engine.status_message }}</div></td>
+                    <td>{% if engine.overview_cluster %}<a href="{{ engine.overview_cluster.get_absolute_url }}">{{ engine.overview_cluster_label }}</a>{% else %}{{ engine.overview_cluster_label }}{% endif %}</td>
+                    <td><span class="badge text-bg-{{ engine.get_status_color }}">{{ engine.get_status_display }}</span></td>
+                    <td>{{ engine.last_checked|default:"Never" }}</td>
+                  </tr>
+                {% empty %}<tr><td colspan="4" class="text-secondary">No visible secret engines.</td></tr>{% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-xl-6">
+        <div class="card mb-3">
+          <div class="card-header"><h2 class="card-title">Credential lifecycle</h2></div>
+          <div class="card-body">
+            {% for item in credential_counts %}
+              <span class="badge text-bg-{{ item.color }} me-2 mb-2">{{ item.label }}: {{ item.count }}</span>
+            {% endfor %}
+            <div>Credentials with staged material: <strong>{{ staged_credential_count }}</strong></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Credential access, last 24 hours</h2></div>
+          <div class="card-body">
+            <span class="me-3">Total: <strong>{{ access_log_count }}</strong></span>
+            <span>Failures: <strong>{{ access_log_failure_count }}</strong></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% else %}
+    <div class="empty">
+      <div class="empty-icon"><i class="mdi mdi-shield-search-outline"></i></div>
+      <p class="empty-title">No OpenBao clusters are visible</p>
+      <p class="empty-subtitle text-secondary">Ask an administrator for view permission on a cluster.</p>
+    </div>
+  {% endif %}
+{% endblock content %}

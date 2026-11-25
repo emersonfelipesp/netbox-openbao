@@ -47,6 +47,11 @@ backend acceptance returns explicit `accepted-audit-incomplete` state. Keep the 
 `docs/architecture/administration-plane.md` synchronized with each capability
 change.
 
+The plugin-root overview is read-only. Live cards must use
+`collect_cluster_state()` and the allowlisted metrics normalizer, remain
+`no-store`, and stay independently permission-filtered and audited. Metrics are
+unsupported in broker mode; never fall back to direct OpenBao access.
+
 **Cluster custody and Raft snapshots remain request-scoped.** Initialization,
 unseal, seal, peer removal, snapshot download, restore, and force restore use
 their dedicated `OpenBaoCluster` permissions and fixed API paths. Never add a
@@ -557,9 +562,9 @@ that last one broke credential creation against every real server while 200+
 tests stayed green (#17). A fake only fails in ways its author already thought
 of. Run against a real server before believing a green suite.
 
-The Gitea pull-request workflow runs static checks and 70 affected DB-backed
+The Gitea pull-request workflow runs static checks and 107 affected DB-backed
 tests. The selection covers automation, concurrency, key identity, registry,
-API filters, and scanner scope. It runs on the non-root, credentials-free
+the plugin-root overview, API filters, and scanner scope. It runs on the non-root, credentials-free
 `ci-untrusted-python312` runner for `develop` and `main`. It asserts the exact
 test count. The job starts local PostgreSQL 15 from Debian's
 signed package repository and Redis from a hash-pinned wheel. It tests exact
@@ -570,6 +575,11 @@ Optional live-backend tests require an explicitly configured OpenBao
 development server.
 
 ## When changing things
+
+- **A short timeout on the final administration request does not bound authentication.**
+  Pass request-scoped limits through `get_administration_backend(timeout=...)`
+  so direct authentication and broker contract verification use the same
+  instance-level timeout. Never mutate a pooled session or module constant.
 
 - **Device, VM, and service credentials are owned here, and the Application
   Service is the only connection model.** `ServiceEndpoint` was removed in 0.2.1.

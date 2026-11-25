@@ -84,8 +84,9 @@ class MemoryResponse:
 class BrokerAdministrationClient:
     """Negotiate and execute only the pinned broker administration contract."""
 
-    def __init__(self, backend):
+    def __init__(self, backend, *, timeout=None):
         self.backend = backend
+        self.request_timeout = timeout or REQUEST_TIMEOUT
         self._contract_verified = False
 
     def _session(self):
@@ -141,7 +142,7 @@ class BrokerAdministrationClient:
         )
 
     @sensitive_variables()
-    def execute(self, operation: str, arguments: dict, *, mutation: bool) -> Any:
+    def execute(self, operation: str, arguments: dict, *, mutation: bool, timeout: float | None = None) -> Any:
         if operation not in {item[0] for item in EXPECTED_OPERATIONS if item[2] == "json"}:
             raise BackendConfigurationError("The administration operation is outside the pinned broker contract.")
         self.verify_contract()
@@ -150,6 +151,7 @@ class BrokerAdministrationClient:
             "/v1/administration/request",
             mutation=mutation,
             json={"contract_digest": CONTRACT_DIGEST, "operation": operation, "arguments": arguments},
+            timeout=self.request_timeout if timeout is None else timeout,
         )
         envelope = self._decode_json(response, mutation=mutation)
         if not isinstance(envelope, dict) or set(envelope) != {"data"}:
@@ -169,7 +171,7 @@ class BrokerAdministrationClient:
             response = self._session().request(
                 method,
                 self._url(path),
-                timeout=kwargs.pop("timeout", REQUEST_TIMEOUT),
+                timeout=kwargs.pop("timeout", self.request_timeout),
                 allow_redirects=False,
                 stream=True,
                 **kwargs,

@@ -9,6 +9,7 @@ contract; later minor releases require a new compatibility review.
 | Requirement | Implementation | Primary tests | Operating documentation |
 |---|---|---|---|
 | Cluster session, login, direct OIDC, logout | `administration/authentication.py`, `api/authentication_views.py` | authentication focused/browser/live suites | [Authentication and MFA](how-to/administer-openbao-authentication.md) |
+| Dashboard overview, live cluster state, and allowlisted metrics | `administration/cluster.py`, `administration/backends.py`, `views.py` | overview suite | [Cluster administration](how-to/administer-openbao-cluster.md) |
 | Initialization, unseal, seal, HA, Raft, snapshots | `administration/cluster.py`, `api/views.py` | cluster focused and JavaScript suites | [Cluster administration](how-to/administer-openbao-cluster.md) |
 | Auth methods and MFA | `administration/authentication.py`, `api/authentication_views.py` | authentication focused/browser/live suites | [Authentication and MFA](how-to/administer-openbao-authentication.md) |
 | Mount lifecycle and classified API explorer | `administration/engines.py`, `api/engine_views.py` | engine focused/browser/live suites | [Secret engines](how-to/administer-openbao-secret-engines.md) |
@@ -22,7 +23,7 @@ contract; later minor releases require a new compatibility review.
 
 The closure gates are:
 
-1. `python scripts/check_openbao_ui_parity.py` validates all 19 route families,
+1. `python scripts/check_openbao_ui_parity.py` validates all 20 route families,
    exact route/equivalence/evidence mappings, evidence paths, and explicit
    direct and broker transport evidence for every complete family.
 2. `openbao-final-v2.6.2.json` pins the final 17 API operations to upstream

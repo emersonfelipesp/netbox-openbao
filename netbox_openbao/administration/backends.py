@@ -46,12 +46,14 @@ from .cluster import (
     HAStatus,
     InitializationResult,
     LeaderStatus,
+    MetricsSnapshot,
     RaftConfiguration,
     SealStatus,
     SnapshotDownload,
     normalize_ha_status,
     normalize_initialization_result,
     normalize_leader_status,
+    normalize_metrics,
     normalize_raft_configuration,
     normalize_seal_status,
 )
@@ -131,16 +133,24 @@ class AdministrationBackend(ABC):
     def initialization_status(self) -> bool:
         raise self._unsupported()
 
-    def seal_status(self) -> SealStatus:
+    def seal_status(self, *, timeout=None) -> SealStatus:
+        del timeout
         raise self._unsupported()
 
-    def leader_status(self) -> LeaderStatus:
+    def leader_status(self, *, timeout=None) -> LeaderStatus:
+        del timeout
         raise self._unsupported()
 
-    def ha_status(self) -> HAStatus:
+    def ha_status(self, *, timeout=None) -> HAStatus:
+        del timeout
         raise self._unsupported()
 
-    def raft_configuration(self) -> RaftConfiguration:
+    def raft_configuration(self, *, timeout=None) -> RaftConfiguration:
+        del timeout
+        raise self._unsupported()
+
+    def metrics(self, *, timeout=None) -> MetricsSnapshot:
+        del timeout
         raise self._unsupported()
 
     def initialize(self, payload: dict) -> InitializationResult:
@@ -334,13 +344,14 @@ class AdministrationBackend(ABC):
 class DirectAdministrationBackend(AdministrationBackend):
     """OpenBao/Vault-compatible direct administrative discovery."""
 
-    def __init__(self, cluster):
+    def __init__(self, cluster, *, timeout=None):
         super().__init__(cluster)
         try:
             auth_material = cluster.auth_material
         except (AttributeError, ObjectDoesNotExist):
             auth_material = None
-        self.backend = OpenBaoBackend(cluster, auth_material=auth_material)
+        self.request_timeout = timeout or 30
+        self.backend = OpenBaoBackend(cluster, auth_material=auth_material, timeout=timeout)
 
     def health(self) -> dict:
         return self.backend.health()
@@ -371,7 +382,7 @@ class DirectAdministrationBackend(AdministrationBackend):
         **kwargs,
     ):
         extra_headers = kwargs.pop("headers", None) or {}
-        timeout = kwargs.pop("timeout", 30)
+        timeout = kwargs.pop("timeout", self.request_timeout)
         headers = self._headers(authenticated=authenticated, token=token)
         headers.update(extra_headers)
         try:
@@ -388,11 +399,19 @@ class DirectAdministrationBackend(AdministrationBackend):
         except OpenBaoError:
             raise
         except Exception:
-            if method.upper() not in {"GET", "HEAD", "LIST", "OPTIONS"}:
-                raise OpenBaoMutationUnknown() from None
-            raise OpenBaoUnavailable("OpenBao administration request failed.") from None
+            self._raise_transport_error(method)
         if response.status_code in expected:
             return response
+        self._raise_status_error(response, method)
+
+    @staticmethod
+    def _raise_transport_error(method):
+        if method.upper() not in {"GET", "HEAD", "LIST", "OPTIONS"}:
+            raise OpenBaoMutationUnknown() from None
+        raise OpenBaoUnavailable("OpenBao administration request failed.") from None
+
+    @staticmethod
+    def _raise_status_error(response, method):
         response.close()
         if response.status_code in (401, 403):
             raise OpenBaoAuthError("OpenBao rejected the administrative request.", response.status_code)
@@ -477,21 +496,36 @@ class DirectAdministrationBackend(AdministrationBackend):
             raise OpenBaoUnavailable("OpenBao returned an invalid initialization status.")
         return initialized
 
-    def seal_status(self) -> SealStatus:
-        payload = self._request_json("GET", "/sys/seal-status", authenticated=False)
+    def seal_status(self, *, timeout=None) -> SealStatus:
+        payload = self._request_json(
+            "GET", "/sys/seal-status", authenticated=False, timeout=30 if timeout is None else timeout
+        )
         return self._normalize(normalize_seal_status, payload)
 
-    def leader_status(self) -> LeaderStatus:
-        payload = self._request_json("GET", "/sys/leader", authenticated=True)
+    def leader_status(self, *, timeout=None) -> LeaderStatus:
+        payload = self._request_json(
+            "GET", "/sys/leader", authenticated=True, timeout=30 if timeout is None else timeout
+        )
         return self._normalize(normalize_leader_status, payload)
 
-    def ha_status(self) -> HAStatus:
-        payload = self._request_json("GET", "/sys/ha-status", authenticated=True)
+    def ha_status(self, *, timeout=None) -> HAStatus:
+        payload = self._request_json(
+            "GET", "/sys/ha-status", authenticated=True, timeout=30 if timeout is None else timeout
+        )
         return self._normalize(normalize_ha_status, payload)
 
-    def raft_configuration(self) -> RaftConfiguration:
-        payload = self._request_json("GET", "/sys/storage/raft/configuration", authenticated=True)
+    def raft_configuration(self, *, timeout=None) -> RaftConfiguration:
+        payload = self._request_json(
+            "GET", "/sys/storage/raft/configuration", authenticated=True,
+            timeout=30 if timeout is None else timeout,
+        )
         return self._normalize(normalize_raft_configuration, payload)
+
+    def metrics(self, *, timeout=None) -> MetricsSnapshot:
+        payload = self._request_json(
+            "GET", "/sys/metrics", authenticated=True, timeout=30 if timeout is None else timeout
+        )
+        return self._normalize(normalize_metrics, payload)
 
     def initialize(self, payload: dict) -> InitializationResult:
         result = self._request_json("POST", "/sys/init", authenticated=False, json=payload)
@@ -1114,14 +1148,15 @@ class DirectAdministrationBackend(AdministrationBackend):
 class BrokerAdministrationBackend(DirectAdministrationBackend):
     """Administrative operations mediated by the pinned mTLS broker contract."""
 
-    def __init__(self, cluster):
+    def __init__(self, cluster, *, timeout=None):
         AdministrationBackend.__init__(self, cluster)
         try:
             auth_material = cluster.auth_material
         except (AttributeError, ObjectDoesNotExist):
             auth_material = None
-        self.backend = BrokerBackend(cluster, auth_material=auth_material)
-        self.client = BrokerAdministrationClient(self.backend)
+        self.request_timeout = timeout or 30
+        self.backend = BrokerBackend(cluster, auth_material=auth_material, timeout=timeout)
+        self.client = BrokerAdministrationClient(self.backend, timeout=timeout)
 
     def health(self) -> dict:
         return self.backend.health()
@@ -1133,9 +1168,9 @@ class BrokerAdministrationBackend(DirectAdministrationBackend):
         except CapabilitySchemaError:
             raise OpenBaoUnavailable("The broker returned an invalid capability document.") from None
 
-    def _cluster_operation(self, operation: str, arguments: dict, normalizer):
+    def _cluster_operation(self, operation: str, arguments: dict, normalizer, *, timeout=None):
         mutation = operation in self._CLUSTER_MUTATIONS
-        result = self.client.execute(operation, arguments, mutation=mutation)
+        result = self.client.execute(operation, arguments, mutation=mutation, timeout=timeout)
         if mutation:
             return self._normalize_mutation(normalizer, result)
         return self._normalize(normalizer, result)
@@ -1149,17 +1184,20 @@ class BrokerAdministrationBackend(DirectAdministrationBackend):
             raise OpenBaoUnavailable("The broker returned an invalid initialization status.")
         return initialized
 
-    def seal_status(self) -> SealStatus:
-        return self._cluster_operation("seal_status", {}, normalize_seal_status)
+    def seal_status(self, *, timeout=None) -> SealStatus:
+        return self._cluster_operation("seal_status", {}, normalize_seal_status, timeout=timeout)
 
-    def leader_status(self) -> LeaderStatus:
-        return self._cluster_operation("leader_status", {}, normalize_leader_status)
+    def leader_status(self, *, timeout=None) -> LeaderStatus:
+        return self._cluster_operation("leader_status", {}, normalize_leader_status, timeout=timeout)
 
-    def ha_status(self) -> HAStatus:
-        return self._cluster_operation("ha_status", {}, normalize_ha_status)
+    def ha_status(self, *, timeout=None) -> HAStatus:
+        return self._cluster_operation("ha_status", {}, normalize_ha_status, timeout=timeout)
 
-    def raft_configuration(self) -> RaftConfiguration:
-        return self._cluster_operation("raft_configuration", {}, normalize_raft_configuration)
+    def raft_configuration(self, *, timeout=None) -> RaftConfiguration:
+        return self._cluster_operation("raft_configuration", {}, normalize_raft_configuration, timeout=timeout)
+
+    def metrics(self, *, timeout=None) -> MetricsSnapshot:
+        return AdministrationBackend.metrics(self, timeout=timeout)
 
     def initialize(self, payload: dict) -> InitializationResult:
         return self._cluster_operation("initialize", payload, normalize_initialization_result)
@@ -1398,10 +1436,10 @@ class BrokerAdministrationBackend(DirectAdministrationBackend):
             raise OpenBaoMutationUnknown()
 
 
-def get_administration_backend(cluster) -> AdministrationBackend:
+def get_administration_backend(cluster, *, timeout: float | None = None) -> AdministrationBackend:
     """Return the reviewed administration transport for a cluster."""
     if cluster.backend == BackendChoices.BACKEND_BROKER:
-        return BrokerAdministrationBackend(cluster)
+        return BrokerAdministrationBackend(cluster, timeout=timeout)
     if cluster.backend in {BackendChoices.BACKEND_OPENBAO, BackendChoices.BACKEND_VAULT}:
-        return DirectAdministrationBackend(cluster)
+        return DirectAdministrationBackend(cluster, timeout=timeout)
     raise BackendConfigurationError("Unsupported OpenBao administration backend.")

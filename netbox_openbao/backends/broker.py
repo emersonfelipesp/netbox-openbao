@@ -87,9 +87,10 @@ def close_auth_material_sessions(material_id, revision):
 class BrokerBackend(SecretBackend):
     """Read/write access to one KV mount, mediated by the broker service."""
 
-    def __init__(self, engine, auth_material=None):
+    def __init__(self, engine, auth_material=None, *, timeout=None):
         super().__init__(engine, auth_material=auth_material)
         self._session = None
+        self.request_timeout = timeout or REQUEST_TIMEOUT
 
     # ------------------------------------------------------------------
     # Connection
@@ -212,7 +213,7 @@ class BrokerBackend(SecretBackend):
         url = f"{self.engine.api_url.rstrip('/')}{endpoint}"
 
         try:
-            response = session.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+            response = session.post(url, json=payload, timeout=self.request_timeout)
         except Exception as exc:
             logger.warning(
                 'Broker %s request failed on engine %s (%s)',
@@ -360,19 +361,27 @@ class BrokerBackend(SecretBackend):
             }
 
         url = f"{self.engine.api_url.rstrip('/')}/healthz"
-        try:
-            response = session.get(url, timeout=REQUEST_TIMEOUT)
-        except Exception as exc:
-            logger.warning(
-                'Broker health probe failed on engine %s (%s)',
-                self.engine.slug, type(exc).__name__,
-            )
+        response = self._health_response(session, url)
+        if response is None:
             return {
                 'status': EngineStatusChoices.STATUS_UNREACHABLE,
                 'message': 'The broker is unreachable.',
                 'raw': None,
             }
+        return self._health_result(response)
 
+    def _health_response(self, session, url):
+        try:
+            return session.get(url, timeout=self.request_timeout)
+        except Exception as exc:
+            logger.warning(
+                'Broker health probe failed on engine %s (%s)',
+                self.engine.slug, type(exc).__name__,
+            )
+            return None
+
+    @staticmethod
+    def _health_result(response):
         if response.status_code in (401, 403):
             # `/healthz` needs no application authentication, so a refusal here
             # is the TLS layer: the client certificate is missing, expired, or

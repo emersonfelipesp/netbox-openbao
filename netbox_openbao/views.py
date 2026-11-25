@@ -8,8 +8,12 @@ Requiring a POST means a reveal is always a deliberate act, and it keeps the
 credential out of the URL bar and the referrer header.
 """
 
+import time
+from datetime import timedelta
+
 from dcim.models import Device
 from django.contrib import messages
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -18,6 +22,7 @@ from django.db.models import Count
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import View
 from extras.ui.panels import CustomFieldsPanel, TagsPanel
@@ -30,8 +35,9 @@ from utilities.views import ContentTypePermissionRequiredMixin, ObjectPermission
 from . import filtersets, forms, tables
 from .administration import get_administration_backend, record_capability_observation
 from .administration.audit import AdministrationAuditError, log_administration
-from .backends.exceptions import OpenBaoError
-from .choices import AuthMethodChoices, BackendChoices
+from .administration.cluster import collect_cluster_state
+from .backends.exceptions import BackendConfigurationError, OpenBaoAuthError, OpenBaoError
+from .choices import AuthMethodChoices, BackendChoices, CredentialStatusChoices
 from .conf import assignable_model_labels
 from .material_transactions import material_transaction
 from .models import (
@@ -88,6 +94,8 @@ __all__ = (
     'OpenBaoAdministrationLogView',
     'OpenBaoClusterBulkDeleteView',
     'OpenBaoClusterAdministrationView',
+    'OpenBaoOverviewClusterCardView',
+    'OpenBaoOverviewView',
     'OpenBaoClusterAuthenticationView',
     'OpenBaoClusterAccessView',
     'OpenBaoClusterOperationsView',
@@ -143,6 +151,201 @@ def _never_store(response):
     response['Pragma'] = 'no-cache'
     response['Expires'] = '0'
     return response
+
+
+def _overview_summary(user):
+    clusters = list(OpenBaoCluster.objects.restrict(user, 'view'))
+    visible_cluster_ids = {cluster.pk for cluster in clusters}
+    engines = list(
+        SecretEngine.objects.restrict(user, 'view').select_related('cluster')
+    )
+    for engine in engines:
+        if engine.cluster_id is None:
+            engine.overview_cluster = None
+            engine.overview_cluster_label = _('Legacy engine')
+        elif engine.cluster_id in visible_cluster_ids:
+            engine.overview_cluster = engine.cluster
+            engine.overview_cluster_label = engine.cluster.name
+        else:
+            engine.overview_cluster = None
+            engine.overview_cluster_label = _('Restricted cluster')
+    credentials = Credential.objects.restrict(user, 'view')
+    counts = dict(credentials.values_list('status').annotate(total=Count('pk')))
+    credential_counts = [
+        {
+            'value': value,
+            'label': label,
+            'color': CredentialStatusChoices.colors.get(value),
+            'count': counts.get(value, 0),
+        }
+        for value, label in CredentialStatusChoices
+    ]
+    access_logs = CredentialAccessLog.objects.restrict(user, 'view').filter(
+        timestamp__gte=timezone.now() - timedelta(hours=24)
+    )
+    return {
+        'clusters': clusters,
+        'engines': engines,
+        'credential_counts': credential_counts,
+        'staged_credential_count': credentials.filter(staged_kv_version__isnull=False).count(),
+        'access_log_count': access_logs.count(),
+        'access_log_failure_count': access_logs.filter(success=False).count(),
+        'discoverable_cluster_ids': set(
+            OpenBaoCluster.objects.restrict(user, 'discover').values_list('pk', flat=True)
+        ),
+    }
+
+
+class OpenBaoOverviewView(LoginRequiredMixin, View):
+    """Render database-only inventory before live cards load independently."""
+
+    def get(self, request):
+        response = render(request, 'netbox_openbao/overview.html', _overview_summary(request.user))
+        return _never_store(response)
+
+
+OVERVIEW_TIMEOUT = 5
+OVERVIEW_DEADLINE = 12
+
+
+class _OverviewBudget:
+    def __init__(self):
+        self.ends_at = time.monotonic() + OVERVIEW_DEADLINE
+        self.exhausted = False
+
+    def remaining(self) -> float:
+        """Seconds left in the card budget; every later read is capped by it."""
+        left = self.ends_at - time.monotonic()
+        self.exhausted = left <= 0
+        return max(left, 0.0)
+
+    def timeout(self) -> float:
+        """Per-read timeout: the transport timeout, capped by the remaining budget."""
+        return min(OVERVIEW_TIMEOUT, self.remaining())
+
+
+def _overview_node_role(state) -> str:
+    """Derive the node role from reviewed state rather than a second health probe."""
+    seal, leader = state['seal'], state['leader']
+    if not seal.initialized:
+        return _('Not initialized')
+    if seal.sealed:
+        return _('Sealed')
+    if leader is None:
+        return _('Unknown')
+    if leader.ha_enabled and not leader.is_self:
+        return _('Standby')
+    return _('Active')
+
+
+def _overview_state(backend, budget):
+    """
+    Read the seal state, then the optional leader, HA, and Raft details.
+
+    The seal state is the headline of the card, so a policy that refuses the
+    authenticated detail reads must not hide it. Only the detail section
+    degrades; an unreadable seal state still fails the whole card.
+    """
+    seal = backend.seal_status(timeout=OVERVIEW_TIMEOUT)
+    try:
+        state = collect_cluster_state(
+            backend, timeout=OVERVIEW_TIMEOUT, seal=seal, budget=budget.remaining
+        )
+        if budget.exhausted:
+            return state, _('Leader, HA, and Raft details are unavailable.'), 'skipped'
+        status = 'skipped' if seal.sealed or not seal.initialized else 'ok'
+        return state, None, status
+    except OpenBaoAuthError:
+        message = _("The cluster service identity's policy does not grant the leader, HA, or Raft status reads.")
+        status = 'policy-denied'
+    except BackendConfigurationError:
+        raise
+    except OpenBaoError:
+        message = _('Leader, HA, and Raft details are unavailable.')
+        status = 'unavailable'
+    return {'seal': seal, 'leader': None, 'ha': None, 'raft': None}, message, status
+
+
+def _overview_metrics(backend, state, budget):
+    if state['seal'].sealed:
+        return None, None, 'skipped'
+    timeout = budget.timeout()
+    if budget.exhausted:
+        return None, _('Metrics are unavailable.'), 'skipped'
+    try:
+        return backend.metrics(timeout=timeout), None, 'ok'
+    except OpenBaoAuthError:
+        return None, _("The cluster service identity's policy does not grant read on sys/metrics."), 'policy-denied'
+    except BackendConfigurationError:
+        return None, _('Metrics are not available through the broker.'), 'unsupported'
+    except OpenBaoError:
+        return None, _('Metrics are unavailable.'), 'unavailable'
+    except Exception:
+        return None, _('Metrics are unavailable.'), 'unavailable'
+
+
+def _overview_audit_message(details_status, metrics_status):
+    return (
+        'Rendered the OpenBao overview cluster card '
+        f'(details: {details_status}; metrics: {metrics_status})'
+    )
+
+
+class OpenBaoOverviewClusterCardView(ObjectPermissionRequiredMixin, View):
+    queryset = OpenBaoCluster.objects.all()
+    http_method_names = ('get', 'head', 'options')
+
+    def get_required_permission(self):
+        return 'netbox_openbao.discover_openbaocluster'
+
+    def get(self, request, pk):
+        cluster = get_object_or_404(self.queryset.restrict(request.user, 'discover'), pk=pk)
+        context = {'object': cluster, 'error': None}
+        try:
+            budget = _OverviewBudget()
+            backend = get_administration_backend(cluster, timeout=OVERVIEW_TIMEOUT)
+            context['state'], context['details_error'], details_status = _overview_state(backend, budget)
+            context['node_role'] = _overview_node_role(context['state'])
+            leader = context['state']['leader']
+            raft = context['state']['raft']
+            context['raft_lag'] = (
+                max(leader.raft_committed_index - leader.raft_applied_index, 0) if leader else None
+            )
+            context['raft_voter_count'] = sum(peer.voter for peer in raft.peers) if raft else 0
+            context['metrics'], context['metrics_error'], metrics_status = _overview_metrics(
+                backend, context['state'], budget
+            )
+            log_administration(
+                cluster,
+                request.user,
+                action='overview-ui',
+                operation_id='cluster-overview',
+                risk_level='read',
+                success=True,
+                status_code=200,
+                message=_overview_audit_message(details_status, metrics_status),
+                request=request,
+            )
+        except AdministrationAuditError:
+            context = {'object': cluster, 'error': _('OpenBao is unavailable.')}
+        except (DatabaseError, OpenBaoError):
+            context = {'object': cluster, 'error': _('OpenBao is unavailable.')}
+            try:
+                log_administration(
+                    cluster,
+                    request.user,
+                    action='overview-ui',
+                    operation_id='cluster-overview',
+                    risk_level='read',
+                    success=False,
+                    status_code=503,
+                    message='The OpenBao overview cluster card was unavailable.',
+                    request=request,
+                )
+            except AdministrationAuditError:
+                pass
+        response = render(request, 'netbox_openbao/inc/overview_cluster_card.html', context)
+        return _never_store(response)
 
 
 #
@@ -228,16 +431,7 @@ class OpenBaoClusterAdministrationView(ObjectPermissionRequiredMixin, View):
         error = None
         try:
             backend = get_administration_backend(cluster)
-            seal = backend.seal_status()
-            leader = backend.leader_status() if seal.initialized and not seal.sealed else None
-            ha = backend.ha_status() if leader and leader.ha_enabled else None
-            raft = backend.raft_configuration() if seal.storage_type == 'raft' and not seal.sealed else None
-            state = {
-                'seal': seal,
-                'leader': leader,
-                'ha': ha,
-                'raft': raft,
-            }
+            state = collect_cluster_state(backend)
             log_administration(
                 cluster,
                 request.user,

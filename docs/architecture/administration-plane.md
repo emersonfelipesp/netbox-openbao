@@ -429,6 +429,32 @@ recursively remove known material keys. Transport or bounded-parsing
 uncertainty after mutation dispatch returns an unknown outcome and forbids
 automatic retry.
 
+## Plugin-root overview
+
+The plugin root is a read-only overview. Its initial response contains only
+permission-filtered database inventory. An engine whose cluster is not visible
+to the user is labeled `Restricted cluster`; the hidden cluster name and link
+are not rendered. Each live cluster card is loaded under the cluster's
+`discover_openbaocluster` constraint, audited, marked `no-store`, and collected
+through `collect_cluster_state()`. The request-scoped five-second transport
+timeout is passed into backend construction so it also bounds direct
+authentication and broker contract verification without changing pooled
+sessions. A twelve-second card budget caps each later detail and metrics read
+at the time remaining and skips the remaining reads once it is spent. The
+budget is enforced through socket timeouts, not a wall-clock interrupt, so it
+bounds waiting rather than total elapsed time: a cold authentication or broker
+contract negotiation has its own allowance, and a slowly streamed body is
+limited only by the 1 MB response bound. Direct
+mode may perform the fixed authenticated `GET /sys/metrics` read. The response
+is bounded and normalized into an allowlist that discards all unknown metrics
+and labels. Broker mode does not implement metrics and never falls back to the
+direct OpenBao endpoint. A refused or failed leader, HA, or Raft read degrades
+only that section of the card; an unreadable seal state fails the card. The
+completion audit uses the fixed outcome message `Rendered the OpenBao overview
+cluster card (details: ok|policy-denied|unavailable|skipped; metrics:
+ok|policy-denied|unsupported|unavailable|skipped)` and never includes server
+text.
+
 ## Parity baseline
 
 `netbox_openbao/administration/openbao-ui-v2.6.2.json` is the checked-in parity
@@ -448,7 +474,7 @@ python scripts/check_openbao_ui_parity.py
 The baseline includes cluster session and bootstrap, Raft storage, API
 exploration, auth methods, MFA, engine lifecycle, generic mounted engines, KV,
 transit/database/SSH/TOTP, PKI, Kubernetes, policies, identity, OIDC,
-namespaces, leases, tools, and UI configuration. All 19 families are complete
+namespaces, leases, tools, UI configuration, and the dashboard. All 20 families are complete
 through request-scoped typed workspaces. The final 17 operations are pinned in
 `administration/openbao-final-v2.6.2.json`; runtime conformance fails on a
 missing, duplicate, unclassified, or stale matching operation. Completion

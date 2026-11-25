@@ -1,0 +1,65 @@
+{% if error %}
+  <div class="alert alert-danger mb-0" role="alert">{{ error }}</div>
+{% elif state %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <span class="badge fs-3 text-bg-{% if state.seal.sealed %}danger{% else %}success{% endif %}">
+      {% if state.seal.sealed %}Sealed{% else %}Unsealed{% endif %}
+    </span>
+    <span class="badge text-bg-secondary">{{ node_role }}</span>
+  </div>
+  {% if details_error %}<div class="alert alert-info">{{ details_error }}</div>{% endif %}
+  <div class="table-responsive mb-3">
+    <table class="table table-hover attr-table">
+      <tbody>
+        <tr><th>Initialized</th><td>{{ state.seal.initialized|yesno:"Yes,No" }}</td></tr>
+        {% if state.seal.sealed %}<tr><th>Unseal progress</th><td>{{ state.seal.progress }} / {{ state.seal.threshold }} (shares {{ state.seal.shares }})</td></tr>{% endif %}
+        <tr><th>Seal type</th><td>{{ state.seal.seal_type|default:"Not reported" }}</td></tr>
+        <tr><th>Recovery seal</th><td>{{ state.seal.recovery_seal|yesno:"Yes,No" }}</td></tr>
+        <tr><th>Seal migration</th><td>{{ state.seal.migration|yesno:"Yes,No" }}</td></tr>
+        <tr><th>Version</th><td>{{ state.seal.version|default:"Not reported" }}</td></tr>
+        <tr><th>Storage type</th><td>{{ state.seal.storage_type|default:"Not reported" }}</td></tr>
+        <tr><th>Cluster name</th><td>{{ state.seal.cluster_name|default:"Not reported" }}</td></tr>
+        <tr><th>Cluster ID</th><td><code>{{ state.seal.cluster_id|default:"Not reported" }}</code></td></tr>
+        {% if state.leader %}
+          <tr><th>HA enabled</th><td>{{ state.leader.ha_enabled|yesno:"Yes,No" }}</td></tr>
+          <tr><th>Active node</th><td>{{ state.leader.is_self|yesno:"Yes,No" }}</td></tr>
+          <tr><th>Leader address</th><td><code>{{ state.leader.leader_address|default:"Not reported" }}</code></td></tr>
+          <tr><th>Active time</th><td>{{ state.leader.active_time|default:"Not reported" }}</td></tr>
+          <tr><th>Raft indices</th><td>{{ state.leader.raft_committed_index }} committed / {{ state.leader.raft_applied_index }} applied / {{ raft_lag }} lag</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if state.raft %}
+    <h3 class="h4">Raft peers <span class="badge text-bg-secondary">{{ raft_voter_count }} voters</span></h3>
+    <div class="table-responsive mb-3"><table class="table table-hover attr-table"><thead><tr><th>Node ID</th><th>Address</th><th>Leader</th><th>Voter</th></tr></thead><tbody>
+      {% for peer in state.raft.peers %}<tr><td><code>{{ peer.node_id }}</code></td><td><code>{{ peer.address }}</code></td><td>{{ peer.leader|yesno:"Yes,No" }}</td><td>{{ peer.voter|yesno:"Yes,No" }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  {% endif %}
+
+  {% if state.ha %}
+    <h3 class="h4">HA nodes</h3>
+    <div class="table-responsive mb-3"><table class="table table-hover attr-table"><thead><tr><th>Hostname</th><th>API address</th><th>Active</th><th>Last echo</th><th>Version</th></tr></thead><tbody>
+      {% for node in state.ha.nodes %}<tr><td>{{ node.hostname }}</td><td><code>{{ node.api_address }}</code></td><td>{{ node.active_node|yesno:"Yes,No" }}</td><td>{{ node.last_echo|default:"Not reported" }}</td><td>{{ node.version }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  {% endif %}
+
+  <h3 class="h4">Metrics</h3>
+  {% if metrics_error %}<div class="alert alert-info">{{ metrics_error }}</div>{% endif %}
+  {% if metrics %}
+    {% if metrics.audit_request_failures or metrics.audit_response_failures %}<div class="alert alert-warning">OpenBao reports audit log request or response failures in the current metrics interval.</div>{% endif %}
+    <div class="table-responsive"><table class="table table-hover attr-table"><tbody>
+      <tr><th>Timestamp</th><td>{{ metrics.timestamp|default:"Not reported" }}</td></tr>
+      <tr><th>Active / unsealed</th><td>{{ metrics.active|default_if_none:"Not reported" }} / {{ metrics.unsealed|default_if_none:"Not reported" }}</td></tr>
+      <tr><th>In-flight requests</th><td>{{ metrics.in_flight_requests|default_if_none:"Not reported" }}</td></tr>
+      <tr><th>Locked users</th><td>{{ metrics.locked_users|default_if_none:"Not reported" }}</td></tr>
+      <tr><th>Leases / irrevocable</th><td>{{ metrics.leases|default_if_none:"Not reported" }} / {{ metrics.irrevocable_leases|default_if_none:"Not reported" }}</td></tr>
+      <tr><th>Allocated / system memory</th><td>{{ metrics.alloc_bytes|filesizeformat }} / {{ metrics.sys_bytes|filesizeformat }}</td></tr>
+      <tr><th>Heap objects / goroutines</th><td>{{ metrics.heap_objects|default_if_none:"Not reported" }} / {{ metrics.goroutines|default_if_none:"Not reported" }}</td></tr>
+      <tr><th>GC runs / pause</th><td>{{ metrics.total_gc_runs|default_if_none:"Not reported" }} / {{ metrics.total_gc_pause_ns|default_if_none:"Not reported" }} ns</td></tr>
+      <tr><th>Auth / secret mounts</th><td>{{ metrics.auth_mounts|default_if_none:"Not reported" }} / {{ metrics.secret_mounts|default_if_none:"Not reported" }}</td></tr>
+      <tr><th>Audit request / response failures (current interval)</th><td>{{ metrics.audit_request_failures|default_if_none:"Not reported" }} / {{ metrics.audit_response_failures|default_if_none:"Not reported" }}</td></tr>
+    </tbody></table></div>
+  {% endif %}
+{% endif %}

@@ -1,5 +1,11 @@
 from netbox.plugins import PluginMenu, PluginMenuButton, PluginMenuItem
 
+overview = PluginMenuItem(
+    link='plugins:netbox_openbao:overview',
+    link_text='Overview',
+    permissions=['netbox_openbao.view_openbaocluster'],
+)
+
 clusters = PluginMenuItem(
     link='plugins:netbox_openbao:openbaocluster_list',
     link_text='Clusters',
@@ -121,7 +127,7 @@ settings_item = PluginMenuItem(
 menu = PluginMenu(
     label='OpenBao',
     groups=(
-        ('Credentials', (credentials, assignments, ssh_public_keys)),
+        ('Credentials', (overview, credentials, assignments, ssh_public_keys)),
         ('Administration', (clusters,)),
         ('Configuration', (policies, engines, type_schemas, settings_item)),
         ('Audit', (access_logs, administration_logs, procedure_runs)),
