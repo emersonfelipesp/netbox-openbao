@@ -49,12 +49,14 @@ jobs:
           trap 'rm -rf -- "$build_root"' EXIT
           git archive "$SOURCE_SHA" | tar -x -C "$build_root"
           curl --fail --silent --show-error --location --max-redirs 3 \
-            https://bootstrap.pypa.io/get-pip.py --output "$build_root/get-pip.py"
+            https://files.pythonhosted.org/packages/b7/3f/945ef7ab14dc4f9d7f40288d2df998d1837ee0888ec3659c813487572faa/pip-25.2-py3-none-any.whl \
+            --output "$build_root/pip-25.2-py3-none-any.whl"
           printf '%s  %s\n' \
-            'fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6' \
-            "$build_root/get-pip.py" | sha256sum --check --strict
-          python3 "$build_root/get-pip.py" --disable-pip-version-check \
-            --no-warn-script-location --target "$build_root/pip" 'pip==25.2'
+            '6d67a2b4e7f14d8b31b8b52648866fa717f45a1eb70e83002f4331d07e953717' \
+            "$build_root/pip-25.2-py3-none-any.whl" | sha256sum --check --strict
+          python3 "$build_root/pip-25.2-py3-none-any.whl/pip" install --disable-pip-version-check \
+            --no-warn-script-location --no-index --target "$build_root/pip" \
+            "$build_root/pip-25.2-py3-none-any.whl"
           PYTHONPATH="$build_root/pip" python3 -m pip install --disable-pip-version-check \
             --no-warn-script-location --target "$build_root/dependencies" \
             'build==1.3.0' 'setuptools==80.9.0' 'twine==6.2.0'
@@ -89,12 +91,14 @@ jobs:
             exit 0
           fi
           curl --fail --silent --show-error --location --max-redirs 3 \
-            https://bootstrap.pypa.io/get-pip.py --output "$publisher_root/get-pip.py"
+            https://files.pythonhosted.org/packages/b7/3f/945ef7ab14dc4f9d7f40288d2df998d1837ee0888ec3659c813487572faa/pip-25.2-py3-none-any.whl \
+            --output "$publisher_root/pip-25.2-py3-none-any.whl"
           printf '%s  %s\n' \
-            'fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6' \
-            "$publisher_root/get-pip.py" | sha256sum --check --strict
-          python3 "$publisher_root/get-pip.py" --disable-pip-version-check \
-            --no-warn-script-location --target "$publisher_root/pip" 'pip==25.2'
+            '6d67a2b4e7f14d8b31b8b52648866fa717f45a1eb70e83002f4331d07e953717' \
+            "$publisher_root/pip-25.2-py3-none-any.whl" | sha256sum --check --strict
+          python3 "$publisher_root/pip-25.2-py3-none-any.whl/pip" install --disable-pip-version-check \
+            --no-warn-script-location --no-index --target "$publisher_root/pip" \
+            "$publisher_root/pip-25.2-py3-none-any.whl"
           PYTHONPATH="$publisher_root/pip" python3 -m pip install --disable-pip-version-check \
             --no-warn-script-location --target "$publisher_root/dependencies" 'twine==6.2.0'
           PYTHONPATH="$publisher_root/dependencies" python3 -m twine upload --non-interactive \

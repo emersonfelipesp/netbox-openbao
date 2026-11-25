@@ -144,12 +144,22 @@ def test_gitea_publisher_bootstraps_verified_pip_bytes() -> None:
     assert "command -v uv" not in publish
     assert "uv venv" not in publish
     assert "python -m venv" not in publish
-    assert publish.count("https://bootstrap.pypa.io/get-pip.py") == 2
+    # pip is bootstrapped from the immutable PyPI wheel, never from the
+    # regenerated bootstrap.pypa.io get-pip.py script, whose bytes change
+    # upstream and broke the pinned checksum.
+    assert "bootstrap.pypa.io" not in publish
+    assert "get-pip.py" not in publish
     assert publish.count(
-        "fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6"
+        "https://files.pythonhosted.org/packages/b7/3f/"
+        "945ef7ab14dc4f9d7f40288d2df998d1837ee0888ec3659c813487572faa/"
+        "pip-25.2-py3-none-any.whl"
+    ) == 2
+    assert publish.count(
+        "6d67a2b4e7f14d8b31b8b52648866fa717f45a1eb70e83002f4331d07e953717"
     ) == 2
     assert publish.count("sha256sum --check --strict") == 2
-    assert publish.count("'pip==25.2'") == 2
+    assert publish.count("pip-25.2-py3-none-any.whl/pip\" install") == 2
+    assert publish.count("--no-index --target") == 2
     assert publish.count("PYTHONPATH=") == 5
     assert "python3 -m build --no-isolation" in publish
 
