@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.3 - Unreleased
+## 0.2.3 - 2026-11-26
 
 - Add an OpenBao Overview page at the plugin root (`/plugins/openbao/`). It
   renders a permission-filtered database summary immediately: stored cluster
@@ -24,6 +24,9 @@
   pass none keep the 30-second default. The overview card uses a five-second
   timeout and a twelve-second budget that caps every read after the seal
   state.
+- Release tooling: the Gitea package publisher installs pip from a pinned,
+  SHA-256-verified pip wheel instead of the regenerated upstream `get-pip.py`
+  script.
 - No model or migration change.
 
 ## 0.2.2.post1 - 2026-10-19

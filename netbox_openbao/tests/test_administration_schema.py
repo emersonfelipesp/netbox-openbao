@@ -156,10 +156,10 @@ class ParityManifestTest(TestCase):
         manifest = load_parity_manifest()
 
         self.assertEqual(manifest['baseline'], BASELINE_VERSION)
-        self.assertEqual(len(manifest['families']), 19)
+        self.assertEqual(len(manifest['families']), 20)
         self.assertEqual(
             {family['owner_issue'] for family in manifest['families']},
-            set(range(64, 71)),
+            set(range(64, 71)) | {171},
         )
 
     def test_manifest_loader_returns_an_independent_document(self):
