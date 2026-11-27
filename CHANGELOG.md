@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.4 - Unreleased
+## 0.2.4 - 2026-11-27
 
 - Expose the effective credential assignment object types through the read-only
   `effective_assignable_models` settings API field and the authenticated
