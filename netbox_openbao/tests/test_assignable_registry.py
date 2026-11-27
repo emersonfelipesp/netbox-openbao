@@ -21,11 +21,14 @@ from dcim.models import Site
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.test import RequestFactory, TestCase
+from django.urls import reverse
+from utilities.testing import APITestCase
 from utilities.testing import TestCase as NetBoxTestCase
 
 from netbox_openbao import registry
+from netbox_openbao.api.serializers import OpenBaoSettingsSerializer
 from netbox_openbao.choices import CredentialTypeChoices
-from netbox_openbao.conf import assignable_model_labels
+from netbox_openbao.conf import assignable_model_labels, clear_config
 from netbox_openbao.models import (
     Credential,
     CredentialAssignment,
@@ -49,6 +52,8 @@ class RegistryCleanupMixin:
 
     def setUp(self):
         super().setUp()
+        clear_config()
+        self.addCleanup(clear_config)
         with registry._lock:
             registered = registry._registered.copy()
             rejected = registry._rejected.copy()
@@ -146,6 +151,125 @@ class PrecedenceTest(RegistryCleanupMixin, TestCase):
             assignable_model_labels(),
             ['dcim.device', 'dcim.rack', 'ipam.service'],
         )
+
+
+class EffectiveAssignableModelsSerializerTest(RegistryCleanupMixin, TestCase):
+    """The settings API reports the same effective allowlist as validation."""
+
+    def assert_effective_models(self, settings):
+        serializer = OpenBaoSettingsSerializer(
+            settings,
+            fields=('effective_assignable_models',),
+        )
+        self.assertEqual(
+            serializer.data['effective_assignable_models'],
+            assignable_model_labels(),
+        )
+
+    def test_field_contains_configured_models_and_is_read_only(self):
+        settings = OpenBaoSettings.objects.create(assignable_models=['dcim.device'])
+
+        self.assert_effective_models(settings)
+        serializer = OpenBaoSettingsSerializer(
+            settings,
+            data={'effective_assignable_models': ['dcim.site']},
+            partial=True,
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertNotIn('effective_assignable_models', serializer.validated_data)
+        self.assertTrue(serializer.fields['effective_assignable_models'].read_only)
+
+    def test_field_contains_registry_models(self):
+        settings = OpenBaoSettings.objects.create(assignable_models=['dcim.device'])
+        self.register('dcim.site')
+
+        self.assert_effective_models(settings)
+        self.assertEqual(assignable_model_labels(), ['dcim.device', 'dcim.site'])
+
+    def test_field_excludes_denied_models(self):
+        settings = OpenBaoSettings.objects.create(
+            assignable_models=['dcim.device'],
+            assignable_models_deny=['dcim.site'],
+        )
+        self.register('dcim.site')
+
+        self.assert_effective_models(settings)
+        self.assertEqual(assignable_model_labels(), ['dcim.device'])
+
+
+class AssignableObjectTypesAPITest(RegistryCleanupMixin, APITestCase):
+    """Expose effective object types without settings-model permissions."""
+
+    def setUp(self):
+        super().setUp()
+        self.url = reverse('plugins-api:netbox_openbao-api:assignable-object-types')
+
+    def test_endpoint_requires_authentication(self):
+        response = self.client.get(self.url)
+
+        self.assertIn(response.status_code, (401, 403), response.content)
+
+    def test_endpoint_returns_sorted_effective_models_with_safe_labels(self):
+        ContentType.objects.create(app_label='missing', model='object')
+        OpenBaoSettings.objects.create(
+            assignable_models=['missing.object', 'dcim.device'],
+            assignable_models_deny=['ipam.service'],
+        )
+        self.register('dcim.site')
+
+        response = self.client.get(self.url, **self.header)
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.data['results'], [
+            {'object_type': 'dcim.device', 'label': str(ContentType.objects.get_by_natural_key(
+                'dcim', 'device',
+            ).model_class()._meta.verbose_name)},
+            {'object_type': 'dcim.site', 'label': str(Site._meta.verbose_name)},
+            {'object_type': 'missing.object', 'label': 'missing.object'},
+        ])
+
+    def test_endpoint_rejects_post(self):
+        response = self.client.post(self.url, {}, format='json', **self.header)
+
+        self.assertEqual(response.status_code, 405, response.content)
+
+    def test_endpoint_rejects_every_mutation_method(self):
+        for method in ('put', 'patch', 'delete'):
+            with self.subTest(method=method):
+                response = getattr(self.client, method)(self.url, {}, format='json', **self.header)
+                self.assertEqual(response.status_code, 405, response.content)
+
+
+class AssignableObjectTypesSchemaTest(TestCase):
+    """Both discovery surfaces declare array schemas, not guessed strings."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from drf_spectacular.generators import SchemaGenerator
+
+        cls.schema = SchemaGenerator().get_schema(request=None, public=True)
+
+    def resolve(self, node):
+        while '$ref' in node:
+            node = self.schema['components']['schemas'][node['$ref'].rsplit('/', 1)[-1]]
+        return node
+
+    def test_endpoint_declares_a_results_array_of_object_types(self):
+        operation = self.schema['paths']['/api/plugins/openbao/assignable-object-types/']['get']
+        body = self.resolve(operation['responses']['200']['content']['application/json']['schema'])
+        results = body['properties']['results']
+        self.assertEqual(results['type'], 'array')
+        item = self.resolve(results['items'])
+        self.assertEqual(sorted(item['properties']), ['label', 'object_type'])
+
+    def test_settings_field_is_a_read_only_string_array(self):
+        operation = self.schema['paths']['/api/plugins/openbao/settings/{id}/']['get']
+        body = self.resolve(operation['responses']['200']['content']['application/json']['schema'])
+        field = body['properties']['effective_assignable_models']
+        self.assertEqual(field['type'], 'array')
+        self.assertEqual(field['items']['type'], 'string')
+        self.assertTrue(field.get('readOnly'))
 
 
 class RegisteredAssignmentTest(RegistryCleanupMixin, OpenBaoTestCase):

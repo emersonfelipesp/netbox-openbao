@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.4 - Unreleased
+
+- Expose the effective credential assignment object types through the read-only
+  `effective_assignable_models` settings API field and the authenticated
+  `GET /api/plugins/openbao/assignable-object-types/` discovery endpoint. The
+  endpoint needs no settings-model permission and returns stable object-type
+  labels when a model is unavailable. API clients, such as secret-management
+  front ends, can offer exactly the models that accept credential assignments
+  without reading the settings singleton or inferring the set from existing
+  assignments.
+- Keep the sealed or unsealed state on the Overview cluster card when an
+  engine has no stored service identity. Authenticated detail and metrics
+  reads that cannot run because authentication is not configured now degrade
+  only their own sections, with a fixed "not configured" message and a
+  `not-configured` audit outcome. Before this change the whole card showed
+  "OpenBao is unavailable." although the cluster was reachable and unsealed.
+  Broker mode still reports metrics as unsupported.
+- No model or migration change.
+
 ## 0.2.3 - 2026-11-26
 
 - Add an OpenBao Overview page at the plugin root (`/plugins/openbao/`). It

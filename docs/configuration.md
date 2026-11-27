@@ -310,8 +310,14 @@ not write. **Deny wins over both.**
     or narrow one you only partly want. It is not a defence against a plugin you
     do not trust. Do not install one.
 
-The validation error names the resolved list, which is the fastest way to see
-what a running instance actually permits:
+Settings API responses include the sorted result in the read-only
+`effective_assignable_models` field. Authenticated clients can also use
+`GET /api/plugins/openbao/assignable-object-types/` without permission to view
+the settings row. That endpoint returns each `app_label.model` value with the
+model's verbose name. It retains an unknown object type and uses the object-type
+label as its name, so one stale content type cannot hide the valid results.
+
+Validation errors also name the resolved list:
 
 > Credentials may not be assigned to `dcim.site`. Permitted types:
 > `dcim.device`, `ipam.service`, `virtualization.virtualmachine`.

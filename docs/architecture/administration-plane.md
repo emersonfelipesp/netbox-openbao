@@ -449,10 +449,12 @@ mode may perform the fixed authenticated `GET /sys/metrics` read. The response
 is bounded and normalized into an allowlist that discards all unknown metrics
 and labels. Broker mode does not implement metrics and never falls back to the
 direct OpenBao endpoint. A refused or failed leader, HA, or Raft read degrades
-only that section of the card; an unreadable seal state fails the card. The
+only that section of the card. So does a read that cannot authenticate
+because the engine has no stored service identity (`not-configured`); the
+unauthenticated seal state stays visible. An unreadable seal state fails the card. The
 completion audit uses the fixed outcome message `Rendered the OpenBao overview
-cluster card (details: ok|policy-denied|unavailable|skipped; metrics:
-ok|policy-denied|unsupported|unavailable|skipped)` and never includes server
+cluster card (details: ok|policy-denied|not-configured|unavailable|skipped; metrics:
+ok|policy-denied|not-configured|unsupported|unavailable|skipped)` and never includes server
 text.
 
 ## Parity baseline

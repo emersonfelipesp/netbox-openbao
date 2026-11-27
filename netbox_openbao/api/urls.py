@@ -19,4 +19,12 @@ router.register('settings', views.OpenBaoSettingsViewSet)
 router.register('auth-material', views.EngineAuthMaterialViewSet)
 router.register('ssh-public-keys', views.SSHPublicKeyViewSet)
 
-urlpatterns = [path('resolve/', views.ResolveView.as_view(), name='resolve'), *router.urls]
+urlpatterns = [
+    path(
+        'assignable-object-types/',
+        views.AssignableObjectTypesView.as_view(),
+        name='assignable-object-types',
+    ),
+    path('resolve/', views.ResolveView.as_view(), name='resolve'),
+    *router.urls,
+]

@@ -146,7 +146,11 @@ assigned to. An installed plugin can add its own models to it from
 [Assignable object types](docs/configuration.md#assignable-object-types) — so
 integrating with this plugin does not require every deployment to restate the
 same list in a settings file. `assignable_models_deny` subtracts from the
-result, which is what keeps the final word with the operator.
+result, which is what keeps the final word with the operator. Settings API
+responses expose the sorted result as the read-only
+`effective_assignable_models` field. An authenticated client can also read
+`GET /api/plugins/openbao/assignable-object-types/` without permission to view
+the settings row.
 
 Full detail in [`docs/installation.md`](docs/installation.md) and
 [`docs/configuration.md`](docs/configuration.md), or on the documentation site:

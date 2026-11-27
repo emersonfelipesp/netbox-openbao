@@ -22,6 +22,7 @@ that way: GraphQL queries are logged verbatim by most gateways, and a graph
 API's response shape is harder to audit than a single named REST action.
 """
 
+from django.apps import apps
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
@@ -98,6 +99,7 @@ from .engine_views import SecretEngineAdministrationMixin
 from .finalization_views import FinalizationAdministrationMixin
 from .permissions import ClusterActionPermissions, ProcedureActionPermissions, SecretActionPermissions
 from .serializers import (
+    AssignableObjectTypesResponseSerializer,
     AssignmentRevealRequestSerializer,
     ConfirmClusterActionSerializer,
     CredentialAccessLogSerializer,
@@ -138,6 +140,7 @@ __all__ = (
     'OpenBaoSettingsViewSet',
     'SecretEngineViewSet',
     'SSHPublicKeyViewSet',
+    'AssignableObjectTypesView',
     'ResolveView',
 )
 
@@ -1871,6 +1874,35 @@ class SSHPublicKeyViewSet(NetBoxModelViewSet):
     queryset = SSHPublicKey.objects.select_related('user', 'application_service')
     serializer_class = SSHPublicKeySerializer
     filterset_class = filtersets.SSHPublicKeyFilterSet
+
+
+class AssignableObjectTypesView(APIView):
+    """Return the effective object types that credentials can use."""
+
+    permission_classes = (IsAuthenticated,)
+
+    @staticmethod
+    def _model_name(object_type):
+        # Resolve through the app registry, not ContentType rows, so an
+        # uninstalled app or a stale content type never fails the response and
+        # no database lookup is needed per label.
+        app_label, separator, model = object_type.partition('.')
+        if not separator:
+            return object_type
+        try:
+            model_class = apps.get_model(app_label, model)
+        except LookupError:
+            return object_type
+        return str(model_class._meta.verbose_name)
+
+    @extend_schema(responses={200: AssignableObjectTypesResponseSerializer})
+    def get(self, request):
+        return Response({
+            'results': [
+                {'object_type': object_type, 'label': self._model_name(object_type)}
+                for object_type in assignable_model_labels()
+            ]
+        })
 
 
 class ResolveView(APIView):

@@ -72,8 +72,8 @@ authentication on a cold token cache and broker contract verification each
 have their own five-second allowance, and an endpoint that keeps sending bytes
 slowly can extend a read up to the 1 MB response bound. The completion audit records only the fixed
 section outcomes: `Rendered the OpenBao overview cluster card (details:
-ok|policy-denied|unavailable|skipped; metrics:
-ok|policy-denied|unsupported|unavailable|skipped)`.
+ok|policy-denied|not-configured|unavailable|skipped; metrics:
+ok|policy-denied|not-configured|unsupported|unavailable|skipped)`.
 
 Direct mode needs this least-privilege OpenBao policy grant to populate the
 metrics table:

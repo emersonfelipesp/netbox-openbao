@@ -51,6 +51,9 @@ The plugin-root overview is read-only. Live cards must use
 `collect_cluster_state()` and the allowlisted metrics normalizer, remain
 `no-store`, and stay independently permission-filtered and audited. Metrics are
 unsupported in broker mode; never fall back to direct OpenBao access.
+The seal state is the card headline: a `BackendConfigurationError` from the
+authenticated detail or metrics reads (for example, an engine with no stored
+AppRole) degrades only that section to `not-configured`, never the card.
 
 **Cluster custody and Raft snapshots remain request-scoped.** Initialization,
 unseal, seal, peer removal, snapshot download, restore, and force restore use
@@ -562,7 +565,7 @@ that last one broke credential creation against every real server while 200+
 tests stayed green (#17). A fake only fails in ways its author already thought
 of. Run against a real server before believing a green suite.
 
-The Gitea pull-request workflow runs static checks and 107 affected DB-backed
+The Gitea pull-request workflow runs static checks and 118 affected DB-backed
 tests. The selection covers automation, concurrency, key identity, registry,
 the plugin-root overview, API filters, and scanner scope. It runs on the non-root, credentials-free
 `ci-untrusted-python312` runner for `develop` and `main`. It asserts the exact
@@ -748,8 +751,9 @@ development server.
   `conf.assignable_model_labels()`. Three properties are load-bearing:
   **deny wins**, so an operator can refuse an integration's choice without
   patching someone else's plugin; the result is **sorted**, because it is
-  rendered into `CredentialAssignment.clean()`'s error message and that message
-  is the only way an operator can discover what a running instance permits; and
+  rendered into `CredentialAssignment.clean()`'s error message, the settings
+  serializer's read-only `effective_assignable_models` field, and the
+  authenticated `assignable-object-types/` discovery endpoint; and
   a bad label is **rejected and logged at ERROR, never raised** — this runs in
   `AppConfig.ready()`, where an exception takes the whole NetBox instance down
   instead of failing one integration. "Bad" means shape *and* existence: a label

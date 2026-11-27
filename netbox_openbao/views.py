@@ -259,7 +259,11 @@ def _overview_state(backend, budget):
         message = _("The cluster service identity's policy does not grant the leader, HA, or Raft status reads.")
         status = 'policy-denied'
     except BackendConfigurationError:
-        raise
+        # The authenticated reads never ran, for example because the engine
+        # has no stored service identity. The seal headline was read without
+        # authentication and stays visible; only the details degrade.
+        message = _('Authenticated cluster details are not configured.')
+        status = 'not-configured'
     except OpenBaoError:
         message = _('Leader, HA, and Raft details are unavailable.')
         status = 'unavailable'
@@ -277,7 +281,9 @@ def _overview_metrics(backend, state, budget):
     except OpenBaoAuthError:
         return None, _("The cluster service identity's policy does not grant read on sys/metrics."), 'policy-denied'
     except BackendConfigurationError:
-        return None, _('Metrics are not available through the broker.'), 'unsupported'
+        if backend.cluster.backend == BackendChoices.BACKEND_BROKER:
+            return None, _('Metrics are not available through the broker.'), 'unsupported'
+        return None, _('Authenticated metrics are not configured.'), 'not-configured'
     except OpenBaoError:
         return None, _('Metrics are unavailable.'), 'unavailable'
     except Exception:

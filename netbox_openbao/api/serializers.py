@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from dcim.models import Device
 from django.core.exceptions import ValidationError as DjangoValidationError
+from drf_spectacular.utils import extend_schema_field
 from ipam.models import IPAddress, ServiceTemplate
 from netbox.api.fields import ChoiceField, ContentTypeField
 from netbox.api.gfk_fields import GFKSerializerField
@@ -38,7 +39,7 @@ from netbox_openbao.choices import (
     PurposeChoices,
     SSHKeyTypeChoices,
 )
-from netbox_openbao.conf import get_config
+from netbox_openbao.conf import assignable_model_labels, get_config
 from netbox_openbao.models import (
     Credential,
     CredentialAccessLog,
@@ -518,9 +519,14 @@ class OpenBaoSettingsSerializer(NetBoxModelSerializer):
         view_name='plugins-api:netbox_openbao-api:openbaosettings-detail'
     )
     source = serializers.SerializerMethodField()
+    effective_assignable_models = serializers.SerializerMethodField()
 
     def get_source(self, obj):
         return 'saved' if obj.pk else 'default'
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_effective_assignable_models(self, obj):
+        return assignable_model_labels()
 
     def validate(self, data):
         data = super().validate(data)
@@ -535,6 +541,7 @@ class OpenBaoSettingsSerializer(NetBoxModelSerializer):
         fields = (
             'id', 'url', 'display', 'source', 'singleton_key',
             'path_prefix', 'assignable_models', 'assignable_models_deny',
+            'effective_assignable_models',
             'store_public_material', 'reveal_rate_limit', 'reveal_ttl',
             'token_cache_ttl', 'audit_retention_days', 'allow_generation',
             'default_ssh_key_type', 'expiry_warning_days',
@@ -544,7 +551,7 @@ class OpenBaoSettingsSerializer(NetBoxModelSerializer):
             'created', 'last_updated',
         )
         brief_fields = ('id', 'url', 'display')
-        read_only_fields = ('source', 'singleton_key',)
+        read_only_fields = ('source', 'singleton_key', 'effective_assignable_models')
 
 
 class CredentialPolicySerializer(OrganizationalModelSerializer):
@@ -782,6 +789,19 @@ class QuickAddSSHRequestSerializer(serializers.Serializer):
         else:
             self._validate_keypair(data)
         return data
+
+
+class AssignableObjectTypeSerializer(serializers.Serializer):
+    """One effective assignable object type and its model name."""
+
+    object_type = serializers.CharField(help_text='Lowercased app_label.model.')
+    label = serializers.CharField(help_text='Model verbose name, or the object type when the model is not installed.')
+
+
+class AssignableObjectTypesResponseSerializer(serializers.Serializer):
+    """Response of the assignable-object-types discovery endpoint."""
+
+    results = AssignableObjectTypeSerializer(many=True)
 
 
 class QuickAddSSHResponseSerializer(serializers.Serializer):

@@ -56,7 +56,7 @@ PLUGINS_CONFIG = {'netbox_rpc': {}}
 
 The checkout above is the exact NetBox 4.7 beta certification target. NetBox
 4.7 is the supported range; the plugin's declared floor is 4.7.0. The Gitea
-pull-request workflow runs static checks and 107 affected DB-backed tests from
+pull-request workflow runs static checks and 118 affected DB-backed tests from
 `test_automation`, `test_automation_composed_concurrency`,
 `test_automation_key_identity`, `test_assignable_registry`, and
 `test_overview`. It also runs

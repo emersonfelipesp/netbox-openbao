@@ -36,7 +36,8 @@ internal automation resolution receipts have no CRUD endpoint.
 | `POST /clusters/{id}/final-resources/operate/` | Execute one reviewed final operation with typed fields, digest freshness, audit, and impact confirmation |
 | `GET /clusters/{id}/final-conformance/` | Compare runtime OpenAPI with the pinned OpenBao 2.6.2 final-operation fixture |
 | `GET/POST /settings/`, `GET/PATCH/DELETE /settings/{id}/`, `GET/PATCH /settings/singleton/` | Singleton runtime configuration. The singleton action applies object restrictions, requires add permission when PATCH creates the row, honors `If-Match`, and runs the same post-save conformance checks as ordinary writes. Deletion is refused while any credential exists. |
-| `GET/PATCH /settings/singleton/` | Read effective model defaults without creating a row, or create/update the singleton |
+| `GET/PATCH /settings/singleton/` | Read effective model defaults without creating a row, or create/update the singleton. Responses include the read-only `effective_assignable_models` union after denials. |
+| `GET /assignable-object-types/` | Return the sorted effective assignment object types and their verbose model names. Authentication is required, but settings-model permission is not required. |
 | `GET/POST /engines/` | Secret engines |
 | `GET/POST /auth-material/`, `GET/PATCH/DELETE /auth-material/{id}/` | Owner-scoped encrypted authentication; values are write-only and responses expose only configured/missing booleans |
 | `GET /engines/{id}/health/` | Probe and record engine status |
@@ -51,6 +52,21 @@ internal automation resolution receipts have no CRUD endpoint.
 | `GET/POST /assignments/` | Credential ↔ object bindings |
 | `GET /access-logs/` | Audit trail (read-only) |
 | `GET /administration-logs/` | Administrative audit trail (read-only) |
+
+The assignment-object-type discovery response has this shape:
+
+```json
+{
+  "results": [
+    {"object_type": "dcim.device", "label": "device"}
+  ]
+}
+```
+
+The endpoint derives the list from the configured models and plugin registry,
+then removes `assignable_models_deny`. It uses the object-type label as the
+display label when a content type or model is unavailable. Only `GET` is
+supported.
 
 ## Cluster administration foundation
 

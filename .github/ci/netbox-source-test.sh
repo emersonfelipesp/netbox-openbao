@@ -208,7 +208,7 @@ case "${NETBOX_CI_TEST_SCOPE:-full}" in
       netbox_openbao.tests.test_api.OpenBaoProcedureRunFilterAPITest
       netbox_openbao.tests.test_backends.BackendContractTest.test_the_scan_conservatively_includes_a_name_rebound_in_another_function
     )
-    EXPECTED_TEST_COUNT=107
+    EXPECTED_TEST_COUNT=118
     ;;
   *)
     echo 'Unsupported NETBOX_CI_TEST_SCOPE value' >&2

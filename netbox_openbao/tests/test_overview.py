@@ -514,6 +514,44 @@ class OverviewViewTest(OpenBaoAdministrationTestCase):
 
     @patch('netbox_openbao.views.log_administration')
     @patch('netbox_openbao.views.get_administration_backend')
+    def test_missing_service_identity_keeps_seal_state(self, get_backend, _log):
+        # An engine without stored AppRole material raises
+        # BackendConfigurationError on every authenticated read. The seal
+        # headline is read without authentication and must stay visible.
+        self.add_permissions('netbox_openbao.discover_openbaocluster')
+        backend = FakeOverviewBackend(self.cluster)
+        missing = BackendConfigurationError('approle canary not configured')
+        backend.leader_status = Mock(side_effect=missing)
+        backend.metrics = Mock(side_effect=missing)
+        get_backend.return_value = backend
+        response = self.client.get(self.card_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Unsealed')
+        self.assertContains(response, 'Authenticated cluster details are not configured.')
+        self.assertContains(response, 'Authenticated metrics are not configured.')
+        self.assertNotContains(response, 'approle canary')
+        self.assertNotContains(response, 'OpenBao is unavailable.')
+        self.assertNotContains(response, 'through the broker')
+        self.assertEqual(_log.call_args.kwargs['success'], True)
+        self.assertEqual(
+            _log.call_args.kwargs['message'],
+            'Rendered the OpenBao overview cluster card (details: not-configured; metrics: not-configured)',
+        )
+
+    @patch('netbox_openbao.views.log_administration')
+    @patch('netbox_openbao.views.get_administration_backend')
+    def test_missing_service_identity_on_sealed_cluster(self, get_backend, _log):
+        self.add_permissions('netbox_openbao.discover_openbaocluster')
+        backend = FakeOverviewBackend(self.cluster, sealed=True)
+        backend.leader_status = Mock(side_effect=BackendConfigurationError('canary'))
+        get_backend.return_value = backend
+        response = self.client.get(self.card_url)
+        self.assertContains(response, 'Sealed')
+        self.assertNotContains(response, 'OpenBao is unavailable.')
+        backend.leader_status.assert_not_called()
+
+    @patch('netbox_openbao.views.log_administration')
+    @patch('netbox_openbao.views.get_administration_backend')
     def test_seal_status_failure_fails_the_card(self, get_backend, _log):
         self.add_permissions('netbox_openbao.discover_openbaocluster')
         backend = FakeOverviewBackend(self.cluster)
